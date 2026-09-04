@@ -1,0 +1,13 @@
+{
+  "protocol_version": 1,
+  "correlation_id": "extension-start-1",
+  "kind": "response",
+  "command": "hello",
+  "ok": true,
+  "result": {
+    "selected_version": 1,
+    "helper_version": "0.1.0",
+    "capabilities": ["snapshots", "coalesced_progress"],
+    "max_message_bytes": 1048576
+  }
+}

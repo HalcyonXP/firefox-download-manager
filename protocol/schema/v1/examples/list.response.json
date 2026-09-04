@@ -1,0 +1,31 @@
+{
+  "protocol_version": 1,
+  "correlation_id": "list-1",
+  "kind": "response",
+  "command": "list",
+  "ok": true,
+  "result": {
+    "snapshot_id": "snapshot-44",
+    "page_index": 0,
+    "tasks": [
+      {
+        "task_id": "7b1c7182-37e9-4a3a-89bd-f9e4e2d6f376",
+        "display_name": "archive.bin",
+        "destination": "C:\\Users\\Example\\Downloads",
+        "source_origin": "https://downloads.example.test",
+        "state": "downloading",
+        "transfer_mode": "segmented",
+        "expected_size": 10485760,
+        "bytes_completed": 5242880,
+        "workers": 4,
+        "speed_bytes_per_second": 2097152,
+        "eta_seconds": 3,
+        "created_at": "2026-09-04T09:00:00Z",
+        "updated_at": "2026-09-04T09:00:03Z",
+        "error": null
+      }
+    ],
+    "next_cursor": null,
+    "complete": true
+  }
+}

@@ -176,7 +176,7 @@ See [ADR-0004](decisions/0004-storage-and-recovery.md).
 
 Native Messaging carries control and state, never file bodies. Every envelope has a protocol version and correlation identifier. Commands receive one terminal response; asynchronous events identify their task. Unknown versions, commands, fields where forbidden, oversized frames, malformed JSON, and invalid state transitions fail safely. Stable machine-readable error codes are separate from localized/display text.
 
-The detailed contract belongs to issue #2 and must preserve this boundary.
+The detailed contract is defined in [PROTOCOL.md](PROTOCOL.md) and must preserve this boundary.
 
 ## Decisions and reversibility
 

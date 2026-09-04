@@ -1,0 +1,17 @@
+{
+  "protocol_version": 1,
+  "correlation_id": "event-progress-918",
+  "kind": "event",
+  "event": "progress",
+  "sequence": 918,
+  "emitted_at": "2026-09-04T09:00:03Z",
+  "data": {
+    "task_id": "7b1c7182-37e9-4a3a-89bd-f9e4e2d6f376",
+    "bytes_completed": 5242880,
+    "expected_size": 10485760,
+    "speed_bytes_per_second": 2097152,
+    "eta_seconds": 3,
+    "active_workers": 4,
+    "sampled_at": "2026-09-04T09:00:03Z"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "protocol_version": 1,
+  "correlation_id": "extension-start-1",
+  "kind": "command",
+  "command": "hello",
+  "payload": {
+    "supported_versions": [1],
+    "client_name": "firefox-download-manager",
+    "client_version": "0.1.0"
+  }
+}

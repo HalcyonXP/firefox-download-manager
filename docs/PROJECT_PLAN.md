@@ -58,7 +58,7 @@ The Firefox extension captures user intent and displays state. A Rust native hel
 └──────────────────────────────────┘
 ```
 
-The accepted component boundaries and decisions are recorded in [ARCHITECTURE.md](ARCHITECTURE.md) and its linked architecture decision records. The threat model and sensitive-data rules are recorded in [SECURITY.md](SECURITY.md). The detailed protocol contract is tracked in [#2](https://github.com/HalcyonXP/download-manager/issues/2).
+The accepted component boundaries and decisions are recorded in [ARCHITECTURE.md](ARCHITECTURE.md) and its linked architecture decision records. The threat model and sensitive-data rules are recorded in [SECURITY.md](SECURITY.md). The versioned extension/helper contract is defined in [PROTOCOL.md](PROTOCOL.md).
 
 ## Delivery milestones
 
