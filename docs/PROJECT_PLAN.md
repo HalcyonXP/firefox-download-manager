@@ -1,5 +1,9 @@
 # Project Plan
 
+GitHub execution board: [Firefox Download Manager](https://github.com/users/HalcyonXP/projects/1)
+
+Current state: planning is complete. Issue [#1](https://github.com/HalcyonXP/download-manager/issues/1) is **Ready**; all dependent work remains in **Backlog**.
+
 ## Product goal
 
 Create a trustworthy local download manager for Firefox Developer Edition that can improve throughput when an HTTP(S) server limits individual connections and supports byte-range requests.

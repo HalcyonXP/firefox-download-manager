@@ -4,7 +4,7 @@ A local download manager for Firefox Developer Edition on Windows 11. It is inte
 
 ## Project status
 
-Planning. Implementation work is tracked in [GitHub Issues](https://github.com/HalcyonXP/download-manager/issues) and organized into five milestones:
+Planning is complete and implementation is ready to begin with [issue #1](https://github.com/HalcyonXP/download-manager/issues/1). Work is tracked on the private [Firefox Download Manager project board](https://github.com/users/HalcyonXP/projects/1), in [GitHub Issues](https://github.com/HalcyonXP/download-manager/issues), and across five milestones:
 
 1. [M0 — Foundation](https://github.com/HalcyonXP/download-manager/milestone/2)
 2. [M1 — Native download MVP](https://github.com/HalcyonXP/download-manager/milestone/3)
@@ -12,7 +12,7 @@ Planning. Implementation work is tracked in [GitHub Issues](https://github.com/H
 4. [M3 — Reliability and authenticated downloads](https://github.com/HalcyonXP/download-manager/milestone/5)
 5. [M4 — Local release](https://github.com/HalcyonXP/download-manager/milestone/6)
 
-See [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) for scope, architecture, execution order, and release criteria.
+See [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) for scope, architecture, execution order, and release criteria. See [AGENTS.md](AGENTS.md) for the implementation workflow and non-negotiable constraints used across development sessions.
 
 ## Intended architecture
 
