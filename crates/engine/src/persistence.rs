@@ -472,24 +472,33 @@ impl TaskMetadata {
     ///
     /// # Errors
     ///
-    /// Rejects tasks without a known-size resource/partial and propagates
-    /// storage validation, file-lock, access, and length failures.
+    /// Rejects tasks without a consistent resource/partial and propagates
+    /// storage validation, file-lock, access, and length failures. An
+    /// interrupted unknown-length stream reopens with no completed coverage so
+    /// its next streaming writer restarts at byte zero.
     pub fn reopen_partial(&self) -> Result<PartialFile, TaskUpdateError> {
         let partial_path = self
             .partial_path
             .as_deref()
             .ok_or(StateValidationError::InvalidPartialPath)?;
-        let expected_size = self
+        let resource = self
             .resource
             .as_ref()
-            .and_then(ResourceIdentity::expected_size)
             .ok_or(StateValidationError::InvalidResource)?;
-        let partial = PartialFile::recover(
-            partial_path,
-            &self.display_name,
-            expected_size,
-            &self.completed_ranges,
-        )?;
+        let partial = if let Some(expected_size) = resource.expected_size() {
+            PartialFile::recover(
+                partial_path,
+                &self.display_name,
+                expected_size,
+                &self.completed_ranges,
+            )?
+        } else if resource.transfer_mode() == TransferMode::Single
+            && self.completed_ranges.is_empty()
+        {
+            PartialFile::recover_streaming(partial_path, &self.display_name)?
+        } else {
+            return Err(StateValidationError::InvalidResource.into());
+        };
         if partial.partial_path() != partial_path {
             return Err(StateValidationError::InvalidPartialPath.into());
         }
@@ -591,7 +600,7 @@ impl TaskMetadata {
         };
         if self.state != TaskState::Probing
             || self.partial_path.is_some()
-            || resource.expected_size != Some(partial.expected_len())
+            || resource.expected_size != partial.expected_len()
             || partial.partial_path().parent() != Some(self.destination.as_path())
         {
             return Err(StateValidationError::InvalidPartialPath);
@@ -625,25 +634,32 @@ impl TaskMetadata {
         {
             return Err(StateValidationError::InconsistentState.into());
         }
-        if self
+        let resource = self
             .resource
             .as_ref()
-            .and_then(ResourceIdentity::expected_size)
-            != Some(partial.expected_len())
-        {
-            return Err(StateValidationError::InvalidResource.into());
-        }
+            .ok_or(StateValidationError::InvalidResource)?;
+        let stored_size = resource.expected_size();
+        let partial_size = partial.expected_len();
+        let discovered_size = match (stored_size, partial_size) {
+            (Some(expected), Some(actual)) if expected == actual => None,
+            (None, None) if resource.transfer_mode() == TransferMode::Single => None,
+            (None, Some(actual)) if resource.transfer_mode() == TransferMode::Single => {
+                Some(actual)
+            }
+            _ => return Err(StateValidationError::InvalidResource.into()),
+        };
         let completed = partial.durable_completed_ranges()?;
-        validate_completed_ranges(
-            &completed,
-            self.resource
-                .as_ref()
-                .and_then(ResourceIdentity::expected_size),
-        )?;
-        if completed == self.completed_ranges {
+        validate_completed_ranges(&completed, partial_size)?;
+        if completed == self.completed_ranges && discovered_size.is_none() {
             return Ok(false);
         }
         self.bump_revision(updated_at)?;
+        if let Some(discovered_size) = discovered_size {
+            self.resource
+                .as_mut()
+                .ok_or(StateValidationError::InvalidResource)?
+                .expected_size = Some(discovered_size);
+        }
         self.completed_ranges = completed;
         Ok(true)
     }
@@ -1780,14 +1796,12 @@ fn validate_task(task: &TaskMetadata) -> Result<(), StateValidationError> {
     {
         return Err(StateValidationError::InconsistentState);
     }
-    if task
-        .resource
-        .as_ref()
-        .is_some_and(|resource| resource.expected_size.is_none())
-        && (task.partial_path.is_some()
-            || task.final_path.is_some()
-            || !task.completed_ranges.is_empty())
-    {
+    if task.resource.as_ref().is_some_and(|resource| {
+        resource.expected_size.is_none()
+            && (resource.transfer_mode != TransferMode::Single
+                || task.final_path.is_some()
+                || !task.completed_ranges.is_empty())
+    }) {
         return Err(StateValidationError::InconsistentState);
     }
     if matches!(task.state, TaskState::Downloading | TaskState::Paused)

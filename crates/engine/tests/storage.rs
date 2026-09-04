@@ -37,7 +37,7 @@ fn creates_unique_preallocated_part_files_in_paths_with_spaces() {
         32
     );
     assert_eq!(first.final_name().as_str(), "payload.bin");
-    assert_eq!(first.expected_len(), 32);
+    assert_eq!(first.expected_len(), Some(32));
 }
 
 #[test]
@@ -173,6 +173,82 @@ fn disjoint_threaded_writers_produce_exact_random_access_output() {
         .expect("remove checkpointed partial link");
     assert_eq!(promotion.partial_path(), None);
     assert!(!partial_path.exists());
+}
+
+#[test]
+fn unknown_length_stream_seals_exact_coverage_before_publication() {
+    let directory = TestDirectory::new("streaming");
+    let storage = PartialFile::create_streaming(directory.path(), "stream.bin")
+        .expect("create streaming partial");
+    assert_eq!(storage.expected_len(), None);
+    assert!(matches!(
+        storage.assign(range(0, 1)),
+        Err(StorageError::LengthUnknown)
+    ));
+
+    let mut writer = storage.begin_stream(8).expect("begin bounded stream");
+    writer.write(b"ABC").expect("write first stream chunk");
+    writer.write(b"DEFGH").expect("write second stream chunk");
+    assert_eq!(writer.written_len(), 8);
+    assert_eq!(
+        writer.write(b"I"),
+        Err(StorageError::StreamLimitExceeded { limit: 8 })
+    );
+    assert_eq!(writer.finish().expect("seal stream"), 8);
+    assert_eq!(storage.expected_len(), Some(8));
+    assert_eq!(storage.completed_ranges(), vec![range(0, 8)]);
+
+    let mut promotion = storage.promote().expect("publish sealed stream");
+    assert_eq!(
+        fs::read(promotion.final_path()).expect("read streamed output"),
+        b"ABCDEFGH"
+    );
+    promotion.cleanup_partial().expect("clean stream partial");
+}
+
+#[test]
+fn unknown_length_stream_can_seal_a_clean_empty_eof() {
+    let directory = TestDirectory::new("empty-stream");
+    let storage = PartialFile::create_streaming(directory.path(), "empty-stream.bin")
+        .expect("create streaming partial");
+    let mut writer = storage.begin_stream(1).expect("begin empty response");
+    assert_eq!(writer.finish().expect("seal empty EOF"), 0);
+    assert_eq!(storage.expected_len(), Some(0));
+    assert!(storage.completed_ranges().is_empty());
+    let output = storage.promote().expect("publish empty stream");
+    assert!(
+        fs::read(output.final_path())
+            .expect("read empty stream")
+            .is_empty()
+    );
+}
+
+#[test]
+fn interrupted_unknown_stream_restarts_from_zero() {
+    let directory = TestDirectory::new("stream-retry");
+    let storage = PartialFile::create_streaming(directory.path(), "stream.bin")
+        .expect("create streaming partial");
+    {
+        let mut first = storage.begin_stream(16).expect("begin first stream");
+        first.write(b"STALE").expect("write stale attempt");
+    }
+    assert_eq!(storage.expected_len(), None);
+    assert!(storage.completed_ranges().is_empty());
+
+    let mut retry = storage.begin_stream(16).expect("restart stream");
+    retry.write(b"GOOD").expect("write replacement stream");
+    retry.finish().expect("seal replacement stream");
+    assert_eq!(
+        fs::metadata(storage.partial_path())
+            .expect("metadata")
+            .len(),
+        4
+    );
+    let promotion = storage.promote().expect("publish replacement stream");
+    assert_eq!(
+        fs::read(promotion.final_path()).expect("read final"),
+        b"GOOD"
+    );
 }
 
 #[test]

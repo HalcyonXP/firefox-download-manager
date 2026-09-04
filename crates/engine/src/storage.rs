@@ -272,6 +272,21 @@ pub enum StorageError {
         /// Number of active assignments.
         count: usize,
     },
+    /// Range assignment or publication requires a known file length.
+    #[error("partial file length is not known yet")]
+    LengthUnknown,
+    /// A sequential unknown-length stream is already active or unavailable.
+    #[error("sequential stream ownership is unavailable")]
+    StreamUnavailable,
+    /// The configured unknown-length stream bound is zero.
+    #[error("sequential stream size limit is invalid")]
+    InvalidStreamLimit,
+    /// A sequential stream exceeded its configured byte bound.
+    #[error("sequential stream exceeds its {limit}-byte limit")]
+    StreamLimitExceeded {
+        /// Maximum accepted bytes for this stream.
+        limit: u64,
+    },
     /// Recovered completed ranges are not canonical and in bounds.
     #[error("recovered completed ranges are invalid")]
     InvalidCompletedCoverage,
@@ -388,7 +403,8 @@ impl Promotion {
     }
 }
 
-/// An active preallocated partial file.
+/// An active preallocated or bounded streaming partial file.
+#[derive(Clone)]
 pub struct PartialFile {
     inner: Arc<Inner>,
 }
@@ -398,7 +414,7 @@ impl fmt::Debug for PartialFile {
         formatter
             .debug_struct("PartialFile")
             .field("paths", &"<redacted>")
-            .field("expected_len", &self.inner.expected_len)
+            .field("expected_len", &self.expected_len())
             .finish_non_exhaustive()
     }
 }
@@ -407,7 +423,7 @@ struct Inner {
     partial_path: PathBuf,
     destination: PathBuf,
     final_name: SanitizedFilename,
-    expected_len: u64,
+    expected_len: Mutex<Option<u64>>,
     file: Mutex<Option<File>>,
     state: Mutex<WriteState>,
 }
@@ -424,6 +440,7 @@ struct WriteState {
     lifecycle: Lifecycle,
     next_assignment_id: u64,
     active: BTreeMap<u64, ActiveAssignment>,
+    stream_active: bool,
     completed: Vec<FileRange>,
 }
 
@@ -445,6 +462,31 @@ impl PartialFile {
         destination: &Path,
         suggested_filename: &str,
         expected_len: u64,
+    ) -> Result<Self, StorageError> {
+        Self::create_inner(destination, suggested_filename, Some(expected_len))
+    }
+
+    /// Creates a unique growable `.part` file for one bounded sequential
+    /// response whose final length is not known yet.
+    ///
+    /// Range assignments and publication remain unavailable until a
+    /// [`StreamingWriter`] reaches a validated EOF and seals the actual length.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified, path-free error if the destination is invalid or
+    /// create-new allocation/flush fails.
+    pub fn create_streaming(
+        destination: &Path,
+        suggested_filename: &str,
+    ) -> Result<Self, StorageError> {
+        Self::create_inner(destination, suggested_filename, None)
+    }
+
+    fn create_inner(
+        destination: &Path,
+        suggested_filename: &str,
+        expected_len: Option<u64>,
     ) -> Result<Self, StorageError> {
         let metadata = fs::symlink_metadata(destination)
             .map_err(|error| map_io(StorageOperation::InspectDestination, &error))?;
@@ -478,7 +520,9 @@ impl PartialFile {
                 return Err(StorageError::InvalidDestination);
             }
 
-            if let Err(error) = file.set_len(expected_len) {
+            if let Some(expected_len) = expected_len
+                && let Err(error) = file.set_len(expected_len)
+            {
                 drop(file);
                 let _ = fs::remove_file(&partial_path);
                 return Err(map_io(StorageOperation::Preallocate, &error));
@@ -494,12 +538,13 @@ impl PartialFile {
                     partial_path,
                     destination,
                     final_name,
-                    expected_len,
+                    expected_len: Mutex::new(expected_len),
                     file: Mutex::new(Some(file)),
                     state: Mutex::new(WriteState {
                         lifecycle: Lifecycle::Active,
                         next_assignment_id: 1,
                         active: BTreeMap::new(),
+                        stream_active: false,
                         completed: Vec::new(),
                     }),
                 }),
@@ -523,6 +568,32 @@ impl PartialFile {
         partial_path: &Path,
         final_filename: &str,
         expected_len: u64,
+        completed: &[FileRange],
+    ) -> Result<Self, StorageError> {
+        validate_recovered_coverage(completed, expected_len)?;
+        Self::recover_inner(partial_path, final_filename, Some(expected_len), completed)
+    }
+
+    /// Reopens an interrupted undeclared-length stream for restart from zero.
+    ///
+    /// Existing file bytes are deliberately not represented as completed
+    /// coverage. [`Self::begin_stream`] truncates them before the next request
+    /// writes because an interrupted stream has no proven resumable boundary.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified error for an unsafe path/type/name or open failure.
+    pub fn recover_streaming(
+        partial_path: &Path,
+        final_filename: &str,
+    ) -> Result<Self, StorageError> {
+        Self::recover_inner(partial_path, final_filename, None, &[])
+    }
+
+    fn recover_inner(
+        partial_path: &Path,
+        final_filename: &str,
+        expected_len: Option<u64>,
         completed: &[FileRange],
     ) -> Result<Self, StorageError> {
         let path_metadata = fs::symlink_metadata(partial_path)
@@ -563,7 +634,6 @@ impl PartialFile {
         if final_name.as_str() != final_filename {
             return Err(StorageError::InvalidDestination);
         }
-        validate_recovered_coverage(completed, expected_len)?;
 
         let file = OpenOptions::new()
             .read(true)
@@ -579,7 +649,9 @@ impl PartialFile {
             .metadata()
             .map_err(|error| map_io(StorageOperation::OpenPartial, &error))?
             .len();
-        if actual_len != expected_len {
+        if let Some(expected_len) = expected_len
+            && actual_len != expected_len
+        {
             return Err(StorageError::FileLengthChanged {
                 expected: expected_len,
                 actual: actual_len,
@@ -591,12 +663,13 @@ impl PartialFile {
                 partial_path,
                 destination,
                 final_name,
-                expected_len,
+                expected_len: Mutex::new(expected_len),
                 file: Mutex::new(Some(file)),
                 state: Mutex::new(WriteState {
                     lifecycle: Lifecycle::Active,
                     next_assignment_id: 1,
                     active: BTreeMap::new(),
+                    stream_active: false,
                     completed: completed.to_vec(),
                 }),
             }),
@@ -616,10 +689,10 @@ impl PartialFile {
         &self.inner.final_name
     }
 
-    /// Expected complete file length.
+    /// Expected complete file length once known or a stream reached EOF.
     #[must_use]
-    pub fn expected_len(&self) -> u64 {
-        self.inner.expected_len
+    pub fn expected_len(&self) -> Option<u64> {
+        *lock(&self.inner.expected_len)
     }
 
     /// Returns canonical ordered, non-overlapping completed coverage.
@@ -649,22 +722,62 @@ impl PartialFile {
         Ok(state.completed.clone())
     }
 
+    /// Acquires sole sequential ownership of an unknown-length partial.
+    ///
+    /// A new attempt truncates any uncommitted bytes left by an interrupted
+    /// stream. The writer must be bounded by a nonzero caller-selected limit.
+    ///
+    /// # Errors
+    ///
+    /// Rejects known-length, active, published, or zero-limit storage and
+    /// surfaces truncation failures.
+    pub fn begin_stream(&self, maximum_len: u64) -> Result<StreamingWriter, StorageError> {
+        if maximum_len == 0 {
+            return Err(StorageError::InvalidStreamLimit);
+        }
+        let mut state = lock(&self.inner.state);
+        if state.lifecycle != Lifecycle::Active
+            || state.stream_active
+            || !state.active.is_empty()
+            || !state.completed.is_empty()
+            || lock(&self.inner.expected_len).is_some()
+        {
+            return Err(StorageError::StreamUnavailable);
+        }
+        let mut file_guard = lock(&self.inner.file);
+        let file = file_guard.as_mut().ok_or(StorageError::NotActive)?;
+        file.set_len(0)
+            .and_then(|()| file.seek(SeekFrom::Start(0)).map(|_| ()))
+            .map_err(|error| map_io(StorageOperation::Write, &error))?;
+        state.stream_active = true;
+        Ok(StreamingWriter {
+            inner: Arc::clone(&self.inner),
+            maximum_len,
+            written: 0,
+            finished: false,
+        })
+    }
+
     /// Reserves a disjoint range and returns its sole writer.
     ///
     /// # Errors
     ///
-    /// Rejects out-of-file, overlapping, or post-publication assignments.
+    /// Rejects unknown-length, out-of-file, overlapping, streaming, or
+    /// post-publication assignments.
     pub fn assign(&self, range: FileRange) -> Result<SegmentWriter, StorageError> {
-        if range.end > self.inner.expected_len {
-            return Err(StorageError::RangeOutOfBounds {
-                range,
-                expected_len: self.inner.expected_len,
-            });
-        }
-
         let mut state = lock(&self.inner.state);
         if state.lifecycle != Lifecycle::Active {
             return Err(StorageError::NotActive);
+        }
+        if state.stream_active {
+            return Err(StorageError::StreamUnavailable);
+        }
+        let expected_len = lock(&self.inner.expected_len).ok_or(StorageError::LengthUnknown)?;
+        if range.end > expected_len {
+            return Err(StorageError::RangeOutOfBounds {
+                range,
+                expected_len,
+            });
         }
         if state.completed.iter().any(|known| range.overlaps(*known))
             || state
@@ -716,17 +829,18 @@ impl PartialFile {
         if state.lifecycle != Lifecycle::Active {
             return Err(StorageError::NotActive);
         }
-        if !state.active.is_empty() {
+        if !state.active.is_empty() || state.stream_active {
             return Err(StorageError::ActiveAssignments {
-                count: state.active.len(),
+                count: state.active.len() + usize::from(state.stream_active),
             });
         }
-        if !has_exact_coverage(&state.completed, self.inner.expected_len) {
+        let expected_len = lock(&self.inner.expected_len).ok_or(StorageError::LengthUnknown)?;
+        if !has_exact_coverage(&state.completed, expected_len) {
             return Err(StorageError::IncompleteCoverage);
         }
         state.lifecycle = Lifecycle::Publishing;
 
-        let publication = self.publish_create_new();
+        let publication = self.publish_create_new(expected_len);
         let final_path = match publication {
             Ok(path) => path,
             Err(error) => {
@@ -747,16 +861,16 @@ impl PartialFile {
         })
     }
 
-    fn publish_create_new(&self) -> Result<PathBuf, StorageError> {
+    fn publish_create_new(&self, expected_len: u64) -> Result<PathBuf, StorageError> {
         let file_guard = lock(&self.inner.file);
         let file = file_guard.as_ref().ok_or(StorageError::NotActive)?;
         let actual_len = file
             .metadata()
             .map_err(|error| map_io(StorageOperation::Flush, &error))?
             .len();
-        if actual_len != self.inner.expected_len {
+        if actual_len != expected_len {
             return Err(StorageError::FileLengthChanged {
-                expected: self.inner.expected_len,
+                expected: expected_len,
                 actual: actual_len,
             });
         }
@@ -786,6 +900,126 @@ impl PartialFile {
         }
 
         Err(StorageError::FinalNameExhausted)
+    }
+}
+
+/// Sole writer for one bounded sequential response with no declared length.
+pub struct StreamingWriter {
+    inner: Arc<Inner>,
+    maximum_len: u64,
+    written: u64,
+    finished: bool,
+}
+
+impl fmt::Debug for StreamingWriter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StreamingWriter")
+            .field("maximum_len", &self.maximum_len)
+            .field("written", &self.written)
+            .field("finished", &self.finished)
+            .finish_non_exhaustive()
+    }
+}
+
+impl StreamingWriter {
+    /// Number of response bytes written during this attempt.
+    #[must_use]
+    pub const fn written_len(&self) -> u64 {
+        self.written
+    }
+
+    /// Appends one response chunk without exceeding the configured bound.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a closed stream, arithmetic overflow, or bytes beyond the
+    /// caller-selected limit before performing I/O.
+    pub fn write(&mut self, bytes: &[u8]) -> Result<(), StorageError> {
+        if self.finished {
+            return Err(StorageError::StreamUnavailable);
+        }
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let byte_count =
+            u64::try_from(bytes.len()).map_err(|_| StorageError::StreamLimitExceeded {
+                limit: self.maximum_len,
+            })?;
+        let write_end =
+            self.written
+                .checked_add(byte_count)
+                .ok_or(StorageError::StreamLimitExceeded {
+                    limit: self.maximum_len,
+                })?;
+        if write_end > self.maximum_len {
+            return Err(StorageError::StreamLimitExceeded {
+                limit: self.maximum_len,
+            });
+        }
+
+        let state = lock(&self.inner.state);
+        if state.lifecycle != Lifecycle::Active || !state.stream_active {
+            return Err(StorageError::StreamUnavailable);
+        }
+        let mut file_guard = lock(&self.inner.file);
+        let file = file_guard.as_mut().ok_or(StorageError::NotActive)?;
+        file.seek(SeekFrom::Start(self.written))
+            .and_then(|_| file.write_all(bytes))
+            .map_err(|error| map_io(StorageOperation::Write, &error))?;
+        self.written = write_end;
+        Ok(())
+    }
+
+    /// Seals the actual length only after the caller validated clean EOF.
+    ///
+    /// File bytes are flushed before complete coverage becomes observable.
+    ///
+    /// # Errors
+    ///
+    /// Rejects lost ownership or a changed file length and surfaces flush
+    /// failures without claiming completed coverage.
+    pub fn finish(&mut self) -> Result<u64, StorageError> {
+        if self.finished {
+            return Err(StorageError::StreamUnavailable);
+        }
+        let mut state = lock(&self.inner.state);
+        if state.lifecycle != Lifecycle::Active || !state.stream_active {
+            return Err(StorageError::StreamUnavailable);
+        }
+        let file_guard = lock(&self.inner.file);
+        let file = file_guard.as_ref().ok_or(StorageError::NotActive)?;
+        let actual_len = file
+            .metadata()
+            .map_err(|error| map_io(StorageOperation::Flush, &error))?
+            .len();
+        if actual_len != self.written {
+            return Err(StorageError::FileLengthChanged {
+                expected: self.written,
+                actual: actual_len,
+            });
+        }
+        file.sync_data()
+            .map_err(|error| map_io(StorageOperation::Flush, &error))?;
+        *lock(&self.inner.expected_len) = Some(self.written);
+        state.completed.clear();
+        if self.written > 0 {
+            state.completed.push(FileRange {
+                start: 0,
+                end: self.written,
+            });
+        }
+        state.stream_active = false;
+        self.finished = true;
+        Ok(self.written)
+    }
+}
+
+impl Drop for StreamingWriter {
+    fn drop(&mut self) {
+        if !self.finished {
+            lock(&self.inner.state).stream_active = false;
+        }
     }
 }
 

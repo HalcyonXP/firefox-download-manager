@@ -149,6 +149,7 @@ dependencies = [
 name = "download-manager-engine"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "download-manager-protocol",
  "download-manager-test-server",
  "httpdate",

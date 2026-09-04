@@ -123,13 +123,14 @@ The local fixture is test-only. It generates reproducible bytes and controlled H
 
 ### Transfer bytes
 
-1. The scheduler creates disjoint, bounded assignments covering the expected resource.
-2. A worker requests exactly its assignment using `Accept-Encoding: identity`.
-3. Before writing, the helper validates status, `Content-Range`, total size, resource validators, and body bounds.
-4. The storage layer rejects short, overlapping, duplicate, and out-of-bounds completion claims.
-5. Workers write directly to assigned offsets in the `.part` file.
+1. The scheduler subtracts durable coverage and lazily creates large disjoint assignments over only missing bytes.
+2. A fixed worker requests exactly its assignment using `Accept-Encoding: identity` and an eligible `If-Range` validator.
+3. Before storage ownership, the helper validates status, `Content-Range`, total size, resource validators, encoding, and exact bounded body length.
+4. The storage layer independently rejects short, overlapping, duplicate, and out-of-bounds completion claims.
+5. The validated assignment is written directly to its offset in the `.part` file; one optional duplicate fetch of the sole slow tail has only one storage winner.
 6. Crash-safe metadata records verified completed coverage at a bounded cadence.
-7. Progress events are rate-limited; a complete snapshot remains available.
+7. A safe one-worker fallback uses the same storage/result model; unknown-length interruption restarts from zero.
+8. Issue #9 will rate-limit live progress events while complete snapshots remain available.
 
 ### Complete a download
 
@@ -161,7 +162,7 @@ Transitions are explicit and persisted where they affect recovery. `completed` a
 - Four is the default; eight is the initial per-task cap.
 - Per-host and global limits independently bound aggregate pressure.
 - Each active byte belongs to one assignment and one writer.
-- Tail splitting may only create new disjoint assignments from bytes not yet written.
+- Tail assistance may duplicate only the sole remaining bounded request; first validated completion wins one storage assignment and the loser cannot write.
 - A task-level ownership guard prevents two helper instances from writing the same partial file.
 
 ## Storage model
@@ -193,10 +194,9 @@ The detailed contract is defined in [PROTOCOL.md](PROTOCOL.md) and must preserve
 
 The following remain deliberately reversible and belong to later issues:
 
-- concrete Rust HTTP/runtime, persistence serialization, and JavaScript build dependencies;
 - UI framework or framework-free implementation;
-- exact progress-event cadence and metadata checkpoint interval;
-- measured tail-splitting and retry tuning;
+- exact progress-event cadence (metadata checkpoint bounds are already fixed);
+- measured tail-hedge delay and retry tuning;
 - installer technology;
 - optional checksum UX; and
 - future cross-platform packaging.

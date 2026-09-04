@@ -248,6 +248,93 @@ fn round_trip_persists_identity_paths_validators_and_completed_ranges_only() {
 }
 
 #[test]
+fn unknown_length_recovery_restarts_at_zero_then_persists_discovered_size() {
+    let fixture = TestDirectories::new("unknown-stream-recovery");
+    let store = TaskStore::open(fixture.state()).expect("open store");
+    let mut task = TaskMetadata::new_at(
+        "https://origin.example.test/stream",
+        fixture.destination(),
+        "stream.bin",
+        timestamp(1),
+    )
+    .expect("create task");
+    task.transition(TaskState::Probing, timestamp(2))
+        .expect("begin probe");
+    task.apply_resource(
+        ResourceIdentity::new(
+            "https://cdn.example.test/stream",
+            None,
+            Validators::default(),
+            TransferMode::Single,
+        )
+        .expect("unknown-length identity"),
+        timestamp(3),
+    )
+    .expect("apply resource");
+    let partial = PartialFile::create_streaming(fixture.destination(), "stream.bin")
+        .expect("create streaming partial");
+    task.attach_partial(&partial, timestamp(4))
+        .expect("attach unknown-length partial");
+    task.transition(TaskState::Downloading, timestamp(5))
+        .expect("begin unknown-length transfer");
+    let revision = task.revision();
+    assert!(
+        !task
+            .refresh_completed(&partial, timestamp(5))
+            .expect("unknown stream has no durable range before EOF")
+    );
+    assert_eq!(task.revision(), revision);
+    store
+        .checkpoint(&task, CheckpointUrgency::Critical)
+        .expect("persist restartable stream");
+
+    let mut interrupted = partial.begin_stream(16).expect("start first response");
+    interrupted.write(b"stale").expect("write unproven bytes");
+    drop(interrupted);
+    drop(partial);
+
+    let report = store.load_all().expect("load interrupted stream");
+    assert!(report.failures().is_empty());
+    let mut recovered_task = report.tasks()[0].clone();
+    assert_eq!(recovered_task.bytes_completed(), 0);
+    let recovered = recovered_task
+        .reopen_partial()
+        .expect("reopen restartable stream");
+    assert_eq!(recovered.expected_len(), None);
+    assert_eq!(
+        fs::metadata(recovered.partial_path())
+            .expect("metadata")
+            .len(),
+        5
+    );
+
+    let mut restarted = recovered.begin_stream(16).expect("restart from zero");
+    restarted.write(b"fresh-data").expect("write replacement");
+    let discovered = restarted.finish().expect("seal validated EOF");
+    assert_eq!(discovered, 10);
+    assert_eq!(
+        fs::read(recovered.partial_path()).expect("read restarted bytes"),
+        b"fresh-data"
+    );
+    assert!(
+        recovered_task
+            .refresh_completed(&recovered, timestamp(6))
+            .expect("persist discovered length")
+    );
+    assert_eq!(
+        recovered_task
+            .resource()
+            .expect("resolved resource")
+            .expected_size(),
+        Some(10)
+    );
+    assert_eq!(recovered_task.completed_ranges(), &[range(0, 10)]);
+    recovered_task
+        .transition(TaskState::Validating, timestamp(7))
+        .expect("resolved stream is complete");
+}
+
+#[test]
 fn recovered_partial_preserves_coverage_and_accepts_only_missing_bytes() {
     let fixture = TestDirectories::new("resume-partial");
     let store = TaskStore::open(fixture.state()).expect("open store");

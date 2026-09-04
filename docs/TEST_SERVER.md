@@ -20,6 +20,7 @@ All body routes support a single explicit `Range: bytes=start-end` unless the sc
 | --- | --- |
 | `/fixture` | Correct `200`, or `206` and exact `Content-Range` |
 | `/ignore-range` | Ignores a range and returns the full body with `200` |
+| `/empty` | Proves a zero-length resource with `416` and `Content-Range: bytes */0` |
 | `/bad-range/start` | Advertises a start one byte too high |
 | `/bad-range/end` | Advertises an end one byte too high |
 | `/bad-range/total` | Advertises a total one byte too high |
@@ -49,7 +50,9 @@ Tests can add ordered `FaultRule` values to `ServerConfig`. `RequestSelector` ca
 - one-based request ordinal for that path; and
 - exact inclusive byte range.
 
-The first matching custom rule overrides a built-in route. Available faults cover ignored/malformed ranges, omitted/changing validators, body mutation, redirects, selected statuses and retry guidance, premature disconnects, bounded stalls, unexpected encoding, and unknown lengths. `TestServer::requests` returns non-sensitive observed path/ordinal/range metadata so a test can verify which request triggered a fault.
+The first matching custom rule overrides a built-in route. Available faults cover ignored/malformed ranges, omitted/changing validators, body mutation, redirects, selected statuses and retry guidance, premature disconnects, bounded stalls, unexpected encoding, and unknown lengths. `StallFirst` delays only the first occurrence of each selected path/range pair, which deterministically exercises a duplicate tail request without slowing its hedge.
+
+`TestServer::requests` returns non-sensitive observed path/ordinal/range and `If-Range` metadata so tests can verify assignments and conditional identity. `TestServer::max_concurrent_requests` reports the instance's peak active handlers, allowing scheduler tests to prove per-host and global caps independently.
 
 ## Usage
 

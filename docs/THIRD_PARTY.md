@@ -6,15 +6,15 @@ This record complements automated lockfile, license, advisory, ban, and source c
 
 | Dependency | Purpose | Version policy | License | Rationale |
 | --- | --- | --- | --- | --- |
+| `bytes` | Reference-counted bounded chunks returned by the HTTP streaming API | Exact workspace pin | MIT | Lets cancellation-aware scheduler code consume Reqwest body chunks without copying at the API boundary; assignment and stream limits still bound retained data |
 | `reqwest` | Bounded async HTTP client and maintained protocol/TLS integration | Exact workspace pin | MIT OR Apache-2.0 | Avoids custom HTTP/TLS parsing; default features and automatic decompression are disabled |
 | `httpdate` | Strict HTTP date and Retry-After parsing | Exact workspace pin | MIT OR Apache-2.0 | Small standards-focused parser avoids locale/date ambiguity |
 | `same-file` | Prove that retained partial and published final names are hard links to one file | Exact workspace pin | Unlicense OR MIT | Uses stable device/file identity rather than comparing paths, timestamps, or contents heuristically; required for conservative crash recovery on Windows |
 | `serde` | Strict internal task-state encoding/decoding | Exact workspace pin with derive support | MIT OR Apache-2.0 | Maintained typed serialization avoids an ad hoc parser; every version-1 record structure denies unknown fields |
 | `serde_json` | Bounded versioned task-state JSON | Exact workspace pin with default `std` only | MIT OR Apache-2.0 | Human-inspectable local state with strict typed decoding; file size is checked before parsing |
 | `thiserror` | Typed internal errors with safe project-controlled display text | Exact workspace pin | MIT OR Apache-2.0 | Keeps stable classifications separate from untrusted source text |
+| `tokio` | Async worker tasks, cancellation notifications, timers, and concurrency semaphores | Exact workspace pin; the scheduler directly requests `macros`, `rt-multi-thread`, `sync`, and `time` | MIT | Provides maintained bounded scheduling primitives; Reqwest supplies its required runtime/network features transitively |
 | `uuid` | Opaque stable task identifiers | Exact workspace pin with v4 generation only | MIT OR Apache-2.0 | Produces canonical random RFC 4122 UUIDs from the operating system randomness source |
-
-`tokio` is currently a direct test dependency and a transitive runtime dependency of Reqwest. It is exact-pinned under the workspace and MIT licensed. Later scheduler work may make its direct runtime role explicit.
 
 Reqwest is configured with its Rustls/platform-verifier path rather than disabling certificate checks or introducing native OpenSSL installation. This transitively includes `webpki-root-certs`, whose certificate-data package uses **CDLA-Permissive-2.0**. That permissive data license was reviewed and explicitly added to `deny.toml`; its required license/attribution material must be retained in generated release notices.
 

@@ -121,6 +121,14 @@ fn serves_exact_validated_ranges_and_unsatisfied_ranges() {
         unsatisfied.headers.get("content-range").map(String::as_str),
         Some("bytes */1024")
     );
+
+    let empty = get(&server, "/empty", Some(range(0, 0)));
+    assert_eq!(empty.status, 416);
+    assert_eq!(
+        empty.headers.get("content-range").map(String::as_str),
+        Some("bytes */0")
+    );
+    assert!(empty.body.is_empty());
 }
 
 #[test]

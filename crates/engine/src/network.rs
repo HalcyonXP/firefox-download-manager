@@ -521,7 +521,7 @@ fn unsatisfied_total(headers: &HeaderMap) -> Result<Option<u64>, RangeValidation
     Ok(parse_u64(total))
 }
 
-fn optional_u64_header(
+pub(crate) fn optional_u64_header(
     headers: &HeaderMap,
     name: HeaderName,
 ) -> Result<Option<u64>, RangeValidationError> {
@@ -557,7 +557,7 @@ fn single_header(
     Ok(Some(value))
 }
 
-fn reject_unexpected_encoding(headers: &HeaderMap) -> Result<(), RangeValidationError> {
+pub(crate) fn reject_unexpected_encoding(headers: &HeaderMap) -> Result<(), RangeValidationError> {
     if let Some(value) = single_header(headers, CONTENT_ENCODING)?
         && !value.eq_ignore_ascii_case("identity")
     {
@@ -566,7 +566,7 @@ fn reject_unexpected_encoding(headers: &HeaderMap) -> Result<(), RangeValidation
     Ok(())
 }
 
-fn parse_validators(headers: &HeaderMap) -> Result<Validators, RangeValidationError> {
+pub(crate) fn parse_validators(headers: &HeaderMap) -> Result<Validators, RangeValidationError> {
     let etag = single_header(headers, ETAG)?.map(parse_etag).transpose()?;
     let last_modified = single_header(headers, LAST_MODIFIED)?
         .map(|value| {
@@ -602,7 +602,16 @@ fn parse_etag(value: &str) -> Result<EntityTag, RangeValidationError> {
     })
 }
 
-fn validate_expected_validators(
+pub(crate) fn if_range_value(validators: &Validators) -> Option<String> {
+    validators
+        .etag
+        .as_ref()
+        .filter(|etag| !etag.weak)
+        .map(|etag| format!("\"{}\"", etag.opaque))
+        .or_else(|| validators.last_modified.clone())
+}
+
+pub(crate) fn validate_expected_validators(
     expected: &Validators,
     actual: &Validators,
 ) -> Result<(), RangeValidationError> {
@@ -643,7 +652,7 @@ async fn read_exact_body(mut response: reqwest::Response, expected: u64) -> Resu
     Ok(())
 }
 
-fn retry_after_seconds(headers: &HeaderMap) -> Option<u64> {
+pub(crate) fn retry_after_seconds(headers: &HeaderMap) -> Option<u64> {
     let value = single_header(headers, RETRY_AFTER).ok().flatten()?;
     if let Some(seconds) = parse_u64(value) {
         return Some(seconds);
@@ -783,8 +792,8 @@ mod tests {
     use reqwest::header::{CONTENT_DISPOSITION, HeaderMap, HeaderValue};
 
     use super::{
-        ContentRange, EntityTag, filename_from_content_disposition, parse_content_range,
-        parse_etag, percent_decode,
+        ContentRange, EntityTag, Validators, filename_from_content_disposition, if_range_value,
+        parse_content_range, parse_etag, percent_decode,
     };
 
     #[test]
@@ -808,6 +817,29 @@ mod tests {
         ] {
             assert!(parse_content_range(invalid).is_err(), "accepted {invalid}");
         }
+    }
+
+    #[test]
+    fn if_range_prefers_only_strong_entity_tags() {
+        let date = "Mon, 01 Jan 2024 00:00:00 GMT".to_owned();
+        let strong = Validators {
+            etag: Some(parse_etag("\"strong\"").expect("strong tag")),
+            last_modified: Some(date.clone()),
+        };
+        assert_eq!(if_range_value(&strong).as_deref(), Some("\"strong\""));
+
+        let weak = Validators {
+            etag: Some(parse_etag("W/\"weak\"").expect("weak tag")),
+            last_modified: Some(date.clone()),
+        };
+        assert_eq!(if_range_value(&weak), Some(date));
+        assert_eq!(
+            if_range_value(&Validators {
+                etag: Some(parse_etag("W/\"weak\"").expect("weak tag")),
+                last_modified: None,
+            }),
+            None
+        );
     }
 
     #[test]

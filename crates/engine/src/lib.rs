@@ -2,6 +2,7 @@
 
 pub mod network;
 pub mod persistence;
+pub mod scheduler;
 pub mod storage;
 
 use download_manager_protocol::PROTOCOL_VERSION;

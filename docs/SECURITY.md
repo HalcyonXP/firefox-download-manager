@@ -39,7 +39,7 @@ Malformed JSON, truncated framing, unexpected EOF, duplicate correlations, unkno
 
 All remote responses are untrusted. The helper uses maintained TLS defaults, does not disable certificate validation, and does not implement custom VPN or route behavior. Redirect count and schemes are bounded. Credentials are not forwarded across an origin change unless a later, explicit policy proves the destination is eligible.
 
-A range is writable only when status is `206` and a parsed `Content-Range` exactly matches the assignment and known total. Unexpected encoding, body length, validators, total size, or final URL causes revalidation, safe fallback before segmented bytes are accepted, or failure. Already mixed output is never reclassified as safe.
+A range is writable only when status is `206` and a parsed `Content-Range` exactly matches the assignment and known total. Each response is buffered only to its bounded assignment and revalidates encoding, body length, validators, total size, and exact final URL before acquiring storage ownership. A malformed worker response fails; fallback is selected only by the initial safe probe, never after segmented bytes are accepted. Already mixed output is never reclassified as safe.
 
 ### Helper to filesystem
 
@@ -87,8 +87,11 @@ Completed coverage is represented canonically as ordered, non-overlapping, in-bo
 
 ## Availability and server-impact controls
 
-- Per-task worker count is restricted to 1, 2, 4, or 8.
-- Per-host and global concurrency caps are mandatory.
+- Per-task worker count is restricted to 1, 2, 4, or 8, with four default and eight maximum.
+- Per-host and global concurrency semaphores are independent and shared across tasks.
+- Ranged bodies are limited to 8 MiB per assignment and plans to 1,000,000 requests.
+- Only the sole remaining tail can be hedged, at most once; only one response can own its range.
+- Undeclared-length streams have an explicit byte cap and restart from zero after interruption.
 - Retries are bounded and use exponential backoff with jitter.
 - `Retry-After` is honored for applicable responses.
 - Repeated failures reduce pressure rather than creating worker storms.

@@ -25,8 +25,8 @@ Firefox WebExtension
                     ▼
 Rust native helper
   ├── HTTP probe and strict range validation
-  ├── Concurrent segment scheduler
-  ├── Direct random-access file writer
+  ├── Fixed 1/2/4/8-worker segment scheduler with independent request caps
+  ├── Validated random-access and bounded sequential partial-file writers
   └── Persistent pause/resume and recovery state
 ```
 

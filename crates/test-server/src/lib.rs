@@ -17,7 +17,7 @@ const BODY_CHUNK_BYTES: usize = 16 * 1024;
 const DEFAULT_STALL: Duration = Duration::from_millis(100);
 
 /// An inclusive HTTP byte range.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct ByteRange {
     /// First requested byte.
     pub start: u64,
@@ -119,6 +119,8 @@ pub enum BadRange {
 pub enum Fault {
     /// Ignore `Range` and return the complete body with `200`.
     IgnoreRange,
+    /// Represent a zero-length resource with an exact `416` range response.
+    EmptyResource,
     /// Return a `206` with deliberately incorrect range metadata.
     BadContentRange(BadRange),
     /// Omit `ETag` and `Last-Modified`.
@@ -138,8 +140,10 @@ pub enum Fault {
     },
     /// Declare the full body length but disconnect after this many bytes.
     DisconnectAfter(usize),
-    /// Wait before sending the response body.
+    /// Wait before sending every matching response body.
     Stall(Duration),
+    /// Wait only for the first request of each matching path/range pair.
+    StallFirst(Duration),
     /// Send a body despite this unexpected content encoding.
     UnexpectedEncoding(String),
     /// Omit both `Content-Length` and transfer encoding and delimit by close.
@@ -185,6 +189,8 @@ pub struct ObservedRequest {
     pub request_number: u64,
     /// Parsed single byte range, when present and valid.
     pub range: Option<ByteRange>,
+    /// Exact `If-Range` value, when supplied by a worker.
+    pub if_range: Option<String>,
 }
 
 /// Configuration for a test-server instance.
@@ -199,7 +205,10 @@ pub struct ServerConfig {
 #[derive(Debug, Default)]
 struct SharedState {
     path_counts: HashMap<String, u64>,
+    range_counts: HashMap<(String, Option<ByteRange>), u64>,
     requests: Vec<ObservedRequest>,
+    active_requests: usize,
+    max_active_requests: usize,
 }
 
 /// A running server bound exclusively to an ephemeral IPv4 loopback port.
@@ -271,6 +280,12 @@ impl TestServer {
     pub fn requests(&self) -> Vec<ObservedRequest> {
         lock_state(&self.state).requests.clone()
     }
+
+    /// Highest number of response handlers active at the same time.
+    #[must_use]
+    pub fn max_concurrent_requests(&self) -> usize {
+        lock_state(&self.state).max_active_requests
+    }
 }
 
 impl Drop for TestServer {
@@ -280,6 +295,17 @@ impl Drop for TestServer {
         if let Some(handle) = self.listener_thread.take() {
             let _ = handle.join();
         }
+    }
+}
+
+struct ActiveRequestGuard<'a> {
+    state: &'a Mutex<SharedState>,
+}
+
+impl Drop for ActiveRequestGuard<'_> {
+    fn drop(&mut self) {
+        let mut shared = lock_state(self.state);
+        shared.active_requests = shared.active_requests.saturating_sub(1);
     }
 }
 
@@ -322,6 +348,7 @@ struct Request {
     method: String,
     path: String,
     range: Option<ByteRange>,
+    if_range: Option<String>,
     malformed_range: bool,
 }
 
@@ -348,23 +375,37 @@ fn handle_connection(
         return write_empty_status(&mut stream, 400, &[]);
     }
 
-    let observed = {
+    let (observed, range_request_number) = {
         let mut shared = lock_state(state);
         let count = shared.path_counts.entry(request.path.clone()).or_default();
         *count = count.saturating_add(1);
+        let request_number = *count;
+        let range_count = shared
+            .range_counts
+            .entry((request.path.clone(), request.range))
+            .or_default();
+        *range_count = range_count.saturating_add(1);
+        let range_request_number = *range_count;
         let observed = ObservedRequest {
             path: request.path.clone(),
-            request_number: *count,
+            request_number,
             range: request.range,
+            if_range: request.if_range.clone(),
         };
         shared.requests.push(observed.clone());
-        observed
+        shared.active_requests = shared.active_requests.saturating_add(1);
+        shared.max_active_requests = shared.max_active_requests.max(shared.active_requests);
+        (observed, range_request_number)
     };
+    let _activity = ActiveRequestGuard { state };
 
     let custom_fault = config
         .rules
         .iter()
-        .find(|rule| rule.selector.matches(&observed))
+        .find(|rule| {
+            rule.selector.matches(&observed)
+                && (!matches!(&rule.fault, Fault::StallFirst(_)) || range_request_number == 1)
+        })
         .map(|rule| &rule.fault);
     let built_in = if custom_fault.is_none() {
         built_in_fault(&observed)
@@ -415,6 +456,7 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Option<Request>> {
 
     let path = target.split('?').next().unwrap_or(target).to_owned();
     let mut range = None;
+    let mut if_range = None;
     let mut malformed_range = false;
     for line in lines {
         if line.is_empty() {
@@ -429,6 +471,13 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Option<Request>> {
                 Some(parsed) if range.is_none() => range = Some(parsed),
                 _ => malformed_range = true,
             }
+        } else if name.eq_ignore_ascii_case("if-range") {
+            let value = value.trim();
+            if if_range.is_none() && !value.is_empty() && value.len() <= 8 * 1024 {
+                if_range = Some(value.to_owned());
+            } else {
+                malformed_range = true;
+            }
         }
     }
 
@@ -436,6 +485,7 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Option<Request>> {
         method,
         path,
         range,
+        if_range,
         malformed_range,
     }))
 }
@@ -456,6 +506,7 @@ fn built_in_fault(request: &ObservedRequest) -> Option<Fault> {
     match request.path.as_str() {
         "/fixture" => None,
         "/ignore-range" => Some(Fault::IgnoreRange),
+        "/empty" => Some(Fault::EmptyResource),
         "/bad-range/start" => Some(Fault::BadContentRange(BadRange::Start)),
         "/bad-range/end" => Some(Fault::BadContentRange(BadRange::End)),
         "/bad-range/total" => Some(Fault::BadContentRange(BadRange::Total)),
@@ -501,6 +552,12 @@ fn serve_fixture(
     config: &ServerConfig,
     fault: Option<&Fault>,
 ) -> io::Result<()> {
+    if matches!(fault, Some(Fault::EmptyResource)) {
+        if request.range.is_some() {
+            return write_empty_status(stream, 416, &[("Content-Range", "bytes */0".to_owned())]);
+        }
+        return write_empty_status(stream, 200, &[]);
+    }
     if let Some(Fault::Redirect(location)) = fault {
         if location.contains(['\r', '\n']) {
             return write_empty_status(stream, 500, &[]);
@@ -599,7 +656,7 @@ fn serve_fixture(
     if request.method == "HEAD" {
         return finish_response(stream);
     }
-    if let Some(Fault::Stall(duration)) = fault {
+    if let Some(Fault::Stall(duration) | Fault::StallFirst(duration)) = fault {
         thread::sleep(*duration);
     }
 

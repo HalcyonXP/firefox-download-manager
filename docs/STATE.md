@@ -1,6 +1,6 @@
 # Persistent task-state and recovery policy
 
-Status: implemented baseline for issue #7
+Status: implemented for issue #7 with issue #8 streaming recovery integration
 
 Internal format version: `1`
 
@@ -73,6 +73,8 @@ The concrete serializer emits compact JSON. All fields shown are required; absen
 
 Completed ranges are half-open, ordered, merged, non-overlapping, bounded by the known resource size, and capped at 8,192 entries. Adjacent ranges are noncanonical because storage merges them. Byte totals use checked arithmetic.
 
+An active single-stream record may temporarily have `expected_size: null`, a confined partial path, and no completed ranges. Bytes written before clean EOF are intentionally not resumable metadata. Once the streaming writer validates EOF and flushes data, `refresh_completed` atomically advances the in-memory resource identity to the discovered size and captures exact coverage for the next checkpoint. Validating, promoting, and completing still require a known size and exact coverage.
+
 The original and final exact URLs may include sensitive query values because the same resource may require them for revalidation or retry. URLs are normalized once, restricted to HTTP(S), and reject user-info. Destination, partial, and final paths are absolute, bounded, reject raw Windows device namespaces, and are confined to the destination where applicable.
 
 ## Data intentionally not persisted
@@ -134,7 +136,7 @@ Startup acquires the store lock and removes narrowly matched stale temporary fil
 
 Unknown future versions and corrupt records remain untouched for diagnosis or deliberate local cleanup and are returned as safe failure classifications, not resumable tasks. Version 1 has no predecessor to migrate; adding a later format requires an explicit tested migration rather than interpreting future fields as version 1. A missing, truncated, linked, or wrong-length partial excludes active prepublication work from recovery; a `promoting` or `completed` task may instead prove its recorded final file.
 
-A validated task can reopen its partial file with only the durable completed ranges. Active assignments never survive restart. Reopened storage rejects assignments over completed coverage and permits only missing ranges, so uncheckpointed bytes are safely overwritten rather than trusted.
+A validated known-size task can reopen its partial file with only the durable completed ranges. Active assignments never survive restart. Reopened storage rejects assignments over completed coverage and permits only missing ranges, so uncheckpointed bytes are safely overwritten rather than trusted. An unknown-length single stream reopens with no coverage regardless of the partial's current length; its next bounded streaming writer truncates to zero before receiving a fresh response.
 
 ## Completed and abandoned cleanup
 
@@ -150,4 +152,4 @@ If a crash occurs between partial deletion and metadata deletion, recovery retai
 
 ## Deferred integration
 
-Issues #8 and #9 connect recovered records to scheduling, pause/resume, retry, and progress events. A loaded `downloading` value describes the last durable phase, not a claim that a worker survived process exit; lifecycle integration must pause or safely reconstruct work before emitting a live snapshot. The issue #7 baseline can persist a probed unknown-length single-stream identity, but it deliberately refuses to claim a partial or completed coverage without an unknown-length storage implementation; issue #8 must add that storage/progress behavior or restart such a stream from byte zero rather than inventing a size. Later work may tune when routine checkpoint requests occur, but it may not reverse bytes-first ordering, weaken state/range validation, persist credentials by default, or permit stale revisions to overwrite newer state.
+Issue #8 connects durable completed ranges and restartable unknown streams to the fixed-concurrency scheduler. Issue #9 still owns task-level pause/resume/cancellation control, retry timing, speed/ETA sampling, and protocol progress events. A loaded `downloading` value describes the last durable phase, not a claim that a worker survived process exit; that lifecycle integration must pause or safely reconstruct work before emitting a live snapshot. Later work may tune routine checkpoint requests, but it may not reverse bytes-first ordering, weaken state/range validation, persist credentials by default, permit stale revisions to overwrite newer state, or treat interrupted unknown-length bytes as resumable.
