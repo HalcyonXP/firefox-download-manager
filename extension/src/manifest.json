@@ -9,6 +9,7 @@
       "strict_min_version": "128.0"
     }
   },
+  "permissions": ["nativeMessaging"],
   "background": {
     "scripts": ["background.js"],
     "persistent": false

@@ -37,6 +37,20 @@ for (const message of hostileMessages) {
   assert.equal(validate(message), false, "hostile protocol message was accepted");
 }
 
+let sessionMessageCount = 0;
+for (const sessionPath of process.argv.slice(2)) {
+  const document = JSON.parse(await readFile(sessionPath, "utf8"));
+  const messages = Array.isArray(document) ? document : [document];
+  for (const [index, message] of messages.entries()) {
+    assert.equal(
+      validate(message),
+      true,
+      `${sessionPath} message ${index}: ${ajv.errorsText(validate.errors)}`,
+    );
+    sessionMessageCount += 1;
+  }
+}
+
 const taskProperties = new Set(Object.keys(schema.$defs.task.properties));
 for (const forbidden of [
   "authorization",
@@ -50,4 +64,8 @@ for (const forbidden of [
   assert.equal(taskProperties.has(forbidden), false, `task snapshot exposes ${forbidden}`);
 }
 
-console.log(`Validated protocol schema, ${examples.length} examples, and hostile cases.`);
+const sessionSummary =
+  sessionMessageCount === 0 ? "" : `, plus ${sessionMessageCount} live session messages`;
+console.log(
+  `Validated protocol schema, ${examples.length} examples, hostile cases${sessionSummary}.`,
+);

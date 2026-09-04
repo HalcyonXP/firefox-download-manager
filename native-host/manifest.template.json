@@ -1,0 +1,7 @@
+{
+  "name": "com.halcyonxp.firefox_download_manager",
+  "description": "HalcyonXP Firefox Download Manager native helper",
+  "path": "__NATIVE_HOST_EXECUTABLE__",
+  "type": "stdio",
+  "allowed_extensions": ["download-manager@halcyonxp.local"]
+}

@@ -37,6 +37,23 @@ The initial product targets direct HTTP(S) downloads selected explicitly by the 
 
 The native helper uses the operating system's normal network route, whether a VPN is connected or not.
 
+## Native Messaging development install
+
+Build and register the on-demand helper for the current Windows user, then build and temporarily load the extension:
+
+```powershell
+./scripts/install-native-host.ps1
+npm run build
+```
+
+The installer copies the release helper to the per-user application-data tree and writes only `HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager`. The generated manifest permits only `download-manager@halcyonxp.local`; the extension requests only `nativeMessaging` and no host access. Paths containing spaces are supported. Remove the registration and installed helper files without touching download state or completed files with:
+
+```powershell
+./scripts/uninstall-native-host.ps1
+```
+
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for verification and manual Firefox steps. The registered transport and reconnect snapshot layer are implemented; the user-facing creation and dashboard surfaces remain issues #11 and #12. These scripts do not create a service, listener, firewall rule, VPN configuration, or network-route change.
+
 ## Guiding principles
 
 - Correct bytes are more important than optimistic speed.

@@ -105,7 +105,9 @@ These controls reduce accidental denial of service but do not promise availabili
 
 ## Native installation and update boundary
 
-The native-host manifest names one absolute helper path and allows only this extension's stable ID. Installation and removal modify only required user-scoped registration where possible, quote paths containing spaces correctly, and embed no secrets. The project has no remote updater. Release artifacts and checksums come from GitHub; update behavior is explicit and local.
+The source native-host manifest allows only `download-manager@halcyonxp.local`; installation substitutes one JSON-escaped absolute executable path and retains only Firefox's supported manifest fields. The extension requests only `nativeMessaging` and no host origins. `install-native-host.ps1` copies a verified executable beneath the current user's local application data and writes only `HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager`; it creates no service, listener, scheduled task, firewall rule, VPN setting, or route. The companion uninstaller refuses to delete a registration pointing at a different manifest, removes only known generated host files, and never recursively removes task state or destination content. Windows CI installs into a path containing spaces, launches the registered binary, negotiates, receives a snapshot, and removes the registration.
+
+The project has no remote updater. Release artifacts and checksums come from GitHub; update behavior is explicit and local. A packaging/upgrade design beyond these development registration scripts remains release work.
 
 Task-state migrations are versioned and tested. The v1-to-v2 worker-default migration uses a separate strict decoder and atomic replacement. An incompatible upgrade preserves data for diagnosis or explicit cleanup rather than guessing.
 
@@ -115,10 +117,9 @@ Only dependencies needed for scoped behavior may be introduced. Versions and loc
 
 ## Required security tests
 
-Later issues must provide regression coverage for:
+Current regression coverage includes partial, malformed, duplicate-member, oversized, and truncated Native Messaging frames; unknown versions/commands; mandatory hello negotiation; path-with-spaces HKCU launch; initial/reconnect snapshots; clean-EOF cooperative shutdown; and the HTTP/storage/state cases implemented to date. Remaining issues extend coverage for:
 
-- malformed, oversized, and truncated Native Messaging frames;
-- unknown protocol versions and commands;
+- full browser UI command/reconnect behavior and helper-unavailable presentation;
 - malformed/ignored ranges, changing validators, and resource mutation;
 - short, overlapping, duplicate, and out-of-bounds writes;
 - traversal, Windows reserved names, alternate streams, links, collisions, and paths with spaces;

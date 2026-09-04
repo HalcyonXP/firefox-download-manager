@@ -12,7 +12,9 @@ A permanently installed service or unauthenticated local daemon would allow down
 
 Firefox launches the helper through Native Messaging under the interactive user's account. The helper owns active work while connected. On EOF, shutdown, or browser exit it stops new network assignments, reaches safe writer checkpoints, persists recoverable state, and exits. A later connection starts a helper that validates and reconstructs state.
 
-Only one writer may own a task/state directory. A named user-scoped ownership primitive and task locks prevent concurrent helper instances from writing the same task. Unexpected termination is handled by crash-safe metadata and conservative recovery.
+Only one writer may own a task/state directory. An exclusive user-scoped state-root lock and per-task controls prevent concurrent helper instances from writing the same task. Unexpected termination is handled by crash-safe metadata and conservative recovery.
+
+The issue-#10 implementation registers an ordinary executable only under the current user's Firefox Native Messaging key. It has no service, listener, scheduled task, elevated component, or independent route/VPN behavior. Standard output is framing-only. Clean EOF and protocol/output errors all pass through cooperative engine shutdown; active downloads checkpoint and pause, incomplete probe/validation fails safely, and a later process emits persisted snapshots after hello.
 
 ## Rejected alternatives
 

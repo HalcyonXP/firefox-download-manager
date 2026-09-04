@@ -127,6 +127,12 @@ async fn task_completes_with_full_snapshot_and_collision_free_publication() {
     }
     assert!(saw_completed);
     assert!(!engine.events_require_snapshot());
+    assert_eq!(engine.remove(queued.task_id(), false), Ok(queued.task_id()));
+    assert_eq!(
+        engine.snapshot(queued.task_id()),
+        Err(TaskEngineError::TaskNotFound)
+    );
+    assert!(final_path.exists());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -366,6 +372,111 @@ async fn pause_checkpoints_retained_ranges_and_resume_requests_only_missing_byte
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shutdown_stops_network_and_persists_recoverable_state() {
+    let fixture = Fixture {
+        len: 8 * MIB,
+        seed: 115,
+    };
+    let server = TestServer::start(ServerConfig {
+        fixture,
+        rules: vec![FaultRule {
+            selector: RequestSelector {
+                path: Some("/fixture".to_owned()),
+                request_number: None,
+                range: None,
+            },
+            fault: Fault::Stall(Duration::from_millis(100)),
+        }],
+    })
+    .expect("start shutdown server");
+    let directories = TestDirectories::new("shutdown");
+    let engine = TaskEngine::open(directories.state(), TaskEngineOptions::default())
+        .expect("open task engine");
+    let task = engine
+        .create_task(
+            &server.url("/fixture"),
+            directories.destination(),
+            "shutdown.bin",
+            WorkerCount::Four,
+        )
+        .expect("create task");
+    engine.start(task.task_id()).expect("start task");
+    wait_for_progress(&engine, task.task_id(), MIB).await;
+
+    let snapshots = tokio::time::timeout(Duration::from_secs(2), engine.shutdown())
+        .await
+        .expect("shutdown timeout")
+        .expect("shutdown engine");
+    let paused = snapshots
+        .iter()
+        .find(|snapshot| snapshot.task_id() == task.task_id())
+        .expect("shutdown snapshot");
+    assert_eq!(paused.state(), TaskState::Paused);
+    assert!(paused.bytes_completed() >= MIB);
+    let request_boundary = server.requests().len();
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(server.requests().len(), request_boundary);
+
+    drop(engine);
+    let recovered = TaskEngine::open(directories.state(), TaskEngineOptions::default())
+        .expect("reopen task engine")
+        .snapshot(task.task_id())
+        .expect("recovered snapshot");
+    assert_eq!(recovered.state(), TaskState::Paused);
+    assert_eq!(recovered.bytes_completed(), paused.bytes_completed());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn shutdown_interrupts_probe_backoff_without_marking_user_cancellation() {
+    let fixture = Fixture {
+        len: 128 * 1024,
+        seed: 116,
+    };
+    let server = TestServer::start(ServerConfig {
+        fixture,
+        rules: vec![FaultRule {
+            selector: RequestSelector {
+                path: Some("/fixture".to_owned()),
+                request_number: None,
+                range: Some(ByteRange::new(0, 0).expect("probe range")),
+            },
+            fault: Fault::Status {
+                code: 503,
+                retry_after_seconds: Some(10),
+            },
+        }],
+    })
+    .expect("start retry server");
+    let directories = TestDirectories::new("shutdown-probe");
+    let engine =
+        TaskEngine::open(directories.state(), long_retry_options()).expect("open task engine");
+    let task = engine
+        .create_task_default(
+            &server.url("/fixture"),
+            directories.destination(),
+            "shutdown-probe.bin",
+        )
+        .expect("create task");
+    engine.start(task.task_id()).expect("start task");
+    wait_for_retry_event(&engine, task.task_id()).await;
+
+    let snapshots = tokio::time::timeout(Duration::from_secs(1), engine.shutdown())
+        .await
+        .expect("shutdown did not interrupt retry")
+        .expect("shutdown engine");
+    let failed = snapshots
+        .iter()
+        .find(|snapshot| snapshot.task_id() == task.task_id())
+        .expect("failed snapshot");
+    assert_eq!(failed.state(), TaskState::Failed);
+    assert_eq!(
+        failed.failure().expect("shutdown reason").kind(),
+        TaskFailureKind::State
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn bounded_event_overflow_requires_but_does_not_replace_full_snapshots() {
     let directories = TestDirectories::new("event-overflow");
     let options = TaskEngineOptions::new(
@@ -401,6 +512,15 @@ async fn bounded_event_overflow_requires_but_does_not_replace_full_snapshots() {
             .all(|snapshot| snapshot.state() == TaskState::Cancelled)
     );
     assert_eq!(drain_events(&engine).len(), 64);
+    assert_eq!(
+        engine
+            .take_overflow_snapshot()
+            .expect("overflow snapshot")
+            .len(),
+        task_ids.len()
+    );
+    assert!(!engine.events_require_snapshot());
+    assert!(engine.take_overflow_snapshot().is_none());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
@@ -470,6 +590,20 @@ async fn cancellation_applies_explicit_keep_and_delete_partial_policies() {
             }
         }
         assert!(metadata.final_path().is_none());
+        if policy == CancelPartialPolicy::Keep {
+            assert_eq!(
+                engine.remove(task.task_id(), false),
+                Err(TaskEngineError::PartialRetained)
+            );
+            assert_eq!(engine.remove(task.task_id(), true), Ok(task.task_id()));
+            assert!(!partial_before.exists());
+        } else {
+            assert_eq!(engine.remove(task.task_id(), false), Ok(task.task_id()));
+        }
+        assert_eq!(
+            engine.snapshot(task.task_id()),
+            Err(TaskEngineError::TaskNotFound)
+        );
     }
 }
 

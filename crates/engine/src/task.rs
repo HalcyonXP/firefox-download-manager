@@ -20,9 +20,9 @@ use tokio::time::MissedTickBehavior;
 
 use crate::network::{ProbeClient, ProbeError, RangeValidationError, ResourceProbe};
 use crate::persistence::{
-    CheckpointOutcome, CheckpointUrgency, LoadFailure, PersistenceError, ResourceIdentity,
-    StateValidationError, TaskId, TaskMetadata, TaskState, TaskStore, TimestampMillis,
-    TransferMode,
+    CheckpointOutcome, CheckpointUrgency, CleanupOutcome, LoadFailure, PartialCleanup,
+    PersistenceError, ResourceIdentity, StateValidationError, TaskId, TaskMetadata, TaskState,
+    TaskStore, TimestampMillis, TransferMode,
 };
 use crate::progress::{
     MAX_SAFE_INTEGER, ProgressConfigError, ProgressEstimate, ProgressPolicy, SpeedEstimator,
@@ -627,6 +627,9 @@ pub enum TaskEngineError {
     /// Maximum managed task count was reached.
     #[error("managed task count exceeds its bound")]
     TooManyTasks,
+    /// A retained partial prevented non-destructive history removal.
+    #[error("task retains a partial that requires explicit deletion")]
+    PartialRetained,
     /// Persistent metadata validation failed.
     #[error("task metadata is invalid: {0}")]
     State(#[from] StateValidationError),
@@ -754,6 +757,21 @@ impl EventBuffer {
         self.available.notify_one();
     }
 
+    fn remove_task(&self, task_id: TaskId) {
+        lock(&self.state)
+            .queue
+            .retain(|pending| event_task_id(&pending.kind) != task_id);
+    }
+
+    fn reset_after_overflow(&self) -> bool {
+        let mut state = lock(&self.state);
+        if !self.overflowed.swap(false, Ordering::AcqRel) {
+            return false;
+        }
+        state.queue.clear();
+        true
+    }
+
     fn try_next(&self) -> Result<Option<TaskEvent>, TaskEngineError> {
         let mut state = lock(&self.state);
         let Some(pending) = state.queue.pop_front() else {
@@ -777,6 +795,16 @@ fn progress_task_id(kind: &TaskEventKind) -> Option<TaskId> {
     match kind {
         TaskEventKind::Progress(progress) => Some(progress.task_id),
         _ => None,
+    }
+}
+
+fn event_task_id(kind: &TaskEventKind) -> TaskId {
+    match kind {
+        TaskEventKind::StateChanged { task, .. }
+        | TaskEventKind::Completed(task)
+        | TaskEventKind::Failed { task, .. } => task.task_id(),
+        TaskEventKind::Progress(progress) => progress.task_id(),
+        TaskEventKind::RetryScheduled(retry) => retry.task_id(),
     }
 }
 
@@ -853,6 +881,7 @@ struct ManagedState {
     estimator: SpeedEstimator,
     last_progress_event: Option<Instant>,
     running: bool,
+    removed: bool,
     generation: u64,
     cancellation: Option<TransferCancellation>,
     stop_request: Option<StopRequest>,
@@ -872,6 +901,7 @@ impl fmt::Debug for ManagedState {
             .field("estimator", &"<rate-window>")
             .field("has_progress_event", &self.last_progress_event.is_some())
             .field("running", &self.running)
+            .field("removed", &self.removed)
             .field("generation", &self.generation)
             .field("has_cancellation", &self.cancellation.is_some())
             .field("stop_request", &self.stop_request)
@@ -883,6 +913,7 @@ impl fmt::Debug for ManagedState {
 enum StopRequest {
     Pause,
     Cancel(CancelPartialPolicy),
+    Shutdown,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1027,6 +1058,7 @@ impl TaskEngine {
         let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
         let (snapshot, previous, generation, cancellation) = {
             let mut state = lock(&task.state);
+            ensure_present(&state)?;
             if state.running || state.metadata.state() != TaskState::Queued {
                 return Err(TaskEngineError::InvalidTaskState);
             }
@@ -1064,13 +1096,19 @@ impl TaskEngine {
     /// Rejects missing, running, or states other than paused/failed.
     pub async fn resume(&self, task_id: TaskId) -> Result<TaskSnapshot, TaskEngineError> {
         let task = self.task(task_id)?;
-        if lock(&task.state).metadata.state() == TaskState::Failed {
+        let is_failed = {
+            let state = lock(&task.state);
+            ensure_present(&state)?;
+            state.metadata.state() == TaskState::Failed
+        };
+        if is_failed {
             return self.retry(task_id);
         }
         let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
         let mut subscription = task.updates.subscribe();
         let (generation, cancellation) = {
             let mut state = lock(&task.state);
+            ensure_present(&state)?;
             if state.running || state.metadata.state() != TaskState::Paused {
                 return Err(TaskEngineError::InvalidTaskState);
             }
@@ -1098,6 +1136,7 @@ impl TaskEngine {
         let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
         let (queued, previous) = {
             let mut state = lock(&task.state);
+            ensure_present(&state)?;
             if state.running || state.metadata.state() != TaskState::Failed {
                 return Err(TaskEngineError::InvalidTaskState);
             }
@@ -1120,6 +1159,7 @@ impl TaskEngine {
 
         let (probing, generation, cancellation) = {
             let mut state = lock(&task.state);
+            ensure_present(&state)?;
             if state.running || state.metadata.state() != TaskState::Queued {
                 return Err(TaskEngineError::InvalidTaskState);
             }
@@ -1157,6 +1197,7 @@ impl TaskEngine {
         let mut subscription = task.updates.subscribe();
         {
             let mut state = lock(&task.state);
+            ensure_present(&state)?;
             if !state.running
                 || state.metadata.state() != TaskState::Downloading
                 || state.stop_request.is_some()
@@ -1197,6 +1238,7 @@ impl TaskEngine {
         let mut subscription = task.updates.subscribe();
         let direct = {
             let mut state = lock(&task.state);
+            ensure_present(&state)?;
             if !state.metadata.state().allows(TaskState::Cancelled) || state.stop_request.is_some()
             {
                 return Err(TaskEngineError::InvalidTaskState);
@@ -1238,6 +1280,83 @@ impl TaskEngine {
         Ok(snapshot)
     }
 
+    /// Removes inactive terminal history, optionally deleting a retained
+    /// managed partial. Completed final output is never removed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing, active, or nonterminal tasks. A retained partial must
+    /// be explicitly deleted before its history can be removed.
+    pub fn remove(&self, task_id: TaskId, delete_partial: bool) -> Result<TaskId, TaskEngineError> {
+        let task = self.task(task_id)?;
+        {
+            let mut state = lock(&task.state);
+            ensure_present(&state)?;
+            if state.running || !state.metadata.state().is_terminal() {
+                return Err(TaskEngineError::InvalidTaskState);
+            }
+            let cleanup = if delete_partial {
+                PartialCleanup::Delete
+            } else {
+                PartialCleanup::Keep
+            };
+            match self
+                .inner
+                .store
+                .cleanup_terminal(&state.metadata, cleanup)?
+            {
+                CleanupOutcome::Retained => return Err(TaskEngineError::PartialRetained),
+                CleanupOutcome::Removed => {
+                    state.removed = true;
+                    publish(&task, &state);
+                }
+            }
+        }
+        let mut tasks = lock(&self.inner.tasks);
+        if tasks
+            .get(&task_id)
+            .is_some_and(|known| Arc::ptr_eq(known, &task))
+        {
+            tasks.remove(&task_id);
+        }
+        drop(tasks);
+        self.inner.events.remove_task(task_id);
+        Ok(task_id)
+    }
+
+    /// Cooperatively stops every active run for Native Messaging EOF/shutdown.
+    /// Downloading work reaches `paused`; interrupted probe/validation phases
+    /// fail safely; promotion is allowed to finish its synchronous publication.
+    ///
+    /// # Errors
+    ///
+    /// Returns only if an internal task update channel disappears unexpectedly.
+    pub async fn shutdown(&self) -> Result<Vec<TaskSnapshot>, TaskEngineError> {
+        let tasks: Vec<_> = lock(&self.inner.tasks).values().cloned().collect();
+        for task in &tasks {
+            let mut state = lock(&task.state);
+            if state.removed || !state.running || state.stop_request.is_some() {
+                continue;
+            }
+            if state.metadata.state() == TaskState::Promoting {
+                continue;
+            }
+            state.stop_request = Some(StopRequest::Shutdown);
+            state
+                .cancellation
+                .as_ref()
+                .ok_or(TaskEngineError::Internal)?
+                .cancel();
+        }
+        for task in tasks {
+            let mut receiver = task.updates.subscribe();
+            if receiver.borrow().running {
+                wait_until(&mut receiver, |update| !update.running).await?;
+            }
+        }
+        Ok(self.snapshots())
+    }
+
     /// Returns one full latest-value snapshot.
     ///
     /// # Errors
@@ -1245,8 +1364,9 @@ impl TaskEngine {
     /// Returns [`TaskEngineError::TaskNotFound`] for an unknown ID.
     pub fn snapshot(&self, task_id: TaskId) -> Result<TaskSnapshot, TaskEngineError> {
         let task = self.task(task_id)?;
-        let snapshot = lock(&task.state).snapshot();
-        Ok(snapshot)
+        let state = lock(&task.state);
+        ensure_present(&state)?;
+        Ok(state.snapshot())
     }
 
     /// Returns authoritative metadata for trusted native-host/recovery code.
@@ -1257,8 +1377,9 @@ impl TaskEngine {
     /// Returns [`TaskEngineError::TaskNotFound`] for an unknown ID.
     pub fn metadata(&self, task_id: TaskId) -> Result<TaskMetadata, TaskEngineError> {
         let task = self.task(task_id)?;
-        let metadata = lock(&task.state).metadata.clone();
-        Ok(metadata)
+        let state = lock(&task.state);
+        ensure_present(&state)?;
+        Ok(state.metadata.clone())
     }
 
     /// Returns all current snapshots ordered by task ID.
@@ -1267,7 +1388,10 @@ impl TaskEngine {
         let tasks: Vec<_> = lock(&self.inner.tasks).values().cloned().collect();
         let mut snapshots: Vec<_> = tasks
             .iter()
-            .map(|task| lock(&task.state).snapshot())
+            .filter_map(|task| {
+                let state = lock(&task.state);
+                (!state.removed).then(|| state.snapshot())
+            })
             .collect();
         snapshots.sort_by_key(TaskSnapshot::task_id);
         snapshots
@@ -1280,9 +1404,11 @@ impl TaskEngine {
     /// Returns [`TaskEngineError::TaskNotFound`] for an unknown ID.
     pub fn subscribe(&self, task_id: TaskId) -> Result<TaskSubscription, TaskEngineError> {
         let task = self.task(task_id)?;
-        Ok(TaskSubscription {
-            receiver: task.updates.subscribe(),
-        })
+        let state = lock(&task.state);
+        ensure_present(&state)?;
+        let receiver = task.updates.subscribe();
+        drop(state);
+        Ok(TaskSubscription { receiver })
     }
 
     /// Waits until the current run is no longer active.
@@ -1295,7 +1421,11 @@ impl TaskEngine {
         task_id: TaskId,
     ) -> Result<TaskSnapshot, TaskEngineError> {
         let task = self.task(task_id)?;
-        let mut receiver = task.updates.subscribe();
+        let mut receiver = {
+            let state = lock(&task.state);
+            ensure_present(&state)?;
+            task.updates.subscribe()
+        };
         if !receiver.borrow().running {
             return Ok(receiver.borrow().snapshot.clone());
         }
@@ -1330,6 +1460,17 @@ impl TaskEngine {
     #[must_use]
     pub fn events_require_snapshot(&self) -> bool {
         self.inner.events.overflowed.load(Ordering::Acquire)
+    }
+
+    /// Clears an overflowed pending-event generation and returns an
+    /// authoritative replacement snapshot. Events produced after the clear
+    /// remain queued and can be applied after this snapshot.
+    #[must_use]
+    pub fn take_overflow_snapshot(&self) -> Option<Vec<TaskSnapshot>> {
+        self.inner
+            .events
+            .reset_after_overflow()
+            .then(|| self.snapshots())
     }
 
     fn task(&self, task_id: TaskId) -> Result<Arc<ManagedTask>, TaskEngineError> {
@@ -1976,7 +2117,12 @@ fn finish_stop(inner: &TaskEngineInner, task: &Arc<ManagedTask>, generation: u64
         if state.generation != generation || !state.running {
             return;
         }
-        state.partial.clone()
+        matches!(
+            state.metadata.state(),
+            TaskState::Downloading | TaskState::Paused | TaskState::Validating
+        )
+        .then(|| state.partial.clone())
+        .flatten()
     };
     if let Some(partial) = partial.as_ref()
         && let Err(failure) = checkpoint_boundary(inner, task, generation, partial)
@@ -2020,24 +2166,38 @@ fn apply_stop(
     state: &mut ManagedState,
 ) -> StopOutcome {
     let request = requested_stop(state);
-    let next = match request {
-        StopRequest::Pause => TaskState::Paused,
-        StopRequest::Cancel(_) => TaskState::Cancelled,
-    };
     let previous = state.metadata.state();
+    let (next, requested_failure) = match (request, previous) {
+        (StopRequest::Pause, _) | (StopRequest::Shutdown, TaskState::Downloading) => {
+            (Some(TaskState::Paused), None)
+        }
+        (StopRequest::Cancel(_), _) => (
+            Some(TaskState::Cancelled),
+            Some(TaskFailure::new(TaskFailureKind::Cancelled)),
+        ),
+        (StopRequest::Shutdown, TaskState::Paused) => (None, None),
+        (StopRequest::Shutdown, _) => (
+            Some(TaskState::Failed),
+            Some(TaskFailure::new(TaskFailureKind::State)),
+        ),
+    };
     let before = state.metadata.clone();
     let timestamp = next_timestamp(&state.metadata).unwrap_or_else(|_| state.metadata.updated_at());
-    let transition = state
-        .metadata
-        .transition(next, timestamp)
-        .map_err(failure_from_state);
-    let persisted = transition.and_then(|()| {
-        inner
-            .store
-            .checkpoint(&state.metadata, CheckpointUrgency::Critical)
-            .map(|_| ())
-            .map_err(|error| failure_from_persistence(&error))
-    });
+    let persisted = if let Some(next) = next {
+        state
+            .metadata
+            .transition(next, timestamp)
+            .map_err(failure_from_state)
+            .and_then(|()| {
+                inner
+                    .store
+                    .checkpoint(&state.metadata, CheckpointUrgency::Critical)
+                    .map(|_| ())
+                    .map_err(|error| failure_from_persistence(&error))
+            })
+    } else {
+        Ok(())
+    };
     if let Err(failure) = persisted {
         state.metadata = before;
         mark_stop_failed(inner, state, timestamp, failure);
@@ -2050,11 +2210,7 @@ fn apply_stop(
         };
     }
 
-    state.failure = if next == TaskState::Cancelled {
-        Some(TaskFailure::new(TaskFailureKind::Cancelled))
-    } else {
-        None
-    };
+    state.failure = requested_failure;
     if request == StopRequest::Cancel(CancelPartialPolicy::Delete)
         && let Err(error) = inner
             .store
@@ -2344,6 +2500,7 @@ fn managed_task(
             .map_err(TaskConfigError::Progress)?,
         last_progress_event: None,
         running: false,
+        removed: false,
         generation: 0,
         cancellation: None,
         stop_request: None,
@@ -2614,6 +2771,14 @@ enum TransferAttemptError {
 enum RunError {
     Cancelled,
     Failed(TaskFailure),
+}
+
+fn ensure_present(state: &ManagedState) -> Result<(), TaskEngineError> {
+    if state.removed {
+        Err(TaskEngineError::TaskNotFound)
+    } else {
+        Ok(())
+    }
 }
 
 fn ensure_generation(state: &ManagedState, generation: u64) -> Result<(), RunError> {

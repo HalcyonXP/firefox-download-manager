@@ -1,25 +1,36 @@
-//! Native Messaging protocol boundary.
+//! Versioned Native Messaging protocol and strict framing boundaries.
 //!
-//! Full message types will be implemented from `protocol/schema/v1` as the
-//! native host is built. These constants and boundary checks keep both project
-//! halves aligned during scaffolding.
+//! Wire bodies are UTF-8 JSON objects prefixed by Firefox Native Messaging's
+//! four-byte little-endian body length. Input is rejected if it is oversized,
+//! truncated, duplicated, malformed, or outside the exact protocol-v1 shape.
 
-/// The only protocol major currently supported.
+mod framing;
+mod strict_json;
+mod v1;
+
+pub use framing::{FrameReadError, FrameWriteError, read_frame, write_frame};
+pub use v1::{
+    AddPayload, CancelPartial, CancelPayload, Command, CommandDecodeError, CommandDecodeFailure,
+    CommandMessage, ErrorCode, ErrorContext, EventMessage, EventName, FailedData, HelloPayload,
+    HelloResult, ListPayload, MessageBuildError, ProgressData, ProtocolError, RemovePayload,
+    RemoveResult, ResponseCommand, ResponseMessage, SettingsDescription, SettingsPatchInput,
+    SnapshotPage, StateChangedData, TaskDescription, TaskIdPayload, TaskStateName,
+    TransferModeName, UpdateSettingsPayload, WarningData, decode_command,
+};
+
+/// Current wire-protocol major version.
 pub const PROTOCOL_VERSION: u16 = 1;
-
-/// Project-level maximum JSON body size in either direction.
-pub const MAX_MESSAGE_BYTES: usize = 1_048_576;
+/// Maximum JSON body accepted or emitted by the native host.
+pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
+/// Maximum correlation identifier length.
+pub const MAX_CORRELATION_ID_CHARS: usize = 128;
 
 /// Returns whether a correlation identifier satisfies the v1 wire grammar.
 #[must_use]
 pub fn is_valid_correlation_id(value: &str) -> bool {
     let bytes = value.as_bytes();
-    let Some(first) = bytes.first() else {
-        return false;
-    };
-
-    bytes.len() <= 128
-        && first.is_ascii_alphanumeric()
+    bytes.len() <= MAX_CORRELATION_ID_CHARS
+        && bytes.first().is_some_and(u8::is_ascii_alphanumeric)
         && bytes
             .iter()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b':' | b'-'))
@@ -30,14 +41,10 @@ mod tests {
     use super::is_valid_correlation_id;
 
     #[test]
-    fn accepts_v1_correlation_ids() {
+    fn correlation_ids_are_bounded_non_secret_tokens() {
         for value in ["a", "request-1", "ui.start:4", &"a".repeat(128)] {
-            assert!(is_valid_correlation_id(value), "expected {value:?} to pass");
+            assert!(is_valid_correlation_id(value));
         }
-    }
-
-    #[test]
-    fn rejects_unsafe_correlation_ids() {
         for value in [
             "",
             "-starts-with-punctuation",
@@ -45,10 +52,7 @@ mod tests {
             "url?secret=1",
             &"a".repeat(129),
         ] {
-            assert!(
-                !is_valid_correlation_id(value),
-                "expected {value:?} to fail"
-            );
+            assert!(!is_valid_correlation_id(value));
         }
     }
 }

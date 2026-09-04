@@ -8,6 +8,14 @@ publish.workspace = true
 
 [dependencies]
 download-manager-engine = { version = "=0.1.0", path = "../engine" }
+download-manager-protocol = { version = "=0.1.0", path = "../protocol" }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+download-manager-test-server = { version = "=0.1.0", path = "../test-server" }
+serde_json = { workspace = true }
 
 [lints]
 workspace = true

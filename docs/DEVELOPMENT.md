@@ -46,7 +46,8 @@ crates/
   test-server/          Local deterministic adversarial HTTP fixtures
 protocol/
   schema/v1/            Normative JSON Schema and conformance examples
-scripts/                Cross-platform build and validation scripts
+native-host/            Auditable Firefox host-manifest template
+scripts/                Cross-platform checks plus Windows registration scripts
 docs/                   Architecture, security, protocol, and plans
 ```
 
@@ -61,6 +62,7 @@ The browser extension build never contains the Rust helper. The native helper ne
 | `npm run typecheck` | Strict TypeScript check without output |
 | `npm test` | Run extension unit tests |
 | `npm run protocol:check` | Validate v1 schema, examples, and hostile cases |
+| `npm run native-host:check` | Cross-check the extension ID, permission, host manifest, Rust constants, and HKCU scripts |
 | `npm run build` | Recreate `extension/dist` |
 | `npm run extension:check` | Validate the built manifest and referenced assets |
 | `npm run check` | Run all JavaScript/protocol/extension quality gates |
@@ -68,21 +70,47 @@ The browser extension build never contains the Rust helper. The native helper ne
 | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | Treat Rust lint warnings as failures |
 | `cargo test --workspace --all-features --locked` | Run all Rust tests |
 | `cargo build --workspace --all-features --locked` | Build all Rust targets |
-| `cargo test -p download-manager-engine --test task_lifecycle --locked` | Run pause/resume/cancel/retry/progress integration tests |
+| `cargo test -p download-manager-engine --test task_lifecycle --locked` | Run task lifecycle, safe shutdown, removal, and recovery integration tests |
+| `cargo test -p download-manager-native-host --locked` | Run framing-session, negotiation, EOF, and reconnect tests |
 
 `extension/dist` and `target` are disposable. Do not edit or commit them.
 
-The task-lifecycle integration suite uses only loopback deterministic fixtures. It covers durable pause/reopen/resume over missing ranges, periodic bytes-first checkpoints, keep/delete cancellation, cancellation-aware probe and retry sleeps, a shared probe/transfer retry budget, retry exhaustion and `Retry-After`, fatal no-retry errors, changed resource identity, known/unknown progress, event cadence/overflow, final publication, and runtime-ownership failures. Timing assertions use generous bounds around monotonic behavior; repeat this test target when changing cancellation or event races.
+The task-lifecycle integration suite uses only loopback deterministic fixtures. It covers durable pause/reopen/resume over missing ranges, periodic bytes-first checkpoints, keep/delete cancellation and terminal removal, cancellation-aware probe and retry sleeps, cooperative process shutdown, a shared probe/transfer retry budget, retry exhaustion and `Retry-After`, fatal no-retry errors, changed resource identity, known/unknown progress, event cadence/overflow, final publication, and runtime-ownership failures. Timing assertions use generous bounds around monotonic behavior; repeat this test target when changing cancellation or event races.
 
-## Manual extension loading
+## Native host installation and manual extension loading
 
-Build the extension, open `about:debugging#/runtime/this-firefox` in Firefox Developer Edition, choose **Load Temporary Add-on**, and select `extension/dist/manifest.json`:
+Build and register the helper under the current user, then build the extension:
 
 ```powershell
+./scripts/install-native-host.ps1
 npm run build
 ```
 
-The scaffold has no download UI or host registration yet. Those are implemented by their dedicated issues. Mozilla's `web-ext` can be reconsidered after its dependency tree has no known high-severity advisory; it is intentionally not part of the locked toolchain at this baseline.
+The installer performs a locked release build by default, copies the executable beneath `%LOCALAPPDATA%\HalcyonXP\FirefoxDownloadManager\host`, generates a JSON-escaped absolute manifest path, and writes only the default value of:
+
+```text
+HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager
+```
+
+No elevation is required. The registration permits only `download-manager@halcyonxp.local`. Open `about:debugging#/runtime/this-firefox` in Firefox Developer Edition, choose **Load Temporary Add-on**, and select `extension/dist/manifest.json`. The background connection object remains on demand: later UI work calls it when a manager surface is opened; every fresh port negotiates v1 and waits for a complete helper snapshot before replacing retained display state.
+
+To exercise the same registration, path-with-spaces, process-launch, hello, initial-snapshot, add-command, and live schema check used by Windows CI:
+
+```powershell
+cargo build -p download-manager-native-host --locked
+$installRoot = Join-Path $env:TEMP "Download Manager Native Host With Spaces"
+./scripts/install-native-host.ps1 -ExecutablePath ./target/debug/download-manager-native-host.exe -InstallRoot $installRoot
+./scripts/test-native-host-install.ps1 -InstallRoot $installRoot
+./scripts/uninstall-native-host.ps1 -InstallRoot $installRoot
+```
+
+For the normal install, remove only the HKCU registration and generated host files with:
+
+```powershell
+./scripts/uninstall-native-host.ps1
+```
+
+Uninstallation deliberately does not recurse into `%LOCALAPPDATA%\HalcyonXP\FirefoxDownloadManager\state`, alter destination files, or remove completed downloads. Stop any live Native Messaging connection before replacing or removing a Windows executable. Mozilla's `web-ext` can be reconsidered after its dependency tree has no known high-severity advisory; it remains outside the locked toolchain.
 
 ## Dependency and license review
 
@@ -110,4 +138,4 @@ The helper must reserve standard output for Native Messaging frames. Local diagn
 
 ## CI
 
-`.github/workflows/ci.yml` runs extension/protocol checks and the full Rust format/lint/test/build sequence. The primary job runs on `windows-latest`; dependency policy runs on Linux because `cargo-deny` is platform-independent. CI uploads the generated extension directory for inspection but does not publish or install a release.
+`.github/workflows/ci.yml` runs extension/protocol/manifest checks and the full Rust format/lint/test/build sequence. The `windows-latest` job installs the built helper into a temporary path containing spaces, verifies its HKCU registration and live framed hello/snapshot exchange, and removes it in a `finally` block. Dependency policy runs on Linux because `cargo-deny` is platform-independent. CI uploads the generated extension directory for inspection but does not publish a release.

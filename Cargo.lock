@@ -167,11 +167,22 @@ name = "download-manager-native-host"
 version = "0.1.0"
 dependencies = [
  "download-manager-engine",
+ "download-manager-protocol",
+ "download-manager-test-server",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]
 name = "download-manager-protocol"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror",
+]
 
 [[package]]
 name = "download-manager-test-server"

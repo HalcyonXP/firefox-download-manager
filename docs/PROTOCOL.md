@@ -16,7 +16,7 @@ Every payload is untrusted even when Firefox launched the configured host. Both 
 
 Each message is one UTF-8 JSON object preceded by Firefox Native Messaging's four-byte unsigned length prefix. On Windows the prefix is little-endian. The project imposes a **1,048,576-byte maximum JSON body in both directions**, regardless of a platform's larger theoretical limit.
 
-Readers must handle partial reads, distinguish clean EOF before a prefix from truncation, reject invalid UTF-8/JSON and non-object roots, and read exactly the declared length. A length over the project limit is rejected before allocation. Writers serialize one complete object, enforce the same limit, then write the prefix and body completely.
+Readers must handle partial reads, distinguish clean EOF before a prefix from truncation, reject invalid UTF-8/JSON, duplicate object members, and non-object roots, and read exactly the declared length. A length over the project limit is rejected before allocation and receives a bounded `PROTOCOL_MESSAGE_TOO_LARGE` response when output remains usable. Writers serialize one complete object, enforce the same limit, write the prefix and body completely, and flush. Standard output contains no banners or diagnostics.
 
 No secret may be included in a framing or parse error.
 
@@ -38,7 +38,9 @@ JSON integers representing byte counts, cursors, rates, or sequence numbers are 
 
 After connecting, the extension sends `hello` before any operational command. It lists protocol major versions it supports. The v1 helper selects version `1`, reports its application version, maximum message size, and implemented capabilities.
 
-If the envelope version is unsupported, the helper performs only bounded extraction of a valid correlation ID and returns a v1 `protocol` error with `PROTOCOL_UNSUPPORTED_VERSION` when possible, then closes the connection. If no safe correlation ID can be recovered, it generates one. An unknown command receives `PROTOCOL_UNKNOWN_COMMAND`; malformed known commands receive `PROTOCOL_INVALID_MESSAGE`. No operation occurs after any of these errors.
+If the envelope version is unsupported, the helper performs only bounded extraction of a valid correlation ID and returns a v1 `protocol` error with `PROTOCOL_UNSUPPORTED_VERSION` when possible, then closes the connection. If no safe correlation ID can be recovered, it generates one. An unknown command receives `PROTOCOL_UNKNOWN_COMMAND`; malformed known commands receive `PROTOCOL_INVALID_MESSAGE`. The rejected frame never performs an operation. Bounded malformed frames may be followed by a corrected `hello`; unsupported versions and valid operational commands sent before `hello` close the session after their error.
+
+The implemented helper advertises only `snapshots` and `coalesced_progress`. Immediately after a successful hello response it emits all pages of one authoritative engine snapshot before normal event/command multiplexing begins. The extension does not mark the port ready until that snapshot is complete. Authentication and SHA-256 remain unadvertised and their otherwise valid reserved fields are rejected until their implementation issues complete.
 
 A peer must not infer support from application version strings. Optional behavior is enabled only by the negotiated protocol and advertised capability. Authentication and SHA-256 fields exist in v1, but the helper advertises and accepts them only after their implementation issues are complete.
 
@@ -87,7 +89,7 @@ Progress is deliberately coalescible. The helper replaces unsent progress for th
 
 The engine also produces best-effort typed `RetryScheduled` bookkeeping so retry budgets and accepted delays can be observed and tested internally. Protocol v1 defines no retry-scheduled discriminator or retry-number/delay fields, so the connection adapter consumes that bookkeeping without serializing it directly or advancing the wire sequence. It must not invent a warning code or an out-of-schema field; protocol-visible retry exhaustion remains `RETRY_EXHAUSTED`.
 
-On a sequence gap, reconnect, dashboard opening, or uncertain state, the extension requests `list` and rebuilds from snapshot pages instead of guessing.
+On a sequence gap or malformed helper event, the implemented extension closes the uncertain port; the next on-demand connection negotiates again and receives the helper's automatic snapshot. A dashboard may also use `list` pages. In either case it rebuilds rather than guessing.
 
 ## Snapshot consistency and pagination
 
@@ -98,9 +100,9 @@ A snapshot page carries `snapshot_id`, zero-based `page_index`, at most 200 task
 - `complete: true` requires `next_cursor: null`.
 - Until the complete page arrives, the extension does not present the partial collection as an authoritative replacement.
 - Invalid, duplicated, expired, out-of-order, or mixed-snapshot cursors cause the extension to discard the assembly and restart.
-- Events received during assembly are applied only after the complete snapshot, ordered by sequence; uncertainty triggers another snapshot.
+- The helper emits snapshot-event pages contiguously. An unexpected non-snapshot event during assembly is a continuity failure and causes reconnection.
 
-The helper may emit the same page form as a `snapshot` event after connection. Pagination ensures snapshots stay under the framing limit.
+The helper emits the same page form as a `snapshot` event immediately after connection and whenever its bounded critical-event buffer reports overflow. It currently limits pages to four tasks—stricter than the schema's 200-item cap—so worst-case Windows path escaping remains safely below the frame limit. Explicit `list` pagination uses one bounded connection-local snapshot session and accepts only its exact next cursor.
 
 ## Task representation
 

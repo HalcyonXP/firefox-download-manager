@@ -86,7 +86,7 @@ The extension owns:
 
 The extension does not download or assemble file bodies, decide completed byte coverage, write destination files, or treat in-memory UI state as authoritative.
 
-The initial extension uses Manifest V3 with a Firefox event-page background script. It must tolerate that background context, dashboard pages, and Native Messaging connections can disappear and be recreated. See [ADR-0002](decisions/0002-firefox-manifest-v3.md).
+The initial extension uses Manifest V3 with a Firefox event-page background script and only the `nativeMessaging` permission. Its on-demand connection object sends `hello`, validates bounded response/event envelopes, enforces connection-local event sequence continuity, coalesces absolute progress into its latest task map, and atomically replaces that map only after a complete paginated snapshot. A disconnected context retains only a non-authoritative display copy; reconnecting starts a fresh sequence and helper snapshot. See [ADR-0002](decisions/0002-firefox-manifest-v3.md).
 
 ### Rust native helper
 
@@ -103,7 +103,7 @@ The helper owns:
 - collision-safe promotion to the final pathname; and
 - bounded, redacted local diagnostics.
 
-The helper runs with the interactive user's privileges and is not a Windows service. A browser/helper disconnect causes network work to stop at a safe checkpoint; persisted state permits recovery after reconnection or restart. Only one writer may own a task at a time. See [ADR-0003](decisions/0003-helper-lifecycle.md).
+The helper runs with the interactive user's privileges and is not a Windows service. Firefox launches it through the per-user native-host registration. Standard output is reserved for complete framed messages. Clean stdin EOF and every session error invoke cooperative engine shutdown: downloading work becomes durably paused after workers join and bytes are checkpointed, while interrupted probing/validation fails safely. A later helper validates persistence and emits a complete snapshot immediately after negotiation. Only one helper can lock the state root and only one writer may own a task at a time. See [ADR-0003](decisions/0003-helper-lifecycle.md).
 
 ### Deterministic test server
 
@@ -181,7 +181,7 @@ See [ADR-0004](decisions/0004-storage-and-recovery.md), the concrete [partial-fi
 
 ## Protocol boundary
 
-Native Messaging carries control and state, never file bodies. Every envelope has a protocol version and correlation identifier. Commands receive one terminal response; asynchronous events identify their task. Unknown versions, commands, fields where forbidden, oversized frames, malformed JSON, and invalid state transitions fail safely. Stable machine-readable error codes are separate from localized/display text.
+Native Messaging carries control and state, never file bodies. The host reads partial prefixes/bodies exactly, caps bodies at one MiB before allocation, rejects duplicate JSON members and unknown fields, and distinguishes clean EOF from truncation. Every envelope has a protocol version and correlation identifier. `hello` is mandatory before operations. Commands receive one terminal response; asynchronous events identify their task and use a separate connection-local sequence. Engine retry bookkeeping is filtered without consuming a wire sequence. Event overflow clears the uncertain generation and emits a new authoritative snapshot. Stable machine-readable error codes are separate from localized/display text.
 
 The detailed contract is defined in [PROTOCOL.md](PROTOCOL.md) and must preserve this boundary.
 
@@ -204,7 +204,7 @@ The following remain deliberately reversible and belong to later issues:
 - UI framework or framework-free implementation;
 - empirically tuned progress cadence within the implemented 100 ms–60 second bound;
 - measured tail-hedge and retry-delay tuning within implemented safety bounds;
-- installer technology;
+- release packaging/upgrade technology beyond the current-user registration scripts;
 - optional checksum UX; and
 - future cross-platform packaging.
 
