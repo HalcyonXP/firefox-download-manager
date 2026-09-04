@@ -1,6 +1,7 @@
 //! Native download engine boundary.
 
 pub mod network;
+pub mod storage;
 
 use download_manager_protocol::PROTOCOL_VERSION;
 

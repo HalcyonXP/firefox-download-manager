@@ -55,7 +55,7 @@ All paths and filenames are untrusted. The helper:
 - reports disk-full, access-denied, sharing, and lock failures; and
 - never overwrites an existing final file silently.
 
-Promotion occurs only after validation. If the filesystem cannot provide an atomic same-volume rename, the helper must use a documented safe alternative or fail; it must not expose a partially copied final file as completed.
+Promotion occurs only after validation. If the filesystem cannot provide an atomic, create-new, same-volume publication primitive, the helper must use a documented safe alternative or fail; it must not expose a partially copied final file as completed. The initial implementation publishes a flushed complete file through a same-directory hard link and then removes the partial name.
 
 ### Persisted state to restarted helper
 

@@ -170,7 +170,7 @@ Application-owned state and logs live beneath a user-scoped application-data dir
 
 Final files are never opened as active download targets. The helper creates a unique partial file, validates it, then promotes it to a non-existing final pathname. Cross-volume or non-atomic behavior must be detected and handled explicitly rather than described as atomic.
 
-See [ADR-0004](decisions/0004-storage-and-recovery.md).
+See [ADR-0004](decisions/0004-storage-and-recovery.md) and the concrete [partial-file storage policy](STORAGE.md).
 
 ## Protocol boundary
 
