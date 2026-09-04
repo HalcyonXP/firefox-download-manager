@@ -55,11 +55,11 @@ All paths and filenames are untrusted. The helper:
 - reports disk-full, access-denied, sharing, and lock failures; and
 - never overwrites an existing final file silently.
 
-Promotion occurs only after validation. If the filesystem cannot provide an atomic, create-new, same-volume publication primitive, the helper must use a documented safe alternative or fail; it must not expose a partially copied final file as completed. The initial implementation publishes a flushed complete file through a same-directory hard link and then removes the partial name.
+Promotion occurs only after validation. If the filesystem cannot provide an atomic, create-new, same-volume publication primitive, the helper must use a documented safe alternative or fail; it must not expose a partially copied final file as completed. The initial implementation publishes a flushed complete file through a same-directory hard link, checkpoints both names, and only then removes and checkpoints the redundant partial name.
 
 ### Persisted state to restarted helper
 
-Metadata is versioned but untrusted. Recovery validates identifiers, enum values, size arithmetic, range ordering and coverage, paths, partial-file identity/length, and resource validators. Unknown future formats and corrupt state fail closed. Secret headers and cookies are not persisted by default.
+Metadata is versioned but untrusted. Recovery validates identifiers, enum values, size arithmetic, range ordering and coverage, paths, partial/final file type and length, same-file publication identity, and resource validators. Unknown future formats and corrupt state fail closed. Secret headers and cookies are not persisted by default. Concrete schema, checkpoint ordering, recovery bounds, and cleanup behavior are documented in [STATE.md](STATE.md).
 
 ## Sensitive-data policy
 

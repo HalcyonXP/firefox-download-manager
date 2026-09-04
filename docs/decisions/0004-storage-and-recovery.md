@@ -12,7 +12,7 @@ Concurrent workers must write large files without browser memory assembly. Crash
 
 Create a unique `.part` file with create-new semantics in the selected destination and preallocate it where supported. Every write carries an assignment and is bounds-checked before random-access I/O. Keep versioned task metadata in the user-scoped application state directory and update it through write/flush/replace at a bounded cadence.
 
-On recovery, distrust both metadata and the partial file and validate their agreement. On completion, independently verify coverage and size, flush, select a non-existing final pathname, and use an atomic same-filesystem create-new publication primitive. The initial Windows implementation creates a hard link for the complete partial file and then removes the partial name; a filesystem without that primitive fails explicitly. Never overwrite an existing final file and never mark success before promotion.
+On recovery, distrust both metadata and the partial file and validate their agreement. On completion, independently verify coverage and size, flush, select a non-existing final pathname, and use an atomic same-filesystem create-new publication primitive. The initial Windows implementation creates a hard link for the complete partial file, checkpoints both names, then removes and checkpoints the redundant partial name; a filesystem without that primitive fails explicitly. Never overwrite an existing final file and never mark success before promotion.
 
 ## Rejected alternatives
 
@@ -23,4 +23,4 @@ On recovery, distrust both metadata and the partial file and validate their agre
 
 ## Consequences
 
-The storage API must model assignment ownership, durability points, and promotion explicitly. Metadata schema versions and migrations are mandatory. Cleanup of completed, cancelled, corrupt, and abandoned state must be a deliberate policy.
+The storage API must model assignment ownership, durability points, and promotion explicitly. Metadata schema versions and migrations are mandatory. Cleanup of completed, cancelled, corrupt, and abandoned state must be a deliberate policy. The implemented format, bytes-first checkpoint ordering, conservative loader, and explicit cleanup baseline are documented in [STATE.md](../STATE.md).

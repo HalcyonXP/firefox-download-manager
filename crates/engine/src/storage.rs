@@ -153,6 +153,8 @@ pub enum StorageOperation {
     InspectDestination,
     /// Create a collision-safe partial file.
     CreatePartial,
+    /// Reopen and validate a recoverable partial file.
+    OpenPartial,
     /// Establish the partial file's expected logical length.
     Preallocate,
     /// Write assigned bytes.
@@ -161,6 +163,8 @@ pub enum StorageOperation {
     Flush,
     /// Atomically publish a completed file.
     Publish,
+    /// Remove a checkpointed redundant partial link.
+    CleanupPartial,
 }
 
 impl fmt::Display for StorageOperation {
@@ -168,10 +172,12 @@ impl fmt::Display for StorageOperation {
         let text = match self {
             Self::InspectDestination => "inspect destination",
             Self::CreatePartial => "create partial file",
+            Self::OpenPartial => "open partial file",
             Self::Preallocate => "preallocate partial file",
             Self::Write => "write partial file",
             Self::Flush => "flush partial file",
             Self::Publish => "publish final file",
+            Self::CleanupPartial => "remove redundant partial link",
         };
         formatter.write_str(text)
     }
@@ -266,6 +272,9 @@ pub enum StorageError {
         /// Number of active assignments.
         count: usize,
     },
+    /// Recovered completed ranges are not canonical and in bounds.
+    #[error("recovered completed ranges are invalid")]
+    InvalidCompletedCoverage,
     /// Completed ranges do not cover the expected file exactly.
     #[error("completed ranges do not provide exact file coverage")]
     IncompleteCoverage,
@@ -305,6 +314,7 @@ pub enum StorageError {
 #[derive(Clone, PartialEq, Eq)]
 pub struct Promotion {
     final_path: PathBuf,
+    partial_path: Option<PathBuf>,
     partial_cleanup_failure: Option<IoFailure>,
 }
 
@@ -313,6 +323,10 @@ impl fmt::Debug for Promotion {
         formatter
             .debug_struct("Promotion")
             .field("final_path", &"<redacted>")
+            .field(
+                "partial_path",
+                &self.partial_path.as_ref().map(|_| "<redacted>"),
+            )
             .field("partial_cleanup_failure", &self.partial_cleanup_failure)
             .finish()
     }
@@ -325,6 +339,12 @@ impl Promotion {
         &self.final_path
     }
 
+    /// Redundant partial link retained until publication metadata is durable.
+    #[must_use]
+    pub fn partial_path(&self) -> Option<&Path> {
+        self.partial_path.as_deref()
+    }
+
     /// A non-fatal cleanup failure after the final name became visible.
     ///
     /// The final file is complete when this is present; recovery may remove the
@@ -332,6 +352,39 @@ impl Promotion {
     #[must_use]
     pub const fn partial_cleanup_failure(&self) -> Option<IoFailure> {
         self.partial_cleanup_failure
+    }
+
+    /// Removes the redundant partial link after publication metadata is durable.
+    ///
+    /// Calling this before a critical checkpoint can leave an untracked final
+    /// name if the process stops, so orchestration must persist the promotion
+    /// first. The complete final file remains visible if cleanup fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns a path-free classified I/O error when the partial link cannot be
+    /// removed. A later recovery or cleanup attempt may retry safely.
+    pub fn cleanup_partial(&mut self) -> Result<(), StorageError> {
+        let Some(partial_path) = self.partial_path.as_ref() else {
+            return Ok(());
+        };
+        if !same_file::is_same_file(partial_path, &self.final_path)
+            .map_err(|error| map_io(StorageOperation::CleanupPartial, &error))?
+        {
+            return Err(StorageError::InvalidDestination);
+        }
+        if let Err(error) = fs::remove_file(partial_path) {
+            let failure = classify_io(&error);
+            self.partial_cleanup_failure = Some(failure);
+            return Err(StorageError::Io {
+                operation: StorageOperation::CleanupPartial,
+                failure,
+                os_code: error.raw_os_error(),
+            });
+        }
+        self.partial_path = None;
+        self.partial_cleanup_failure = None;
+        Ok(())
     }
 }
 
@@ -416,6 +469,14 @@ impl PartialFile {
                 Err(error) if is_already_exists(&error) => continue,
                 Err(error) => return Err(map_io(StorageOperation::CreatePartial, &error)),
             };
+            let canonical_partial = fs::canonicalize(&partial_path)
+                .map_err(|error| map_io(StorageOperation::CreatePartial, &error))?;
+            if canonical_partial != partial_path
+                || !opened_file_matches_path(&file, &partial_path)
+                    .map_err(|error| map_io(StorageOperation::CreatePartial, &error))?
+            {
+                return Err(StorageError::InvalidDestination);
+            }
 
             if let Err(error) = file.set_len(expected_len) {
                 drop(file);
@@ -448,6 +509,100 @@ impl PartialFile {
         Err(StorageError::PartialNameExhausted)
     }
 
+    /// Reopens a preallocated partial file with validated durable coverage.
+    ///
+    /// The source path, parent directory, file type, filename, expected length,
+    /// and canonical non-overlapping ranges are distrusted and revalidated.
+    /// Active assignments never survive restart.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified error for an unsafe path/type, changed length,
+    /// malformed coverage, or open failure.
+    pub fn recover(
+        partial_path: &Path,
+        final_filename: &str,
+        expected_len: u64,
+        completed: &[FileRange],
+    ) -> Result<Self, StorageError> {
+        let path_metadata = fs::symlink_metadata(partial_path)
+            .map_err(|error| map_io(StorageOperation::OpenPartial, &error))?;
+        if !path_metadata.is_file()
+            || path_metadata.file_type().is_symlink()
+            || is_reparse_point(&path_metadata)
+        {
+            return Err(StorageError::InvalidDestination);
+        }
+        let parent = partial_path
+            .parent()
+            .ok_or(StorageError::InvalidDestination)?;
+        let parent_metadata = fs::symlink_metadata(parent)
+            .map_err(|error| map_io(StorageOperation::InspectDestination, &error))?;
+        if !parent_metadata.is_dir()
+            || parent_metadata.file_type().is_symlink()
+            || is_reparse_point(&parent_metadata)
+        {
+            return Err(StorageError::InvalidDestination);
+        }
+        let partial_path = fs::canonicalize(partial_path)
+            .map_err(|error| map_io(StorageOperation::OpenPartial, &error))?;
+        let destination = partial_path
+            .parent()
+            .ok_or(StorageError::InvalidDestination)?
+            .to_owned();
+        let partial_filename = partial_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .ok_or(StorageError::InvalidDestination)?;
+        if sanitize_filename(partial_filename).as_str() != partial_filename
+            || !is_managed_partial_filename(partial_filename)
+        {
+            return Err(StorageError::InvalidDestination);
+        }
+        let final_name = sanitize_filename(final_filename);
+        if final_name.as_str() != final_filename {
+            return Err(StorageError::InvalidDestination);
+        }
+        validate_recovered_coverage(completed, expected_len)?;
+
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&partial_path)
+            .map_err(|error| map_io(StorageOperation::OpenPartial, &error))?;
+        if !opened_file_matches_path(&file, &partial_path)
+            .map_err(|error| map_io(StorageOperation::OpenPartial, &error))?
+        {
+            return Err(StorageError::InvalidDestination);
+        }
+        let actual_len = file
+            .metadata()
+            .map_err(|error| map_io(StorageOperation::OpenPartial, &error))?
+            .len();
+        if actual_len != expected_len {
+            return Err(StorageError::FileLengthChanged {
+                expected: expected_len,
+                actual: actual_len,
+            });
+        }
+
+        Ok(Self {
+            inner: Arc::new(Inner {
+                partial_path,
+                destination,
+                final_name,
+                expected_len,
+                file: Mutex::new(Some(file)),
+                state: Mutex::new(WriteState {
+                    lifecycle: Lifecycle::Active,
+                    next_assignment_id: 1,
+                    active: BTreeMap::new(),
+                    completed: completed.to_vec(),
+                }),
+            }),
+        })
+    }
+
     /// Path of the unique partial file. This is intended for trusted recovery
     /// state, not routine logs.
     #[must_use]
@@ -471,6 +626,27 @@ impl PartialFile {
     #[must_use]
     pub fn completed_ranges(&self) -> Vec<FileRange> {
         lock(&self.inner.state).completed.clone()
+    }
+
+    /// Flushes file data before returning a stable completed-range snapshot.
+    ///
+    /// Holding assignment state across `sync_data` prevents a writer from
+    /// completing between the durability point and the cloned coverage. State
+    /// persistence can therefore record these ranges only after their bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a classified flush failure or rejects a published file.
+    pub fn durable_completed_ranges(&self) -> Result<Vec<FileRange>, StorageError> {
+        let state = lock(&self.inner.state);
+        if state.lifecycle != Lifecycle::Active {
+            return Err(StorageError::NotActive);
+        }
+        let file_guard = lock(&self.inner.file);
+        let file = file_guard.as_ref().ok_or(StorageError::NotActive)?;
+        file.sync_data()
+            .map_err(|error| map_io(StorageOperation::Flush, &error))?;
+        Ok(state.completed.clone())
     }
 
     /// Reserves a disjoint range and returns its sole writer.
@@ -526,7 +702,9 @@ impl PartialFile {
     ///
     /// Existing final files are never replaced: collisions select `name (n)`
     /// candidates. Publication fails closed when exact coverage, file length,
-    /// flushing, or atomic create-new linking cannot be proven.
+    /// flushing, or atomic create-new linking cannot be proven. The redundant
+    /// partial link remains until the caller durably checkpoints the returned
+    /// promotion and explicitly calls [`Promotion::cleanup_partial`].
     ///
     /// # Errors
     ///
@@ -561,13 +739,11 @@ impl PartialFile {
         let file = lock(&self.inner.file).take();
         drop(file);
         drop(state);
-        let cleanup_failure = fs::remove_file(&self.inner.partial_path)
-            .err()
-            .map(|error| classify_io(&error));
 
         Ok(Promotion {
             final_path,
-            partial_cleanup_failure: cleanup_failure,
+            partial_path: Some(self.inner.partial_path.clone()),
+            partial_cleanup_failure: None,
         })
     }
 
@@ -586,12 +762,24 @@ impl PartialFile {
         }
         file.sync_all()
             .map_err(|error| map_io(StorageOperation::Flush, &error))?;
+        if !opened_file_matches_path(file, &self.inner.partial_path)
+            .map_err(|error| map_io(StorageOperation::Publish, &error))?
+        {
+            return Err(StorageError::InvalidDestination);
+        }
 
         for index in 0..FINAL_NAME_ATTEMPTS {
             let candidate_name = numbered_filename(self.inner.final_name.as_str(), index);
             let candidate_path = self.inner.destination.join(candidate_name);
             match fs::hard_link(&self.inner.partial_path, &candidate_path) {
-                Ok(()) => return Ok(candidate_path),
+                Ok(()) => {
+                    if opened_file_matches_path(file, &candidate_path)
+                        .map_err(|error| map_io(StorageOperation::Publish, &error))?
+                    {
+                        return Ok(candidate_path);
+                    }
+                    return Err(StorageError::InvalidDestination);
+                }
                 Err(error) if is_already_exists(&error) => {}
                 Err(error) => return Err(map_io(StorageOperation::Publish, &error)),
             }
@@ -730,6 +918,37 @@ impl Drop for SegmentWriter {
     }
 }
 
+fn opened_file_matches_path(file: &File, path: &Path) -> io::Result<bool> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
+        return Ok(false);
+    }
+    let file_handle = same_file::Handle::from_file(file.try_clone()?)?;
+    let path_handle = same_file::Handle::from_path(path)?;
+    Ok(file_handle == path_handle)
+}
+
+fn validate_recovered_coverage(
+    completed: &[FileRange],
+    expected_len: u64,
+) -> Result<(), StorageError> {
+    let mut previous_end = None;
+    let mut total = 0_u64;
+    for range in completed {
+        if range.end > expected_len || previous_end.is_some_and(|end| range.start <= end) {
+            return Err(StorageError::InvalidCompletedCoverage);
+        }
+        total = total
+            .checked_add(range.len())
+            .ok_or(StorageError::InvalidCompletedCoverage)?;
+        previous_end = Some(range.end);
+    }
+    if total > expected_len {
+        return Err(StorageError::InvalidCompletedCoverage);
+    }
+    Ok(())
+}
+
 fn insert_completed(completed: &mut Vec<FileRange>, range: FileRange) {
     completed.push(range);
     completed.sort_unstable();
@@ -825,6 +1044,27 @@ fn part_filename(final_name: &str, nonce: u128, attempt: u64) -> String {
     let suffix = format!(".dm-{nonce:032x}-{attempt:02x}.part");
     let available = MAX_FILENAME_UTF16_UNITS.saturating_sub(suffix.len());
     format!("{}{}", truncate_utf16(final_name, available), suffix)
+}
+
+pub(crate) fn is_managed_partial_filename(value: &str) -> bool {
+    let Some((prefix, suffix)) = value.rsplit_once(".dm-") else {
+        return false;
+    };
+    let Some((nonce, attempt)) = suffix.split_once('-') else {
+        return false;
+    };
+    let Some(attempt) = attempt.strip_suffix(".part") else {
+        return false;
+    };
+    !prefix.is_empty()
+        && nonce.len() == 32
+        && attempt.len() == 2
+        && nonce.bytes().all(is_lower_hex_digit)
+        && attempt.bytes().all(is_lower_hex_digit)
+}
+
+const fn is_lower_hex_digit(byte: u8) -> bool {
+    byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')
 }
 
 fn numbered_filename(base: &str, index: u32) -> String {

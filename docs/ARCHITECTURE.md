@@ -135,13 +135,13 @@ The local fixture is test-only. It generates reproducible bytes and controlled H
 
 1. The helper stops assigning work and verifies exact, gap-free, non-overlapping coverage.
 2. It verifies the expected byte count and an optional user-provided SHA-256 digest.
-3. It flushes file data and durable metadata as required by the storage policy.
-4. It selects a non-colliding final name and promotes the partial file atomically where the filesystem permits.
-5. Only after successful promotion does it persist and emit `completed`.
+3. It flushes file data and durable coverage metadata as required by the storage policy.
+4. It selects a non-colliding final name and atomically publishes the partial's complete bytes where the filesystem permits.
+5. It critically checkpoints both hard-link names, removes and checkpoints the redundant partial name, and only then persists and emits `completed`.
 
 ### Recover state
 
-Persisted metadata, not the extension, describes recoverable work. On startup, the helper validates schema version, task transitions, paths, resource identity, partial-file length, and completed ranges. Corrupt, incompatible, or identity-conflicting state is quarantined or failed with a useful diagnosis; it is never resumed optimistically.
+Persisted metadata, not the extension, describes recoverable work. On startup, the helper validates schema version, task transitions, paths, resource identity, partial/final lengths, publication same-file identity, and completed ranges. Corrupt, incompatible, or identity-conflicting state is preserved and failed with a useful diagnosis; it is never resumed optimistically.
 
 ## Task lifecycle
 
@@ -153,7 +153,7 @@ queued → probing → downloading ⇄ paused
                     └→ validating → promoting → completed
 ```
 
-Transitions are explicit and persisted where they affect recovery. `completed`, `cancelled`, and unrecoverable `failed` are terminal unless an operation creates a new task. Pause/cancel acknowledgement occurs only after active workers stop making writes. Cancellation has an explicit keep/delete-partial choice.
+Transitions are explicit and persisted where they affect recovery. `completed` and `cancelled` are terminal; `failed` is inactive until an explicit retry requeues the same task and revalidates any retained resource identity. Pause/cancel acknowledgement occurs only after active workers stop making writes. Cancellation has an explicit keep/delete-partial choice.
 
 ## Concurrency and ownership
 
@@ -170,7 +170,7 @@ Application-owned state and logs live beneath a user-scoped application-data dir
 
 Final files are never opened as active download targets. The helper creates a unique partial file, validates it, then promotes it to a non-existing final pathname. Cross-volume or non-atomic behavior must be detected and handled explicitly rather than described as atomic.
 
-See [ADR-0004](decisions/0004-storage-and-recovery.md) and the concrete [partial-file storage policy](STORAGE.md).
+See [ADR-0004](decisions/0004-storage-and-recovery.md), the concrete [partial-file storage policy](STORAGE.md), and the [persistent task-state policy](STATE.md).
 
 ## Protocol boundary
 

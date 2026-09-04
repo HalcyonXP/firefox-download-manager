@@ -1,6 +1,6 @@
 # Partial-file storage policy
 
-Status: implemented baseline for issue #6
+Status: implemented baseline for issues #6 and #7
 
 Last updated: 2026-09-04
 
@@ -84,12 +84,14 @@ report (2).txt
 
 The extension is preserved where practical and each candidate remains within the filename bound. An existing file or directory is left untouched even if it appears during publication.
 
-After successful publication, the writable handle is closed and the `.part` name is removed. Failure to remove that now-redundant hard link is returned as a non-fatal cleanup classification because the complete final name is already visible and rolling it back would be unsafe. Recovery can remove the redundant partial name later.
+The storage layer rechecks that the source pathname still identifies its opened file handle and proves that the new final name identifies that same file. After successful publication, the writable handle is closed but the `.part` name is deliberately retained. The caller must critically checkpoint the returned final and partial paths before invoking `Promotion::cleanup_partial`; cleanup rechecks same-file identity, and the caller then checkpoints removal of the redundant partial link. A cleanup failure is path-free and non-destructive because the complete final name is already visible, and recovery can retry it later.
 
-Atomic namespace visibility and power-loss durability are distinct. Rust's portable file API does not provide a Windows destination-directory flush; restart recovery therefore must reconcile the safe outcomes around publication (only the partial name, only the final name, or both hard links) rather than assuming an acknowledgement survived sudden power loss.
+This two-step handoff means an interruption leaves a conservative state: the old metadata still identifies the retained partial, durable promotion metadata identifies both hard links, or newer metadata identifies the final after partial cleanup. Atomic namespace visibility and power-loss durability remain distinct. Rust's portable file API does not provide a Windows destination-directory flush, so restart recovery validates whichever complete metadata/file combination survived rather than assuming an acknowledgement reached the directory journal.
 
 Filesystems that do not support same-directory hard links fail publication explicitly. The implementation does not fall back to a copy, an overwrite-capable rename, or a check-then-rename sequence that could expose partial content or race an existing final file.
 
-## Deferred recovery work
+## Recovery integration
 
-Issue #7 adds versioned task metadata, restart recovery, and cleanup policy. This baseline deliberately keeps partial files after ordinary object drop and exposes the partial path only for trusted persistence code. Issue #17 will extend adversarial filesystem tests and path-identity hardening; those later changes may strengthen checks but may not weaken assignment bounds, exact coverage, or create-new final publication.
+The [persistent task-state policy](STATE.md) records only completed ranges returned after storage flushes file bytes. On restart, storage reopens an ordinary exact-length partial with canonical durable coverage and no active assignments; completed bytes cannot be reassigned, while uncheckpointed bytes may be overwritten safely. Ordinary object drop still preserves the partial for recovery, and its path is exposed only to trusted persistence code.
+
+Issue #17 will extend final integrity validation, and issue #18 will review the complete path trust boundary. Later changes may strengthen checks but may not weaken assignment bounds, bytes-first checkpoint ordering, exact coverage, or create-new final publication.

@@ -160,13 +160,44 @@ fn disjoint_threaded_writers_produce_exact_random_access_output() {
 
     assert_eq!(storage.completed_ranges(), vec![range(0, 12)]);
     let partial_path = storage.partial_path().to_owned();
-    let promotion = storage.promote().expect("publish complete file");
+    let mut promotion = storage.promote().expect("publish complete file");
     assert_eq!(promotion.partial_cleanup_failure(), None);
-    assert!(!partial_path.exists());
+    assert_eq!(promotion.partial_path(), Some(partial_path.as_path()));
+    assert!(partial_path.exists());
     assert_eq!(
         fs::read(promotion.final_path()).expect("read final"),
         b"ABCDEFGHIJKL"
     );
+    promotion
+        .cleanup_partial()
+        .expect("remove checkpointed partial link");
+    assert_eq!(promotion.partial_path(), None);
+    assert!(!partial_path.exists());
+}
+
+#[test]
+fn recovery_rejects_noncanonical_coverage_before_reopening() {
+    let directory = TestDirectory::new("recover-coverage");
+    let storage = PartialFile::create(directory.path(), "recover.bin", 8).expect("create part");
+    let mut writer = storage.assign(range(0, 4)).expect("assign durable prefix");
+    writer.write(b"DATA").expect("write durable prefix");
+    writer.finish().expect("finish durable prefix");
+    storage
+        .durable_completed_ranges()
+        .expect("flush durable prefix");
+    let partial_path = storage.partial_path().to_owned();
+    drop(writer);
+    drop(storage);
+
+    assert!(matches!(
+        PartialFile::recover(&partial_path, "recover.bin", 8, &[range(0, 4), range(4, 8)]),
+        Err(StorageError::InvalidCompletedCoverage)
+    ));
+    let recovered = PartialFile::recover(&partial_path, "recover.bin", 8, &[range(0, 4)])
+        .expect("recover canonical coverage");
+    assert_eq!(recovered.completed_ranges(), vec![range(0, 4)]);
+    assert!(recovered.assign(range(0, 4)).is_err());
+    recovered.assign(range(4, 8)).expect("assign missing bytes");
 }
 
 #[test]
