@@ -43,6 +43,7 @@ crates/
   protocol/             Rust Native Messaging types and framing boundary
   engine/               Networking, scheduling, persistence, and storage
   native-host/          Native Messaging executable
+  test-server/          Local deterministic adversarial HTTP fixtures
 protocol/
   schema/v1/            Normative JSON Schema and conformance examples
 scripts/                Cross-platform build and validation scripts

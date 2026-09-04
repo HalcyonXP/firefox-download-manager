@@ -12,7 +12,7 @@ Planning is complete and implementation proceeds through the lowest-numbered **R
 4. [M3 — Reliability and authenticated downloads](https://github.com/HalcyonXP/download-manager/milestone/5)
 5. [M4 — Local release](https://github.com/HalcyonXP/download-manager/milestone/6)
 
-See [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) for scope, execution order, and release criteria; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component boundaries and accepted decisions; [docs/SECURITY.md](docs/SECURITY.md) for the threat model and sensitive-data policy; [docs/PROTOCOL.md](docs/PROTOCOL.md) for the versioned extension/helper contract; and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Windows bootstrap and quality commands. See [AGENTS.md](AGENTS.md) for the implementation workflow and non-negotiable constraints used across development sessions.
+See [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) for scope, execution order, and release criteria; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component boundaries and accepted decisions; [docs/SECURITY.md](docs/SECURITY.md) for the threat model and sensitive-data policy; [docs/PROTOCOL.md](docs/PROTOCOL.md) for the versioned extension/helper contract; [docs/TEST_SERVER.md](docs/TEST_SERVER.md) for deterministic HTTP fixtures; and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Windows bootstrap and quality commands. See [AGENTS.md](AGENTS.md) for the implementation workflow and non-negotiable constraints used across development sessions.
 
 ## Intended architecture
 

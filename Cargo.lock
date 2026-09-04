@@ -19,3 +19,7 @@ dependencies = [
 [[package]]
 name = "download-manager-protocol"
 version = "0.1.0"
+
+[[package]]
+name = "download-manager-test-server"
+version = "0.1.0"

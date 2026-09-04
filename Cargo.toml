@@ -3,6 +3,7 @@ members = [
     "crates/protocol",
     "crates/engine",
     "crates/native-host",
+    "crates/test-server",
 ]
 resolver = "3"
 

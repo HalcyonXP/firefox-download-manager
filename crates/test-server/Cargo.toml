@@ -1,0 +1,10 @@
+[package]
+name = "download-manager-test-server"
+description = "Deterministic adversarial HTTP fixtures for download-engine tests"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
