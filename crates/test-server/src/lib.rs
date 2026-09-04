@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -330,8 +330,13 @@ fn handle_connection(
     config: &ServerConfig,
     state: &Mutex<SharedState>,
 ) -> io::Result<()> {
+    // Windows can inherit nonblocking mode from the listener. Connection
+    // handlers need ordinary blocking semantics so transient WouldBlock errors
+    // cannot truncate a deterministic fixture response.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(2)))?;
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_nodelay(true)?;
 
     let Some(request) = read_request(&mut stream)? else {
         return Ok(());
@@ -526,7 +531,7 @@ fn serve_fixture(
         _ => 0,
     };
     let mut selected_range = request.range;
-    let ignore_range = matches!(fault, Some(Fault::IgnoreRange));
+    let ignore_range = matches!(fault, Some(Fault::IgnoreRange | Fault::UnknownLength));
     if ignore_range {
         selected_range = None;
     }
@@ -592,7 +597,7 @@ fn serve_fixture(
 
     write_head(stream, status, &headers)?;
     if request.method == "HEAD" {
-        return Ok(());
+        return finish_response(stream);
     }
     if let Some(Fault::Stall(duration)) = fault {
         thread::sleep(*duration);
@@ -631,7 +636,12 @@ fn write_generated_body(
         stream.write_all(&bytes)?;
         written += count_u64;
     }
-    stream.flush()
+    finish_response(stream)
+}
+
+fn finish_response(stream: &mut TcpStream) -> io::Result<()> {
+    stream.flush()?;
+    stream.shutdown(Shutdown::Write)
 }
 
 fn write_empty_status(
@@ -641,7 +651,8 @@ fn write_empty_status(
 ) -> io::Result<()> {
     let mut headers = extra_headers.to_vec();
     headers.push(("Content-Length", "0".to_owned()));
-    write_head(stream, status, &headers)
+    write_head(stream, status, &headers)?;
+    finish_response(stream)
 }
 
 fn write_head(stream: &mut TcpStream, status: u16, headers: &[(&str, String)]) -> io::Result<()> {

@@ -1,5 +1,7 @@
 //! Native download engine boundary.
 
+pub mod network;
+
 use download_manager_protocol::PROTOCOL_VERSION;
 
 /// Engine facade owned by the native host.

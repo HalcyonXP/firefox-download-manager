@@ -97,7 +97,7 @@ cargo install cargo-deny --locked --version 0.20.2
 cargo deny check
 ```
 
-CI runs the JavaScript license summary and `cargo-deny`. Review a dependency's exact license text and attribution requirements before accepting it; a successful automated classification is not legal advice. Dependencies and GitHub Actions are versioned or commit-pinned, and generated lockfile changes must be reviewed.
+CI runs the JavaScript license summary and `cargo-deny`. Review a dependency's exact license text and attribution requirements before accepting it; a successful automated classification is not legal advice. Dependencies and GitHub Actions are versioned or commit-pinned, and generated lockfile changes must be reviewed. Deliberate direct choices and exceptional transitive licenses are recorded in [THIRD_PARTY.md](THIRD_PARTY.md).
 
 ## Local configuration and secrets
 

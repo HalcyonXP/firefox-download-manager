@@ -36,7 +36,7 @@ All body routes support a single explicit `Range: bytes=start-end` unless the sc
 | `/status/416` | Returns `416` with `Content-Range: bytes */total` |
 | `/status/429` | Returns `429` with `Retry-After: 2` |
 | `/status/503` | Returns `503` with `Retry-After: 1` |
-| `/unknown-length` | Omits `Content-Length` and delimits the body by close |
+| `/unknown-length` | Ignores a range, omits `Content-Length`, and delimits the full body by close |
 | `/encoded` | Unexpectedly labels raw fixture bytes as gzip encoded |
 
 Unknown paths return `404`. Out-of-bounds ranges return a correct `416`. Multiple, suffix, open-ended, duplicate, or malformed Range headers are rejected instead of being guessed.
