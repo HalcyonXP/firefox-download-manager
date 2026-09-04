@@ -1,0 +1,44 @@
+name: Bug report
+description: Report incorrect or unsafe behavior
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: "Do not include cookies, authorization headers, signed URLs, or other secrets."
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Prefer the local test fixture or a non-sensitive public URL.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: input
+    id: firefox
+    attributes:
+      label: Firefox Developer Edition version
+    validations:
+      required: true
+  - type: input
+    id: extension
+    attributes:
+      label: Extension/helper version or commit
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Remove credentials and sensitive URL query values before submission.

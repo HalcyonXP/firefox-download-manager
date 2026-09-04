@@ -1,0 +1,31 @@
+name: Feature proposal
+description: Propose a scoped improvement
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: Describe observable behavior rather than only implementation details.
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Correctness, privacy, and server-impact considerations
+      description: Explain effects on downloaded bytes, credentials, concurrency, and server load.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
