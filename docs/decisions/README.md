@@ -10,5 +10,6 @@ Accepted ADRs define the baseline for the initial local release. Superseding a d
 | [0004](0004-storage-and-recovery.md) | Partial-file and recoverable-state model | Accepted |
 | [0005](0005-http-segmentation.md) | Strictly validated HTTP segmentation | Accepted |
 | [0006](0006-third-party-code.md) | Original implementation and dependency provenance | Accepted |
+| [0007](0007-task-controls-retries-progress.md) | Cooperative task controls, bounded retries, and latest-value progress | Accepted |
 
 Each record states its reversibility. Security and correctness invariants are not made optional merely because an implementation choice is reversible.

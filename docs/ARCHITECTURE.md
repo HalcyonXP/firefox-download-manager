@@ -130,7 +130,7 @@ The local fixture is test-only. It generates reproducible bytes and controlled H
 5. The validated assignment is written directly to its offset in the `.part` file; one optional duplicate fetch of the sole slow tail has only one storage winner.
 6. Crash-safe metadata records verified completed coverage at a bounded cadence.
 7. A safe one-worker fallback uses the same storage/result model; unknown-length interruption restarts from zero.
-8. Issue #9 will rate-limit live progress events while complete snapshots remain available.
+8. The task controller samples absolute counters at a bounded cadence, publishes coalescible progress, and keeps a complete latest-value snapshot independently.
 
 ### Complete a download
 
@@ -142,7 +142,7 @@ The local fixture is test-only. It generates reproducible bytes and controlled H
 
 ### Recover state
 
-Persisted metadata, not the extension, describes recoverable work. On startup, the helper validates schema version, task transitions, paths, resource identity, partial/final lengths, publication same-file identity, and completed ranges. Corrupt, incompatible, or identity-conflicting state is preserved and failed with a useful diagnosis; it is never resumed optimistically.
+Persisted metadata, not the extension, describes recoverable work. On startup, the helper validates schema version, task transitions, paths, resource identity, partial/final lengths, publication same-file identity, completed ranges, and the fixed worker selection. Format-v1 records have one explicit migration to format v2; unknown future versions are not interpreted. Valid interrupted `downloading` tasks become paused, incomplete probe/validation phases fail safely, and a recorded promoted final link can complete recovery. Corrupt, incompatible, or identity-conflicting state is preserved and diagnosed; it is never resumed optimistically.
 
 ## Task lifecycle
 
@@ -154,16 +154,22 @@ queued → probing → downloading ⇄ paused
                     └→ validating → promoting → completed
 ```
 
-Transitions are explicit and persisted where they affect recovery. `completed` and `cancelled` are terminal; `failed` is inactive until an explicit retry requeues the same task and revalidates any retained resource identity. Pause/cancel acknowledgement occurs only after active workers stop making writes. Cancellation has an explicit keep/delete-partial choice.
+Transitions are explicit and persisted where they affect recovery. `completed` and `cancelled` are terminal; `failed` is inactive until an explicit retry requeues the same task and revalidates any retained resource identity. Protocol v1 uses the `resume` command as that explicit retry action for a failed task. Pause/cancel acknowledgement occurs only after cancellation-aware probes, retry sleeps, requests, and workers stop; the controller then performs a bytes-first critical checkpoint. Cancellation has an explicit keep/delete-partial choice and never deletes final output.
+
+## Retry and progress policy
+
+One retry budget spans probing and transfer attempts for a task run. Retryable request failures and HTTP `408`, `425`, `429`, `500`, `502`, `503`, and `504` use bounded exponential equal jitter. Server `Retry-After` is a minimum delay; guidance above the configured safety bound fails rather than retrying early. The default budget is five retries after the initial attempt, protocol settings cannot exceed 20, and explicit user retry starts a fresh budget. Protocol/range identity violations and storage failures are fatal for that run.
+
+Scheduler updates use latest-value channels. The task controller emits absolute progress no more often than its bounded interval (250 ms by default), while per-task subscriptions and list/get snapshots always retain a complete current replacement value. Speed uses a bounded sliding window over monotonic time. ETA is absent for unknown sizes, regressions, stalls, zero rates, and unstable interval rates; exact completion reports zero. Slow consumers may lose intermediate progress but not authority: event-buffer overflow explicitly requires a fresh full snapshot.
 
 ## Concurrency and ownership
 
 - Supported per-task worker counts are 1, 2, 4, and 8.
-- Four is the default; eight is the initial per-task cap.
-- Per-host and global limits independently bound aggregate pressure.
+- Four is the default; eight is the initial per-task cap; the resolved per-task choice is persisted for restart.
+- Per-host and global limits independently bound aggregate transfer-request pressure; broader adaptive throttling remains issue #16.
 - Each active byte belongs to one assignment and one writer.
 - Tail assistance may duplicate only the sole remaining bounded request; first validated completion wins one storage assignment and the loser cannot write.
-- A task-level ownership guard prevents two helper instances from writing the same partial file.
+- An exclusive state-store ownership lock prevents two helper instances from managing the same task set and partial files.
 
 ## Storage model
 
@@ -189,14 +195,15 @@ The detailed contract is defined in [PROTOCOL.md](PROTOCOL.md) and must preserve
 | Versioned metadata plus unique partial and promotion | [ADR-0004](decisions/0004-storage-and-recovery.md) | Format is evolvable; final-file safety is not negotiable |
 | Probe with ranged GET and validate every range | [ADR-0005](decisions/0005-http-segmentation.md) | Tuning is reversible; response validation is not |
 | Original implementation with audited dependencies | [ADR-0006](decisions/0006-third-party-code.md) | Dependencies are replaceable; provenance obligations remain |
+| Cooperative task controls, bounded retries, and latest-value progress | [ADR-0007](decisions/0007-task-controls-retries-progress.md) | Timing can be tuned within bounds; safe-stop and boundedness semantics remain |
 
 ## Deferred choices
 
 The following remain deliberately reversible and belong to later issues:
 
 - UI framework or framework-free implementation;
-- exact progress-event cadence (metadata checkpoint bounds are already fixed);
-- measured tail-hedge delay and retry tuning;
+- empirically tuned progress cadence within the implemented 100 ms–60 second bound;
+- measured tail-hedge and retry-delay tuning within implemented safety bounds;
 - installer technology;
 - optional checksum UX; and
 - future cross-platform packaging.

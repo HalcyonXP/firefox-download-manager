@@ -59,7 +59,7 @@ Promotion occurs only after validation. If the filesystem cannot provide an atom
 
 ### Persisted state to restarted helper
 
-Metadata is versioned but untrusted. Recovery validates identifiers, enum values, size arithmetic, range ordering and coverage, paths, partial/final file type and length, same-file publication identity, and resource validators. Unknown future formats and corrupt state fail closed. Secret headers and cookies are not persisted by default. Concrete schema, checkpoint ordering, recovery bounds, and cleanup behavior are documented in [STATE.md](STATE.md).
+Metadata is versioned but untrusted. Recovery validates identifiers, enum values, the persisted 1/2/4/8 worker selection, size arithmetic, range ordering and coverage, paths, partial/final file type and length, same-file publication identity, and resource validators. Format v1 is accepted only through its dedicated migration into v2; unknown future formats and corrupt state fail closed. Secret headers and cookies are not persisted by default. Concrete schema, checkpoint ordering, recovery bounds, and cleanup behavior are documented in [STATE.md](STATE.md).
 
 ## Sensitive-data policy
 
@@ -88,15 +88,18 @@ Completed coverage is represented canonically as ordered, non-overlapping, in-bo
 ## Availability and server-impact controls
 
 - Per-task worker count is restricted to 1, 2, 4, or 8, with four default and eight maximum.
-- Per-host and global concurrency semaphores are independent and shared across tasks.
+- Transfer-request per-host and global concurrency semaphores are independent and shared across tasks; broader adaptive throttling remains issue #16.
 - Ranged bodies are limited to 8 MiB per assignment and plans to 1,000,000 requests.
 - Only the sole remaining tail can be hedged, at most once; only one response can own its range.
 - Undeclared-length streams have an explicit byte cap and restart from zero after interruption.
-- Retries are bounded and use exponential backoff with jitter.
-- `Retry-After` is honored for applicable responses.
-- Repeated failures reduce pressure rather than creating worker storms.
+- One run has zero through 20 retries after its initial attempt; retries use capped exponential equal jitter.
+- Only transport failures and HTTP `408`, `425`, `429`, `500`, `502`, `503`, and `504` are automatic retry candidates.
+- `Retry-After` is a minimum delay; guidance above the accepted bound fails instead of retrying early.
+- Protocol, resource-identity, and storage failures stop the run rather than creating worker storms.
 - Response bodies, headers, protocol frames, metadata, logs, event frequency, redirect depth, and timeouts are bounded.
-- Cancellation and shutdown stop new assignments before waiting for writers to checkpoint.
+- Pause/cancel interrupts probe, semaphore, request, body, tail, and backoff waits, joins workers, then checkpoints bytes before state.
+- Cancellation's explicit `delete` policy can remove only its validated managed partial; completed final output is never eligible.
+- Progress events are interval-limited and coalescible; a bounded overflow flag requires an authoritative snapshot.
 
 These controls reduce accidental denial of service but do not promise availability against an adversarial server or exhausted local disk.
 
@@ -104,7 +107,7 @@ These controls reduce accidental denial of service but do not promise availabili
 
 The native-host manifest names one absolute helper path and allows only this extension's stable ID. Installation and removal modify only required user-scoped registration where possible, quote paths containing spaces correctly, and embed no secrets. The project has no remote updater. Release artifacts and checksums come from GitHub; update behavior is explicit and local.
 
-Task-state migrations are versioned and tested. An incompatible upgrade preserves data for diagnosis or explicit cleanup rather than guessing.
+Task-state migrations are versioned and tested. The v1-to-v2 worker-default migration uses a separate strict decoder and atomic replacement. An incompatible upgrade preserves data for diagnosis or explicit cleanup rather than guessing.
 
 ## Third-party and supply-chain policy
 

@@ -51,7 +51,7 @@ Operational commands are serialized by the helper per task. A command receives e
 | `hello` | Negotiate protocol and capabilities | Negotiation details |
 | `add` | Validate and create a task | Full task |
 | `pause` | Reach a safe paused checkpoint | Full task |
-| `resume` | Revalidate and request only missing work | Full task |
+| `resume` | Resume a paused task, or explicitly retry a failed task, after revalidation | Full task |
 | `cancel` | Stop work using explicit `keep`/`delete` partial policy | Full task |
 | `remove` | Remove eligible task history and optionally retained partial state | Removed task ID |
 | `list` | Return a bounded page from an authoritative snapshot | Snapshot page |
@@ -60,7 +60,9 @@ Operational commands are serialized by the helper per task. A command receives e
 
 `add.url` must be an absolute HTTP(S) URL without URL user-info. Schema pattern checks are only preliminary; the helper performs semantic URL parsing. Destination, suggested filename, request context, checksum, and worker count are likewise revalidated by their consuming subsystem.
 
-`pause`, `resume`, `cancel`, and `remove` are idempotent only where the task state definition explicitly permits it. An invalid transition returns `INVALID_TASK_STATE`, never an optimistic success.
+`pause`, `resume`, `cancel`, and `remove` are idempotent only where the task state definition explicitly permits it. `resume` maps paused work directly back to downloading after identity revalidation; for `failed`, it is the explicit user retry action and passes through persisted `queued` and `probing` states with a fresh bounded retry budget. An invalid transition returns `INVALID_TASK_STATE`, never an optimistic success.
+
+A successful pause/cancel response is not emitted merely because a cancellation flag was set. The engine first interrupts network/backoff waits, joins range workers, flushes retained completed bytes, critically checkpoints their ranges, and applies the state transition. `cancel.partial_policy: "delete"` additionally removes and forgets only the validated managed partial before success; neither policy can delete completed final output.
 
 ## Responses and stable errors
 
@@ -72,7 +74,7 @@ The complete registry and retry guidance are in [`protocol/ERROR_CODES.md`](../p
 
 ## Events, ordering, and coalescing
 
-Events contain a connection-local monotonically increasing `sequence` and `emitted_at`. The sequence detects dropped/reordered events but is not persisted as task truth and may restart after reconnection.
+Wire events contain a connection-local monotonically increasing `sequence` and `emitted_at`. The task engine separately assigns an internal dequeue order; the connection adapter assigns the wire sequence only to events it actually serializes. Neither sequence is persisted as task truth, and the wire sequence restarts for a new negotiated connection.
 
 - `state_changed`: a full task plus its previous state.
 - `progress`: a replaceable sample of counters, smoothed rate, ETA, and active workers.
@@ -81,7 +83,9 @@ Events contain a connection-local monotonically increasing `sequence` and `emitt
 - `failed`: the full failed task and stable terminal error.
 - `snapshot`: one bounded page of authoritative tasks.
 
-Progress is deliberately coalescible. The helper may replace unsent progress for the same task with a newer sample and may rate-limit samples. The extension treats each sample as an absolute value, never a delta. State changes, warnings, completion, and failure are not discarded as progress noise.
+Progress is deliberately coalescible. The helper replaces unsent progress for the same task with a newer sample and limits ordinary emission to the configured bounded cadence (250 ms by default). The extension treats each sample as an absolute value, never a delta. High-frequency scheduler updates still replace the engine's full latest snapshot independently of event emission. State changes, warnings, completion, and failure are not discarded as progress noise; if the bounded event queue cannot retain a critical event, it marks continuity uncertain so the connection layer must send/request authoritative snapshots.
+
+The engine also produces best-effort typed `RetryScheduled` bookkeeping so retry budgets and accepted delays can be observed and tested internally. Protocol v1 defines no retry-scheduled discriminator or retry-number/delay fields, so the connection adapter consumes that bookkeeping without serializing it directly or advancing the wire sequence. It must not invent a warning code or an out-of-schema field; protocol-visible retry exhaustion remains `RETRY_EXHAUSTED`.
 
 On a sequence gap, reconnect, dashboard opening, or uncertain state, the extension requests `list` and rebuilds from snapshot pages instead of guessing.
 
@@ -100,7 +104,7 @@ The helper may emit the same page form as a `snapshot` event after connection. P
 
 ## Task representation
 
-Task snapshots intentionally contain enough display/control state but not request secrets. They include an opaque UUID, safe display name, destination, source origin without path/query/user-info, lifecycle state, transfer mode, sizes, worker/rate/ETA values, timestamps, and a bounded stable error.
+Task snapshots intentionally contain enough display/control state but not request secrets. They include an opaque UUID, safe display name, destination, source origin without path/query/user-info, lifecycle state, transfer mode, sizes, worker/rate/ETA values, timestamps, and a bounded stable error. Speed is smoothed over monotonic samples. ETA is `null` for unknown size, stalls, regressions, zero rate, or unstable rates and is zero at exact completion.
 
 The native helper may persist additional internal fields—such as exact URLs, validators, ranges, and partial paths—that are not ordinary protocol snapshot data. Internal representation is not part of the wire contract.
 

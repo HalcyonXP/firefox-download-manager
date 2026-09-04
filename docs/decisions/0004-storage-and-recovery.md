@@ -23,4 +23,4 @@ On recovery, distrust both metadata and the partial file and validate their agre
 
 ## Consequences
 
-The storage API must model assignment ownership, durability points, and promotion explicitly. Metadata schema versions and migrations are mandatory. Cleanup of completed, cancelled, corrupt, and abandoned state must be a deliberate policy. The implemented format, bytes-first checkpoint ordering, conservative loader, and explicit cleanup baseline are documented in [STATE.md](../STATE.md).
+The storage API must model assignment ownership, durability points, and promotion explicitly. Metadata schema versions and migrations are mandatory. Format v2 persists the fixed worker selection and has one strict, atomic migration from v1's historical four-worker default. Cleanup of completed, cancelled, corrupt, and abandoned state must be a deliberate policy. The task controller joins writers before pause/cancel checkpoints and deletes a cancelled partial before forgetting its metadata. The implemented format, bytes-first checkpoint ordering, conservative loader, and explicit cleanup baseline are documented in [STATE.md](../STATE.md).

@@ -72,4 +72,4 @@ Run all fixture conformance tests with:
 cargo test -p download-manager-test-server --all-features --locked
 ```
 
-The workspace CI command runs these tests automatically on Windows. Later engine integration tests should instantiate this crate directly rather than depend on public servers.
+The workspace CI command runs these tests automatically on Windows. Engine probe, scheduler, and task-lifecycle integration tests instantiate this crate directly rather than depend on public servers. Targeted request ordinals deterministically exercise transient recovery, retry exhaustion, `Retry-After`, fatal no-retry behavior, changed identity, cancellation during backoff, durable pause/resume, and progress cadence.

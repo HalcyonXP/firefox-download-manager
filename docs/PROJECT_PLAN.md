@@ -51,6 +51,7 @@ The Firefox extension captures user intent and displays state. A Rust native hel
 │                                  │
 │ protocol boundary                │
 │ persistent task state            │
+│ lifecycle / retry / progress     │
 │ HTTP client and range validator  │
 │ segment scheduler                │
 │ random-access partial-file I/O   │
@@ -144,6 +145,8 @@ A release must preserve these invariants:
 6. A final file is exposed only after size/integrity checks and successful promotion from partial state.
 7. Existing files are never silently overwritten.
 8. Credentials never appear in routine logs or persistent state by default.
+9. Pause/cancel acknowledgement follows worker stop and a bytes-first critical checkpoint.
+10. Automatic retries and progress/event memory are explicitly bounded.
 
 ## Release quality gates
 

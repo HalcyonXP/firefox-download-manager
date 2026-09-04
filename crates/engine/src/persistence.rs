@@ -20,13 +20,14 @@ use thiserror::Error;
 use uuid::{Uuid, Variant};
 
 use crate::network::{EntityTag, ProbeMode, ResourceProbe, Validators};
+use crate::progress::MAX_SAFE_INTEGER;
 use crate::storage::{
     FileRange, IoFailure, PartialFile, Promotion, StorageError, is_managed_partial_filename,
     sanitize_filename,
 };
 
 /// Current internal task-state format version.
-pub const STATE_FORMAT_VERSION: u64 = 1;
+pub const STATE_FORMAT_VERSION: u64 = 2;
 /// Maximum bytes accepted for one task-state file.
 pub const MAX_STATE_BYTES: usize = 256 * 1024;
 /// Maximum canonical completed ranges accepted per task.
@@ -42,6 +43,7 @@ const TASK_DIRECTORY_NAME: &str = "tasks";
 const MAX_TASK_FILES: usize = 10_000;
 const MAX_DIRECTORY_ENTRIES: usize = 20_000;
 const MAX_URL_BYTES: usize = 16 * 1024;
+const DEFAULT_TASK_WORKERS: u8 = 4;
 const MAX_TIMESTAMP_MILLIS: u64 = 253_402_300_799_999;
 const MIN_CHECKPOINT_INTERVAL: Duration = Duration::from_millis(100);
 const MAX_CHECKPOINT_INTERVAL: Duration = Duration::from_secs(60);
@@ -100,6 +102,11 @@ impl fmt::Debug for TaskId {
 pub struct TimestampMillis(u64);
 
 impl TimestampMillis {
+    /// Infallible internal fallback for nonpersistent event timestamps.
+    pub(crate) const fn unix_epoch() -> Self {
+        Self(0)
+    }
+
     /// Creates a bounded timestamp.
     ///
     /// # Errors
@@ -212,7 +219,7 @@ pub enum StateValidationError {
     /// Revision arithmetic overflowed.
     #[error("task revision is invalid")]
     InvalidRevision,
-    /// URL syntax, scheme, user-info, or size bound is invalid.
+    /// URL syntax, scheme, user-info, or length bound is invalid.
     #[error("persisted URL is invalid")]
     InvalidUrl,
     /// Destination is not a bounded absolute ordinary directory path.
@@ -236,6 +243,9 @@ pub enum StateValidationError {
     /// Completed ranges are malformed, overlapping, adjacent, or out of bounds.
     #[error("persisted completed ranges are invalid")]
     InvalidCompletedRanges,
+    /// Persisted worker selection is not exactly 1, 2, 4, or 8.
+    #[error("persisted worker count is invalid")]
+    InvalidWorkerCount,
     /// State and stored resource/file data disagree.
     #[error("persisted task fields are inconsistent with lifecycle state")]
     InconsistentState,
@@ -279,6 +289,7 @@ impl ResourceIdentity {
         let final_url = normalize_url(final_url)?;
         validate_validators(&validators)?;
         if transfer_mode == TransferMode::Pending
+            || expected_size.is_some_and(|size| size > MAX_SAFE_INTEGER)
             || transfer_mode == TransferMode::Segmented
                 && expected_size.is_none_or(|size| size == 0)
         {
@@ -358,6 +369,7 @@ pub struct TaskMetadata {
     resource: Option<ResourceIdentity>,
     destination: PathBuf,
     display_name: String,
+    workers: u8,
     partial_path: Option<PathBuf>,
     final_path: Option<PathBuf>,
     completed_ranges: Vec<FileRange>,
@@ -376,10 +388,30 @@ impl TaskMetadata {
         destination: &Path,
         suggested_filename: &str,
     ) -> Result<Self, StateValidationError> {
-        Self::new_at(
+        Self::new_with_workers(
             original_url,
             destination,
             suggested_filename,
+            DEFAULT_TASK_WORKERS,
+        )
+    }
+
+    /// Creates a queued task with a persisted fixed worker selection.
+    ///
+    /// # Errors
+    ///
+    /// Rejects unsafe task input or a worker count other than 1, 2, 4, or 8.
+    pub fn new_with_workers(
+        original_url: &str,
+        destination: &Path,
+        suggested_filename: &str,
+        workers: u8,
+    ) -> Result<Self, StateValidationError> {
+        Self::new_at_with_workers(
+            original_url,
+            destination,
+            suggested_filename,
+            workers,
             TimestampMillis::now()?,
         )
     }
@@ -395,6 +427,23 @@ impl TaskMetadata {
         suggested_filename: &str,
         created_at: TimestampMillis,
     ) -> Result<Self, StateValidationError> {
+        Self::new_at_with_workers(
+            original_url,
+            destination,
+            suggested_filename,
+            DEFAULT_TASK_WORKERS,
+            created_at,
+        )
+    }
+
+    fn new_at_with_workers(
+        original_url: &str,
+        destination: &Path,
+        suggested_filename: &str,
+        workers: u8,
+        created_at: TimestampMillis,
+    ) -> Result<Self, StateValidationError> {
+        validate_worker_count(workers)?;
         let original_url = normalize_url(original_url)?;
         let destination = validate_new_destination(destination)?;
         let display_name = sanitize_filename(suggested_filename).as_str().to_owned();
@@ -406,6 +455,7 @@ impl TaskMetadata {
             resource: None,
             destination,
             display_name,
+            workers,
             partial_path: None,
             final_path: None,
             completed_ranges: Vec::new(),
@@ -454,6 +504,12 @@ impl TaskMetadata {
     #[must_use]
     pub fn display_name(&self) -> &str {
         &self.display_name
+    }
+
+    /// Persisted fixed transfer worker count.
+    #[must_use]
+    pub const fn workers(&self) -> u8 {
+        self.workers
     }
 
     /// Active or redundant partial path. This can be sensitive.
@@ -664,6 +720,28 @@ impl TaskMetadata {
         Ok(true)
     }
 
+    /// Forgets a retained partial only after its explicit external deletion.
+    ///
+    /// # Errors
+    ///
+    /// Rejects non-cancelled/non-failed tasks, published final state, absent
+    /// partial metadata, or backwards timestamps.
+    pub fn record_partial_deletion(
+        &mut self,
+        updated_at: TimestampMillis,
+    ) -> Result<(), StateValidationError> {
+        if !matches!(self.state, TaskState::Cancelled | TaskState::Failed)
+            || self.final_path.is_some()
+            || self.partial_path.is_none()
+        {
+            return Err(StateValidationError::InconsistentState);
+        }
+        self.bump_revision(updated_at)?;
+        self.partial_path = None;
+        self.completed_ranges.clear();
+        Ok(())
+    }
+
     /// Records the collision-safe final pathname after storage publication.
     ///
     /// The first call retains the redundant partial link so both names are
@@ -742,6 +820,7 @@ impl fmt::Debug for TaskMetadata {
                     .and_then(ResourceIdentity::expected_size),
             )
             .field("bytes_completed", &self.bytes_completed())
+            .field("workers", &self.workers)
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
             .finish_non_exhaustive()
@@ -898,6 +977,8 @@ pub enum LoadFailureReason {
         /// Version found without interpreting its task body.
         found: u64,
     },
+    /// A valid legacy record could not be rewritten atomically.
+    MigrationFailed,
     /// Filename and record task IDs conflict.
     TaskIdMismatch,
     /// Typed task data violated a semantic invariant.
@@ -945,6 +1026,7 @@ impl fmt::Display for LoadFailureReason {
             Self::IncompatibleVersion { found } => {
                 write!(formatter, "state version {found} is incompatible")
             }
+            Self::MigrationFailed => formatter.write_str("legacy state migration failed"),
             Self::TaskIdMismatch => formatter.write_str("state filename and task ID disagree"),
             Self::InvalidTask(error) => write!(formatter, "invalid task state: {error}"),
             Self::DestinationUnavailable => {
@@ -1265,7 +1347,20 @@ impl TaskStore {
             };
 
             match load_task_file(&entry.path(), filename_id) {
-                Ok(task) => report.tasks.push(task),
+                Ok(loaded) => {
+                    if loaded.migrated {
+                        let migration = serialize_task(&loaded.task)
+                            .and_then(|bytes| self.write_atomic(loaded.task.task_id, &bytes));
+                        if migration.is_err() {
+                            report.failures.push(LoadFailure {
+                                task_id: Some(filename_id),
+                                reason: LoadFailureReason::MigrationFailed,
+                            });
+                            continue;
+                        }
+                    }
+                    report.tasks.push(loaded.task);
+                }
                 Err(reason) => report.failures.push(LoadFailure {
                     task_id: Some(filename_id),
                     reason,
@@ -1332,6 +1427,59 @@ impl TaskStore {
             removed += 1;
         }
         Ok(removed)
+    }
+
+    /// Deletes and forgets a failed/cancelled task's retained partial while
+    /// preserving its terminal history record.
+    ///
+    /// Deletion precedes metadata replacement. If interruption occurs between
+    /// those operations, recovery accepts the old terminal record with a
+    /// missing partial and a later call can safely finish the metadata update.
+    ///
+    /// # Errors
+    ///
+    /// Rejects other lifecycle states or unsafe partial entries and propagates
+    /// deletion/checkpoint failures.
+    pub fn discard_terminal_partial(
+        &self,
+        task: &mut TaskMetadata,
+        updated_at: TimestampMillis,
+    ) -> Result<bool, PersistenceError> {
+        if !matches!(task.state, TaskState::Cancelled | TaskState::Failed) {
+            return Err(PersistenceError::CleanupRequiresTerminal);
+        }
+        validate_task(task)?;
+        let Some(partial_path) = task.partial_path.as_deref() else {
+            return Ok(false);
+        };
+        {
+            let _io_guard = lock(&self.io_gate);
+            validate_confined_path(partial_path, &task.destination, PathKind::Partial)?;
+            match fs::symlink_metadata(partial_path) {
+                Ok(metadata) => {
+                    if !metadata.is_file()
+                        || metadata.file_type().is_symlink()
+                        || is_reparse_point(&metadata)
+                    {
+                        return Err(StateValidationError::InvalidPartialPath.into());
+                    }
+                    fs::remove_file(partial_path).map_err(|error| {
+                        map_persistence_io(PersistenceOperation::Cleanup, &error)
+                    })?;
+                }
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => {
+                    return Err(map_persistence_io(PersistenceOperation::Cleanup, &error));
+                }
+            }
+        }
+        let retained_metadata = task.clone();
+        task.record_partial_deletion(updated_at)?;
+        if let Err(error) = self.checkpoint(task, CheckpointUrgency::Critical) {
+            *task = retained_metadata;
+            return Err(error);
+        }
+        Ok(true)
     }
 
     /// Applies explicit terminal cleanup without ever deleting a final file.
@@ -1538,11 +1686,63 @@ struct PersistedTask {
     transfer_mode: TransferMode,
     destination: String,
     display_name: String,
+    workers: u8,
     partial_path: Option<String>,
     final_path: Option<String>,
     completed_ranges: Vec<PersistedRange>,
     created_at_ms: u64,
     updated_at_ms: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedEnvelopeV1 {
+    format: String,
+    version: u64,
+    task: PersistedTaskV1,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedTaskV1 {
+    task_id: String,
+    revision: u64,
+    state: TaskState,
+    original_url: String,
+    final_url: Option<String>,
+    expected_size: Option<u64>,
+    validators: PersistedValidators,
+    transfer_mode: TransferMode,
+    destination: String,
+    display_name: String,
+    partial_path: Option<String>,
+    final_path: Option<String>,
+    completed_ranges: Vec<PersistedRange>,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+}
+
+impl PersistedTaskV1 {
+    fn migrate(self) -> PersistedTask {
+        PersistedTask {
+            task_id: self.task_id,
+            revision: self.revision,
+            state: self.state,
+            original_url: self.original_url,
+            final_url: self.final_url,
+            expected_size: self.expected_size,
+            validators: self.validators,
+            transfer_mode: self.transfer_mode,
+            destination: self.destination,
+            display_name: self.display_name,
+            workers: DEFAULT_TASK_WORKERS,
+            partial_path: self.partial_path,
+            final_path: self.final_path,
+            completed_ranges: self.completed_ranges,
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.updated_at_ms,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1588,6 +1788,7 @@ impl PersistedTask {
             transfer_mode: resource.map_or(TransferMode::Pending, ResourceIdentity::transfer_mode),
             destination: path_to_string(&task.destination)?.to_owned(),
             display_name: task.display_name.clone(),
+            workers: task.workers,
             partial_path: task
                 .partial_path
                 .as_deref()
@@ -1638,7 +1839,12 @@ impl PersistedValidators {
     }
 }
 
-fn load_task_file(path: &Path, filename_id: TaskId) -> Result<TaskMetadata, LoadFailureReason> {
+struct LoadedTaskFile {
+    task: TaskMetadata,
+    migrated: bool,
+}
+
+fn load_task_file(path: &Path, filename_id: TaskId) -> Result<LoadedTaskFile, LoadFailureReason> {
     let metadata = fs::symlink_metadata(path)
         .map_err(|error| LoadFailureReason::ReadFailed(classify_io(&error)))?;
     if !metadata.is_file() || metadata.file_type().is_symlink() || is_reparse_point(&metadata) {
@@ -1668,19 +1874,28 @@ fn load_task_file(path: &Path, filename_id: TaskId) -> Result<TaskMetadata, Load
     if version.format != STATE_FORMAT_NAME {
         return Err(LoadFailureReason::UnknownFormat);
     }
-    if version.version != STATE_FORMAT_VERSION {
-        return Err(LoadFailureReason::IncompatibleVersion {
-            found: version.version,
-        });
-    }
-    let envelope: PersistedEnvelope =
-        serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
-    let task = task_from_persisted(envelope.task).map_err(LoadFailureReason::InvalidTask)?;
+    let (raw, migrated) = match version.version {
+        STATE_FORMAT_VERSION => {
+            let envelope: PersistedEnvelope =
+                serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
+            (envelope.task, false)
+        }
+        1 => {
+            let envelope: PersistedEnvelopeV1 =
+                serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
+            if envelope.format != STATE_FORMAT_NAME || envelope.version != 1 {
+                return Err(LoadFailureReason::Malformed);
+            }
+            (envelope.task.migrate(), true)
+        }
+        found => return Err(LoadFailureReason::IncompatibleVersion { found }),
+    };
+    let task = task_from_persisted(raw).map_err(LoadFailureReason::InvalidTask)?;
     if task.task_id != filename_id {
         return Err(LoadFailureReason::TaskIdMismatch);
     }
     validate_recovery_file(&task)?;
-    Ok(task)
+    Ok(LoadedTaskFile { task, migrated })
 }
 
 fn task_from_persisted(raw: PersistedTask) -> Result<TaskMetadata, StateValidationError> {
@@ -1748,6 +1963,7 @@ fn task_from_persisted(raw: PersistedTask) -> Result<TaskMetadata, StateValidati
         resource,
         destination,
         display_name: raw.display_name,
+        workers: raw.workers,
         partial_path,
         final_path,
         completed_ranges,
@@ -1762,6 +1978,7 @@ fn validate_task(task: &TaskMetadata) -> Result<(), StateValidationError> {
     if task.revision == 0 || task.updated_at < task.created_at {
         return Err(StateValidationError::InvalidRevision);
     }
+    validate_worker_count(task.workers)?;
     require_canonical_url(&task.original_url)?;
     validate_path_syntax(&task.destination)
         .map_err(|()| StateValidationError::InvalidDestination)?;
@@ -1929,6 +2146,14 @@ fn validate_recovery_file(task: &TaskMetadata) -> Result<(), LoadFailureReason> 
         }
     }
     Ok(())
+}
+
+const fn validate_worker_count(workers: u8) -> Result<(), StateValidationError> {
+    if matches!(workers, 1 | 2 | 4 | 8) {
+        Ok(())
+    } else {
+        Err(StateValidationError::InvalidWorkerCount)
+    }
 }
 
 fn validate_completed_ranges(

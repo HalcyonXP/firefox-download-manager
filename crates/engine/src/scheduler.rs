@@ -212,6 +212,152 @@ pub enum SchedulerConfigError {
     InvalidUnknownStreamLimit,
 }
 
+/// Cooperative cancellation shared by one transfer invocation and its workers.
+#[derive(Clone)]
+pub struct TransferCancellation {
+    signal: watch::Sender<bool>,
+}
+
+impl TransferCancellation {
+    /// Creates an initially active cancellation signal.
+    #[must_use]
+    pub fn new() -> Self {
+        let (signal, _) = watch::channel(false);
+        Self { signal }
+    }
+
+    /// Requests cooperative stop. Repeated requests are idempotent.
+    pub fn cancel(&self) {
+        self.signal.send_replace(true);
+    }
+
+    /// Whether stop has been requested.
+    #[must_use]
+    pub fn is_cancelled(&self) -> bool {
+        *self.signal.borrow()
+    }
+
+    /// Waits until cancellation is requested.
+    pub async fn cancelled(&self) {
+        let mut receiver = self.signal.subscribe();
+        if *receiver.borrow_and_update() {
+            return;
+        }
+        while receiver.changed().await.is_ok() {
+            if *receiver.borrow_and_update() {
+                return;
+            }
+        }
+    }
+
+    fn subscribe(&self) -> watch::Receiver<bool> {
+        self.signal.subscribe()
+    }
+}
+
+impl Default for TransferCancellation {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl fmt::Debug for TransferCancellation {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TransferCancellation")
+            .field("is_cancelled", &self.is_cancelled())
+            .finish()
+    }
+}
+
+/// Absolute transfer counters suitable for coalesced progress sampling.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct TransferProgress {
+    bytes_completed: u64,
+    expected_size: Option<u64>,
+    active_workers: u8,
+}
+
+impl TransferProgress {
+    /// Bytes represented by this invocation's durable baseline plus safe
+    /// in-process progress.
+    #[must_use]
+    pub const fn bytes_completed(self) -> u64 {
+        self.bytes_completed
+    }
+
+    /// Expected complete length, or `None` until an unknown stream reaches EOF.
+    #[must_use]
+    pub const fn expected_size(self) -> Option<u64> {
+        self.expected_size
+    }
+
+    /// Worker requests currently sending or receiving a response.
+    #[must_use]
+    pub const fn active_workers(self) -> u8 {
+        self.active_workers
+    }
+}
+
+/// Scheduler-owned endpoint for a bounded latest-value progress channel.
+#[derive(Clone)]
+pub struct TransferProgressReporter {
+    sender: watch::Sender<TransferProgress>,
+}
+
+impl fmt::Debug for TransferProgressReporter {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TransferProgressReporter")
+            .finish_non_exhaustive()
+    }
+}
+
+impl TransferProgressReporter {
+    fn publish(&self, progress: TransferProgress) {
+        self.sender.send_replace(progress);
+    }
+}
+
+/// Consumer endpoint retaining the newest absolute progress even when samples
+/// are coalesced.
+pub struct TransferProgressReceiver {
+    receiver: watch::Receiver<TransferProgress>,
+}
+
+impl fmt::Debug for TransferProgressReceiver {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TransferProgressReceiver")
+            .field("latest", &*self.receiver.borrow())
+            .finish()
+    }
+}
+
+impl TransferProgressReceiver {
+    /// Returns the latest complete absolute sample without waiting.
+    #[must_use]
+    pub fn latest(&self) -> TransferProgress {
+        *self.receiver.borrow()
+    }
+
+    /// Waits for a newer sample, returning `None` after all reporters close.
+    pub async fn changed(&mut self) -> Option<TransferProgress> {
+        self.receiver.changed().await.ok()?;
+        Some(*self.receiver.borrow_and_update())
+    }
+}
+
+/// Creates a bounded coalescing channel for one controlled transfer.
+#[must_use]
+pub fn transfer_progress_channel() -> (TransferProgressReporter, TransferProgressReceiver) {
+    let (sender, receiver) = watch::channel(TransferProgress::default());
+    (
+        TransferProgressReporter { sender },
+        TransferProgressReceiver { receiver },
+    )
+}
+
 /// Transfer strategy actually executed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransferKind {
@@ -292,7 +438,7 @@ pub enum SchedulerError {
     HttpStatus {
         /// Numeric status without response reason text.
         status: u16,
-        /// Bounded retry guidance retained for issue #9.
+        /// Bounded retry guidance consumed by the task policy.
         retry_after_seconds: Option<u64>,
     },
     /// Ranged response metadata did not prove the assignment.
@@ -316,6 +462,9 @@ pub enum SchedulerError {
     /// An internal worker task ended unexpectedly.
     #[error("transfer worker ended unexpectedly")]
     WorkerJoin,
+    /// Cooperative pause/cancel control stopped network work safely.
+    #[error("transfer was cancelled")]
+    Cancelled,
     /// Internal bounded coordination state was exhausted.
     #[error("transfer coordination state is invalid")]
     Coordination,
@@ -414,38 +563,78 @@ impl DownloadScheduler {
         partial: &PartialFile,
         workers: WorkerCount,
     ) -> Result<TransferSummary, SchedulerError> {
-        match probe.mode() {
+        let cancellation = TransferCancellation::new();
+        let (progress, _) = transfer_progress_channel();
+        self.transfer_controlled(probe, partial, workers, &cancellation, progress)
+            .await
+    }
+
+    /// Transfers missing bytes with cooperative cancellation and absolute
+    /// latest-value progress reporting.
+    ///
+    /// A cancellation result is returned only after all range workers have
+    /// stopped or completed their current synchronous storage commit. The
+    /// caller can then flush/checkpoint completed coverage before acknowledging
+    /// pause or cancellation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SchedulerError::Cancelled`] after a requested safe stop, or
+    /// the same strict network/storage errors as [`Self::transfer`].
+    pub async fn transfer_controlled(
+        &self,
+        probe: &ResourceProbe,
+        partial: &PartialFile,
+        workers: WorkerCount,
+        cancellation: &TransferCancellation,
+        progress: TransferProgressReporter,
+    ) -> Result<TransferSummary, SchedulerError> {
+        if cancellation.is_cancelled() {
+            return Err(SchedulerError::Cancelled);
+        }
+        let baseline = partial
+            .completed_ranges()
+            .iter()
+            .try_fold(0_u64, |total, range| total.checked_add(range.len()))
+            .ok_or(SchedulerError::InvalidCompletedCoverage)?;
+        let metrics = Arc::new(TransferMetrics::new(baseline, probe.size(), progress));
+
+        let result = match probe.mode() {
             ProbeMode::Segmented => {
                 let total = probe.size().ok_or(SchedulerError::ProbeStorageMismatch)?;
-                if total == 0 || partial.expected_len() != Some(total) {
+                if total == 0 || partial.expected_len() != Some(total) || baseline > total {
                     return Err(SchedulerError::ProbeStorageMismatch);
                 }
-                self.transfer_segmented(probe, partial, workers, total)
-                    .await
+                self.transfer_segmented(
+                    probe,
+                    partial,
+                    workers,
+                    total,
+                    cancellation,
+                    Arc::clone(&metrics),
+                )
+                .await
             }
             ProbeMode::SingleStream(_) => {
-                if partial.expected_len() != probe.size() {
-                    return Err(SchedulerError::ProbeStorageMismatch);
-                }
-                self.transfer_single(probe, partial).await
-            }
-            ProbeMode::Empty => {
-                if probe.size() != Some(0)
-                    || partial.expected_len() != Some(0)
-                    || !partial.completed_ranges().is_empty()
+                if partial.expected_len() != probe.size()
+                    || probe.size().is_some_and(|total| baseline > total)
                 {
                     return Err(SchedulerError::ProbeStorageMismatch);
                 }
-                Ok(TransferSummary {
-                    kind: TransferKind::Empty,
-                    bytes_written: 0,
-                    requests_started: 0,
-                    ranges_completed: 0,
-                    hedged_requests: 0,
-                    workers_used: 0,
-                })
+                self.transfer_single(probe, partial, cancellation, Arc::clone(&metrics))
+                    .await
             }
+            ProbeMode::Empty => {
+                if probe.size() != Some(0) || partial.expected_len() != Some(0) || baseline != 0 {
+                    return Err(SchedulerError::ProbeStorageMismatch);
+                }
+                Ok(metrics.summary(TransferKind::Empty, 0))
+            }
+        };
+        if cancellation.is_cancelled() {
+            return Err(SchedulerError::Cancelled);
         }
+        result
     }
 
     async fn transfer_segmented(
@@ -454,18 +643,13 @@ impl DownloadScheduler {
         partial: &PartialFile,
         workers: WorkerCount,
         total: u64,
+        cancellation: &TransferCancellation,
+        metrics: Arc<TransferMetrics>,
     ) -> Result<TransferSummary, SchedulerError> {
         let completed = partial.completed_ranges();
         let missing = missing_ranges(total, &completed)?;
         if missing.is_empty() {
-            return Ok(TransferSummary {
-                kind: TransferKind::Segmented,
-                bytes_written: 0,
-                requests_started: 0,
-                ranges_completed: 0,
-                hedged_requests: 0,
-                workers_used: workers.get(),
-            });
+            return Ok(metrics.summary(TransferKind::Segmented, workers.get()));
         }
         let host = self.host_semaphore(probe.final_url())?;
         let missing_bytes = missing.iter().try_fold(0_u64, |sum, range| {
@@ -478,8 +662,8 @@ impl DownloadScheduler {
             missing,
             chunk_size,
             self.inner.options.tail_hedge_delay,
+            cancellation.clone(),
         ));
-        let metrics = Arc::new(TransferMetrics::default());
         let mut handles = tokio::task::JoinSet::new();
         for _ in 0..workers.get() {
             let scheduler = self.clone();
@@ -508,6 +692,9 @@ impl DownloadScheduler {
                     first_error.get_or_insert(SchedulerError::WorkerJoin);
                 }
             }
+        }
+        if cancellation.is_cancelled() {
+            return Err(SchedulerError::Cancelled);
         }
         if let Some(error) = first_error {
             return Err(error);
@@ -548,10 +735,7 @@ impl DownloadScheduler {
                     let result = commit_range(partial, work.range, &bytes);
                     match result {
                         Ok(()) => {
-                            metrics
-                                .bytes_written
-                                .fetch_add(work.range.len(), Ordering::Relaxed);
-                            metrics.ranges_completed.fetch_add(1, Ordering::Relaxed);
+                            metrics.record_range(work.range.len());
                             coordinator.finish_commit(work.id, true);
                         }
                         Err(error) => {
@@ -579,7 +763,7 @@ impl DownloadScheduler {
         work: Work,
         host: Arc<Semaphore>,
         coordinator: &WorkCoordinator,
-        metrics: &TransferMetrics,
+        metrics: &Arc<TransferMetrics>,
     ) -> Result<FetchOutcome, SchedulerError> {
         let Some(_host_permit) = acquire_or_cancel(host, coordinator, work.id).await? else {
             return Ok(FetchOutcome::Superseded);
@@ -592,11 +776,8 @@ impl DownloadScheduler {
         if coordinator.should_cancel(work.id) {
             return Ok(FetchOutcome::Superseded);
         }
-        let _activity = RequestActivity::begin(Arc::clone(&self.inner));
-        metrics.requests_started.fetch_add(1, Ordering::Relaxed);
-        if work.hedged {
-            metrics.hedged_requests.fetch_add(1, Ordering::Relaxed);
-        }
+        let _activity = RequestActivity::begin(Arc::clone(&self.inner), Arc::clone(metrics));
+        metrics.record_request(work.hedged);
 
         let assignment = RangeAssignment::new(work.range.start(), work.range.end() - 1, total)?;
         let mut request = self
@@ -652,45 +833,41 @@ impl DownloadScheduler {
         &self,
         probe: &ResourceProbe,
         partial: &PartialFile,
+        cancellation: &TransferCancellation,
+        metrics: Arc<TransferMetrics>,
     ) -> Result<TransferSummary, SchedulerError> {
         if let Some(total) = probe.size()
             && has_exact_coverage(&partial.completed_ranges(), total)
         {
-            return Ok(TransferSummary {
-                kind: TransferKind::Single,
-                bytes_written: 0,
-                requests_started: 0,
-                ranges_completed: 0,
-                hedged_requests: 0,
-                workers_used: 1,
-            });
+            return Ok(metrics.summary(TransferKind::Single, 1));
         }
         if !partial.completed_ranges().is_empty() {
             return Err(SchedulerError::ProbeStorageMismatch);
         }
 
         let host = self.host_semaphore(probe.final_url())?;
-        let _host_permit = host
-            .acquire_owned()
-            .await
-            .map_err(|_| SchedulerError::Coordination)?;
-        let _global_permit = Arc::clone(&self.inner.global)
-            .acquire_owned()
-            .await
-            .map_err(|_| SchedulerError::Coordination)?;
-        let _activity = RequestActivity::begin(Arc::clone(&self.inner));
-        let response = self
+        let host_permit = acquire_with_cancellation(host, cancellation).await?;
+        let global_permit =
+            acquire_with_cancellation(Arc::clone(&self.inner.global), cancellation).await?;
+        let activity = RequestActivity::begin(Arc::clone(&self.inner), Arc::clone(&metrics));
+        metrics.record_request(false);
+        let request = self
             .inner
             .client
             .get(probe.final_url().clone())
-            .header(ACCEPT_ENCODING, "identity")
-            .send()
-            .await
-            .map_err(|_| SchedulerError::Request)?;
-        let summary = self
-            .consume_single_response(response, probe, partial)
+            .header(ACCEPT_ENCODING, "identity");
+        let response = send_with_cancellation(request, cancellation).await?;
+        let actual = self
+            .consume_single_response(response, probe, partial, cancellation, &metrics)
             .await?;
-        Ok(summary)
+        metrics.complete_single(actual);
+        drop(activity);
+        drop(global_permit);
+        drop(host_permit);
+        if cancellation.is_cancelled() {
+            return Err(SchedulerError::Cancelled);
+        }
+        Ok(metrics.summary(TransferKind::Single, 1))
     }
 
     async fn consume_single_response(
@@ -698,7 +875,9 @@ impl DownloadScheduler {
         mut response: Response,
         probe: &ResourceProbe,
         partial: &PartialFile,
-    ) -> Result<TransferSummary, SchedulerError> {
+        cancellation: &TransferCancellation,
+        metrics: &TransferMetrics,
+    ) -> Result<u64, SchedulerError> {
         if response.url() != probe.final_url() {
             return Err(SchedulerError::ResponseUrlChanged);
         }
@@ -733,43 +912,38 @@ impl DownloadScheduler {
         let actual = if let Some(expected) = probe.size() {
             let range = FileRange::new(0, expected).map_err(SchedulerError::Storage)?;
             let mut writer = partial.assign(range)?;
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| SchedulerError::Request)?
-            {
+            while let Some(chunk) = next_single_chunk(&mut response, cancellation).await? {
                 writer.write(&chunk)?;
+                metrics.record_stream_progress(writer.written_len());
             }
             if writer.written_len() != expected
                 || declared.is_some_and(|length| length != writer.written_len())
             {
                 return Err(SchedulerError::BodyLengthMismatch);
             }
+            if cancellation.is_cancelled() {
+                return Err(SchedulerError::Cancelled);
+            }
             writer.finish()?;
             expected
         } else {
             let mut writer = partial.begin_stream(self.inner.options.unknown_stream_limit)?;
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|_| SchedulerError::Request)?
-            {
+            while let Some(chunk) = next_single_chunk(&mut response, cancellation).await? {
                 writer.write(&chunk)?;
+                metrics.record_stream_progress(writer.written_len());
             }
             if declared.is_some_and(|length| length != writer.written_len()) {
                 return Err(SchedulerError::BodyLengthMismatch);
             }
-            writer.finish()?
+            if cancellation.is_cancelled() {
+                return Err(SchedulerError::Cancelled);
+            }
+            let actual = writer.finish()?;
+            metrics.set_expected_size(Some(actual));
+            actual
         };
 
-        Ok(TransferSummary {
-            kind: TransferKind::Single,
-            bytes_written: actual,
-            requests_started: 1,
-            ranges_completed: u64::from(actual > 0),
-            hedged_requests: 0,
-            workers_used: 1,
-        })
+        Ok(actual)
     }
 
     fn host_semaphore(&self, url: &Url) -> Result<Arc<Semaphore>, SchedulerError> {
@@ -788,15 +962,92 @@ impl DownloadScheduler {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 struct TransferMetrics {
+    bytes_completed: AtomicU64,
+    expected_size: Mutex<Option<u64>>,
+    active_workers: AtomicUsize,
     bytes_written: AtomicU64,
     requests_started: AtomicU64,
     ranges_completed: AtomicU64,
     hedged_requests: AtomicU64,
+    progress: TransferProgressReporter,
 }
 
 impl TransferMetrics {
+    fn new(
+        bytes_completed: u64,
+        expected_size: Option<u64>,
+        progress: TransferProgressReporter,
+    ) -> Self {
+        let metrics = Self {
+            bytes_completed: AtomicU64::new(bytes_completed),
+            expected_size: Mutex::new(expected_size),
+            active_workers: AtomicUsize::new(0),
+            bytes_written: AtomicU64::new(0),
+            requests_started: AtomicU64::new(0),
+            ranges_completed: AtomicU64::new(0),
+            hedged_requests: AtomicU64::new(0),
+            progress,
+        };
+        metrics.publish();
+        metrics
+    }
+
+    fn record_request(&self, hedged: bool) {
+        self.requests_started.fetch_add(1, Ordering::Relaxed);
+        if hedged {
+            self.hedged_requests.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    fn worker_started(&self) {
+        self.active_workers.fetch_add(1, Ordering::AcqRel);
+        self.publish();
+    }
+
+    fn worker_stopped(&self) {
+        self.active_workers.fetch_sub(1, Ordering::AcqRel);
+        self.publish();
+    }
+
+    fn record_range(&self, bytes: u64) {
+        self.bytes_written.fetch_add(bytes, Ordering::Relaxed);
+        self.ranges_completed.fetch_add(1, Ordering::Relaxed);
+        self.bytes_completed.fetch_add(bytes, Ordering::AcqRel);
+        self.publish();
+    }
+
+    fn record_stream_progress(&self, bytes: u64) {
+        self.bytes_completed.store(bytes, Ordering::Release);
+        self.publish();
+    }
+
+    fn complete_single(&self, bytes: u64) {
+        self.bytes_written.store(bytes, Ordering::Release);
+        self.ranges_completed
+            .store(u64::from(bytes > 0), Ordering::Release);
+        self.bytes_completed.store(bytes, Ordering::Release);
+        self.publish();
+    }
+
+    fn set_expected_size(&self, expected_size: Option<u64>) {
+        *lock(&self.expected_size) = expected_size;
+        self.publish();
+    }
+
+    fn publish(&self) {
+        let active = self
+            .active_workers
+            .load(Ordering::Acquire)
+            .min(usize::from(MAX_WORKERS));
+        self.progress.publish(TransferProgress {
+            bytes_completed: self.bytes_completed.load(Ordering::Acquire),
+            expected_size: *lock(&self.expected_size),
+            active_workers: u8::try_from(active).unwrap_or(MAX_WORKERS),
+        });
+    }
+
     fn summary(&self, kind: TransferKind, workers_used: u8) -> TransferSummary {
         TransferSummary {
             kind,
@@ -811,13 +1062,18 @@ impl TransferMetrics {
 
 struct RequestActivity {
     scheduler: Arc<SchedulerInner>,
+    transfer: Arc<TransferMetrics>,
 }
 
 impl RequestActivity {
-    fn begin(scheduler: Arc<SchedulerInner>) -> Self {
+    fn begin(scheduler: Arc<SchedulerInner>, transfer: Arc<TransferMetrics>) -> Self {
         let active = scheduler.active_requests.fetch_add(1, Ordering::AcqRel) + 1;
         update_peak(&scheduler.peak_requests, active);
-        Self { scheduler }
+        transfer.worker_started();
+        Self {
+            scheduler,
+            transfer,
+        }
     }
 }
 
@@ -826,6 +1082,7 @@ impl Drop for RequestActivity {
         self.scheduler
             .active_requests
             .fetch_sub(1, Ordering::AcqRel);
+        self.transfer.worker_stopped();
     }
 }
 
@@ -873,12 +1130,18 @@ struct WorkState {
 struct WorkCoordinator {
     state: Mutex<WorkState>,
     changes: watch::Sender<u64>,
+    cancellation: TransferCancellation,
     chunk_size: u64,
     hedge_delay: Duration,
 }
 
 impl WorkCoordinator {
-    fn new(missing: Vec<FileRange>, chunk_size: u64, hedge_delay: Duration) -> Self {
+    fn new(
+        missing: Vec<FileRange>,
+        chunk_size: u64,
+        hedge_delay: Duration,
+        cancellation: TransferCancellation,
+    ) -> Self {
         let (changes, _) = watch::channel(0);
         Self {
             state: Mutex::new(WorkState {
@@ -888,6 +1151,7 @@ impl WorkCoordinator {
                 aborted: false,
             }),
             changes,
+            cancellation,
             chunk_size,
             hedge_delay,
         }
@@ -895,10 +1159,11 @@ impl WorkCoordinator {
 
     async fn next_work(&self) -> Result<Option<Work>, SchedulerError> {
         let mut changes = self.changes.subscribe();
+        let mut cancellation = self.cancellation.subscribe();
         loop {
             let wait = {
                 let mut state = lock(&self.state);
-                if state.aborted {
+                if state.aborted || self.cancellation.is_cancelled() {
                     return Ok(None);
                 }
                 if let Some(range) = pop_chunk(&mut state.pending, self.chunk_size)? {
@@ -971,12 +1236,19 @@ impl WorkCoordinator {
                     result = changes.changed() => {
                         result.map_err(|_| SchedulerError::Coordination)?;
                     }
+                    result = cancellation.changed() => {
+                        result.map_err(|_| SchedulerError::Coordination)?;
+                    }
                 }
             } else {
-                changes
-                    .changed()
-                    .await
-                    .map_err(|_| SchedulerError::Coordination)?;
+                tokio::select! {
+                    result = changes.changed() => {
+                        result.map_err(|_| SchedulerError::Coordination)?;
+                    }
+                    result = cancellation.changed() => {
+                        result.map_err(|_| SchedulerError::Coordination)?;
+                    }
+                }
             }
         }
     }
@@ -984,6 +1256,7 @@ impl WorkCoordinator {
     fn should_cancel(&self, id: u64) -> bool {
         let state = lock(&self.state);
         state.aborted
+            || self.cancellation.is_cancelled()
             || state
                 .in_flight
                 .get(&id)
@@ -992,7 +1265,7 @@ impl WorkCoordinator {
 
     fn claim_commit(&self, id: u64) -> bool {
         let mut state = lock(&self.state);
-        if state.aborted {
+        if state.aborted || self.cancellation.is_cancelled() {
             return false;
         }
         let Some(chunk) = state.in_flight.get_mut(&id) else {
@@ -1073,6 +1346,7 @@ async fn acquire_or_cancel(
     let acquire = semaphore.acquire_owned();
     tokio::pin!(acquire);
     let mut changes = coordinator.subscribe();
+    let mut cancellation = coordinator.cancellation.subscribe();
     loop {
         if coordinator.should_cancel(id) {
             return Ok(None);
@@ -1084,6 +1358,9 @@ async fn acquire_or_cancel(
                     .map_err(|_| SchedulerError::Coordination);
             }
             result = changes.changed() => {
+                result.map_err(|_| SchedulerError::Coordination)?;
+            }
+            result = cancellation.changed() => {
                 result.map_err(|_| SchedulerError::Coordination)?;
             }
         }
@@ -1098,6 +1375,7 @@ async fn send_or_cancel(
     let send = request.send();
     tokio::pin!(send);
     let mut changes = coordinator.subscribe();
+    let mut cancellation = coordinator.cancellation.subscribe();
     loop {
         if coordinator.should_cancel(id) {
             return Ok(None);
@@ -1109,6 +1387,9 @@ async fn send_or_cancel(
                     .map_err(|_| SchedulerError::Request);
             }
             result = changes.changed() => {
+                result.map_err(|_| SchedulerError::Coordination)?;
+            }
+            result = cancellation.changed() => {
                 result.map_err(|_| SchedulerError::Coordination)?;
             }
         }
@@ -1123,6 +1404,7 @@ async fn next_chunk_or_cancel(
     let next = response.chunk();
     tokio::pin!(next);
     let mut changes = coordinator.subscribe();
+    let mut cancellation = coordinator.cancellation.subscribe();
     loop {
         if coordinator.should_cancel(id) {
             return Ok(None);
@@ -1134,8 +1416,55 @@ async fn next_chunk_or_cancel(
             result = changes.changed() => {
                 result.map_err(|_| SchedulerError::Coordination)?;
             }
+            result = cancellation.changed() => {
+                result.map_err(|_| SchedulerError::Coordination)?;
+            }
         }
     }
+}
+
+async fn acquire_with_cancellation(
+    semaphore: Arc<Semaphore>,
+    cancellation: &TransferCancellation,
+) -> Result<OwnedSemaphorePermit, SchedulerError> {
+    let permit = tokio::select! {
+        result = semaphore.acquire_owned() => {
+            result.map_err(|_| SchedulerError::Coordination)?
+        }
+        () = cancellation.cancelled() => return Err(SchedulerError::Cancelled),
+    };
+    if cancellation.is_cancelled() {
+        return Err(SchedulerError::Cancelled);
+    }
+    Ok(permit)
+}
+
+async fn send_with_cancellation(
+    request: reqwest::RequestBuilder,
+    cancellation: &TransferCancellation,
+) -> Result<Response, SchedulerError> {
+    let response = tokio::select! {
+        result = request.send() => result.map_err(|_| SchedulerError::Request)?,
+        () = cancellation.cancelled() => return Err(SchedulerError::Cancelled),
+    };
+    if cancellation.is_cancelled() {
+        return Err(SchedulerError::Cancelled);
+    }
+    Ok(response)
+}
+
+async fn next_single_chunk(
+    response: &mut Response,
+    cancellation: &TransferCancellation,
+) -> Result<Option<bytes::Bytes>, SchedulerError> {
+    let chunk = tokio::select! {
+        result = response.chunk() => result.map_err(|_| SchedulerError::Request)?,
+        () = cancellation.cancelled() => return Err(SchedulerError::Cancelled),
+    };
+    if cancellation.is_cancelled() {
+        return Err(SchedulerError::Cancelled);
+    }
+    Ok(chunk)
 }
 
 fn commit_range(

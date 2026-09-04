@@ -26,6 +26,7 @@ Firefox WebExtension
 Rust native helper
   ├── HTTP probe and strict range validation
   ├── Fixed 1/2/4/8-worker segment scheduler with independent request caps
+  ├── Cooperative pause/cancel, bounded retry, and coalesced progress
   ├── Validated random-access and bounded sequential partial-file writers
   └── Persistent pause/resume and recovery state
 ```
@@ -42,5 +43,7 @@ The native helper uses the operating system's normal network route, whether a VP
 - Resume and crash safety are core features.
 - Four connections is the conservative default; eight is the initial cap.
 - Invalid range responses fall back safely or fail—they are never merged blindly.
+- Pause/cancel waits for workers and checkpoints retained ranges before acknowledgement.
+- Transient retries are bounded and delayed; fatal protocol/storage failures stop.
 - Credentials and sensitive URLs are not written to ordinary logs.
 - Everything remains local; no analytics, telemetry, or remote updater.

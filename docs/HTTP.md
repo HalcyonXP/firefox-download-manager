@@ -39,9 +39,9 @@ A successful probe records:
 - an untrusted filename candidate from UTF-8 `filename*`, then `filename`, then the final URL path; and
 - proven segmented, safe single-stream, or empty mode.
 
-Singleton headers are rejected when duplicated. Numeric fields accept decimal ASCII only with checked `u64` parsing. Metadata values are bounded and control characters are rejected. Last-Modified must parse as an HTTP date. ETags retain weak/strong identity and opaque contents rather than being normalized.
+Singleton headers are rejected when duplicated. Numeric fields accept decimal ASCII only with checked `u64` parsing; a task rejects a resource size above the protocol's JavaScript exact-integer bound before creating storage. Metadata values are bounded and control characters are rejected. Last-Modified must parse as an HTTP date. ETags retain weak/strong identity and opaque contents rather than being normalized.
 
-Filename parsing is not filename sanitization. The storage boundary in issue #6 must still reject traversal, device names, alternate streams, and other Windows hazards.
+Filename parsing is not filename sanitization. The storage boundary independently rejects traversal, device names, alternate streams, and other Windows hazards.
 
 ## Exact ranged-response acceptance
 
@@ -76,8 +76,22 @@ A stream with no declared length grows only through a sole sequential writer und
 
 A malformed `206`, transformed response, contradictory total, unstable validator, premature body, or resource mutation is an error—not a fallback opportunity—because accepting it could mix inconsistent bytes.
 
+## Cooperative controls and retries
+
+Each task run owns one cooperative cancellation signal covering probe requests, semaphore waits, request sends, response-body reads, tail coordination, and retry sleeps. A range worker checks the signal again before claiming storage. Pause/cancel acknowledgement waits until all workers join or finish an already-entered synchronous storage commit; the task controller then flushes and critically checkpoints completed coverage. Unfinished known-size assignments remain unclaimed, and interrupted unknown-length streams retain no resumable range.
+
+A single retry budget spans probe and transfer attempts. Request/transport failures and HTTP `408`, `425`, `429`, `500`, `502`, `503`, and `504` are transient candidates. Each retry uses capped exponential equal jitter (a random delay from one-half through the current exponential ceiling). The default is five retries after the initial attempt; configuration permits zero through 20. Base delay is constrained to 10 ms–60 seconds, the exponential ceiling to at most ten minutes, and accepted `Retry-After` guidance to at most one hour.
+
+A parsed delta-seconds or HTTP-date `Retry-After` is a minimum, even when it exceeds the jittered delay. Guidance above the configured bound exhausts the automatic decision instead of retrying early. Protocol/range metadata violations, resource identity changes, storage failures, and non-transient statuses are fatal for the current run. Exhaustion stops with a stable failure; only an explicit user resume/retry starts a fresh budget. Automatic attempts remain within the same accepted probe identity and every response revalidates it. Work resumed after pause/failure or restart first requires a fresh probe proving the same complete resource identity.
+
+## Progress reporting
+
+Scheduler metrics are absolute latest values: safe in-process bytes, expected size when known, and active requests. A bounded watch channel coalesces fast producer updates. The task controller samples with monotonic time and emits progress no more frequently than the configured 100 ms–60 second interval (250 ms by default), while complete current snapshots remain independently available.
+
+Speed uses a bounded sliding window (five seconds by default, configurable from one through 60 seconds). ETA appears only for a known remaining size, a positive rate, and interval rates stable within a conservative 4× ratio. Unknown size, counter regression, zero/stalled rate, or instability suppresses ETA; exact completion reports zero. Pausing or entering retry backoff clears stale rate/ETA state.
+
 ## Resource and server impact
 
-Client connect and whole-request timeouts are bounded. The HTTP library's automatic content decompression features are disabled. Probe responses are streamed and capped by their one-byte assignment; ranged bodies are capped by their 8 MiB assignment; undeclared sequential bodies are capped explicitly. One tail assignment can have at most two active attempts. HTTP status and bounded `Retry-After` data are preserved for the retry policy in issue #9, but issue #8 does not retry failed requests automatically.
+Client connect and whole-request timeouts are bounded. The HTTP library's automatic content decompression features are disabled. Probe responses are streamed and capped by their one-byte assignment; ranged bodies are capped by their 8 MiB assignment; undeclared sequential bodies are capped explicitly. One tail assignment can have at most two active attempts. HTTP status and bounded `Retry-After` data are preserved as path- and URL-free machine data for the implemented task retry policy.
 
 The deterministic fixtures and integration matrix are documented in [TEST_SERVER.md](TEST_SERVER.md).

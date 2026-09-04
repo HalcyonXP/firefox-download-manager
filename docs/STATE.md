@@ -1,8 +1,8 @@
 # Persistent task-state and recovery policy
 
-Status: implemented for issue #7 with issue #8 streaming recovery integration
+Status: implemented for issues #7 through #9
 
-Internal format version: `1`
+Internal format version: `2`
 
 Last updated: 2026-09-04
 
@@ -38,14 +38,14 @@ The persisted state names match protocol v1:
 
 A transition also validates its required data and rolls back entirely on failure. For example, `downloading` requires accepted resource identity and a confined partial path; `validating` and `promoting` require exact completed coverage; `completed` requires exact coverage and a published final path. A failed task may retain its partial, but retry must reprobe and apply the same accepted resource identity before those bytes can resume. Timestamps cannot move backwards, and every semantic mutation advances the revision.
 
-## Version 1 record
+## Version 2 record
 
 Every file is one strict UTF-8 JSON object with this conceptual shape:
 
 ```json
 {
   "format": "firefox-download-manager-task",
-  "version": 1,
+  "version": 2,
   "task": {
     "task_id": "7b1c7182-37e9-4a3a-89bd-f9e4e2d6f376",
     "revision": 6,
@@ -60,6 +60,7 @@ Every file is one strict UTF-8 JSON object with this conceptual shape:
     "transfer_mode": "segmented",
     "destination": "C:\\Users\\Example\\Downloads",
     "display_name": "archive.bin",
+    "workers": 4,
     "partial_path": "C:\\Users\\Example\\Downloads\\archive.bin.dm-opaque.part",
     "final_path": null,
     "completed_ranges": [{ "start": 0, "end": 5242880 }],
@@ -69,9 +70,9 @@ Every file is one strict UTF-8 JSON object with this conceptual shape:
 }
 ```
 
-The concrete serializer emits compact JSON. All fields shown are required; absent optional data is `null`. Unknown or duplicate fields, unknown enum values, malformed types, noncanonical UUIDs/URLs/paths/ranges, and inconsistent state are rejected. The persisted format version is independent of Native Messaging protocol version 1.
+The concrete serializer emits compact JSON. All fields shown are required; absent optional data is `null`. Unknown or duplicate fields, unknown enum values, malformed types, noncanonical UUIDs/URLs/paths/ranges, unsupported worker counts, and inconsistent state are rejected. `workers` is exactly 1, 2, 4, or 8. The persisted format version is independent of Native Messaging protocol version 1.
 
-Completed ranges are half-open, ordered, merged, non-overlapping, bounded by the known resource size, and capped at 8,192 entries. Adjacent ranges are noncanonical because storage merges them. Byte totals use checked arithmetic.
+Completed ranges are half-open, ordered, merged, non-overlapping, bounded by the known resource size, and capped at 8,192 entries. Adjacent ranges are noncanonical because storage merges them. Byte totals use checked arithmetic, and resource sizes exposed through protocol-facing snapshots cannot exceed JavaScript's exact-integer bound (`9,007,199,254,740,991`).
 
 An active single-stream record may temporarily have `expected_size: null`, a confined partial path, and no completed ranges. Bytes written before clean EOF are intentionally not resumable metadata. Once the streaming writer validates EOF and flushes data, `refresh_completed` atomically advances the in-memory resource identity to the discovered size and captures exact coverage for the next checkpoint. Validating, promoting, and completing still require a known size and exact coverage.
 
@@ -79,13 +80,15 @@ The original and final exact URLs may include sensitive query values because the
 
 ## Data intentionally not persisted
 
-Version 1 has no fields for:
+Version 2 has no fields for:
 
 - cookies or cookie attributes;
 - authorization schemes or values;
 - arbitrary request headers;
 - referrers; or
-- response bodies.
+- response bodies;
+- live speed samples, active-worker counters, retry budgets, or event queues; or
+- detailed terminal failure data (the `failed` lifecycle state persists, but restart uses a bounded generic recovery error).
 
 These values cannot enter serialization accidentally through a generic header map because no such map exists in the persisted type. Authentication remains deferred to issue #15 and credentials stay memory-only by default. Exact URLs and local paths are persisted only because recovery needs them, and custom `Debug` implementations redact URLs, destinations, partial paths, final paths, and filenames.
 
@@ -134,7 +137,9 @@ Startup acquires the store lock and removes narrowly matched stale temporary fil
 - partial and published-final file types and exact known lengths; and
 - same-file identity when a recoverable publication records both hard links.
 
-Unknown future versions and corrupt records remain untouched for diagnosis or deliberate local cleanup and are returned as safe failure classifications, not resumable tasks. Version 1 has no predecessor to migrate; adding a later format requires an explicit tested migration rather than interpreting future fields as version 1. A missing, truncated, linked, or wrong-length partial excludes active prepublication work from recovery; a `promoting` or `completed` task may instead prove its recorded final file.
+Unknown future versions and corrupt records remain untouched for diagnosis or deliberate local cleanup and are returned as safe failure classifications, not resumable tasks. Format v2 has one explicit, strict migration from v1: the old shape is parsed with its own deny-unknown-fields type, receives the historical four-worker default, is semantically and filesystem validated, and is atomically rewritten as v2 before being returned. A v2 record missing `workers`, or a v1 record containing a v2/future field, is malformed rather than guessed. Migration failure excludes only that task and leaves its previous complete record available for diagnosis.
+
+A missing, truncated, linked, or wrong-length partial excludes active prepublication work from recovery; a `promoting` or `completed` task may instead prove its recorded final file. At task-engine startup, a valid interrupted `downloading` record becomes `paused`; interrupted `probing` or `validating` becomes `failed`; `promoting` becomes `completed` only when its recorded final path already passed recovery validation, otherwise it becomes `failed`. A failed/cancelled record whose partial deletion completed before its metadata checkpoint durably forgets the now-missing path and coverage. Each normalization is a critical checkpoint before the snapshot is exposed.
 
 A validated known-size task can reopen its partial file with only the durable completed ranges. Active assignments never survive restart. Reopened storage rejects assignments over completed coverage and permits only missing ranges, so uncheckpointed bytes are safely overwritten rather than trusted. An unknown-length single stream reopens with no coverage regardless of the partial's current length; its next bounded streaming writer truncates to zero before receiving a fresh response.
 
@@ -145,11 +150,14 @@ There is no automatic age-based deletion in the initial release.
 - A completed task with no retained partial can have its history record removed explicitly; its final file is never deleted by task cleanup.
 - If publication left a redundant `.part` hard link, `keep` retains both metadata and the partial until explicit cleanup.
 - A failed or cancelled task with a partial remains recorded when `keep` is selected.
-- Explicit `delete` validates that the partial is an ordinary confined `.part` file, removes it, and only then removes metadata.
+- Cancellation `delete` validates and removes only the managed partial, then critically retains terminal history without its partial path or completed ranges.
+- Explicit history cleanup can subsequently remove eligible terminal metadata; it never removes final output.
 - A nonterminal task cannot use terminal cleanup.
 
-If a crash occurs between partial deletion and metadata deletion, recovery retains terminal metadata with its now-missing partial and a repeated explicit cleanup can finish safely. Unknown files are never swept as abandoned downloads.
+If interruption occurs between cancellation's partial deletion and metadata replacement, task-engine startup clears the now-missing partial reference and coverage. If interruption instead occurs during explicit history cleanup, recovery retains terminal metadata and a repeated cleanup can finish safely. Unknown files are never swept as abandoned downloads.
 
-## Deferred integration
+## Task-controller integration
 
-Issue #8 connects durable completed ranges and restartable unknown streams to the fixed-concurrency scheduler. Issue #9 still owns task-level pause/resume/cancellation control, retry timing, speed/ETA sampling, and protocol progress events. A loaded `downloading` value describes the last durable phase, not a claim that a worker survived process exit; that lifecycle integration must pause or safely reconstruct work before emitting a live snapshot. Later work may tune routine checkpoint requests, but it may not reverse bytes-first ordering, weaken state/range validation, persist credentials by default, permit stale revisions to overwrite newer state, or treat interrupted unknown-length bytes as resumable.
+The issue-#9 task controller persists the resolved worker count, serializes control per task, and drives probe, scheduler, checkpoint, validation, promotion, and terminal transitions. Pause and cancellation first signal all asynchronous network waits, then wait for worker joins, then take a critical bytes-first completed-range checkpoint before changing state. Resume reprobes and opens only validated retained storage; an explicit retry of `failed` moves through `queued` and `probing` and cannot reuse a partial after identity change. Unknown-length interruption still restarts from zero.
+
+Routine progress checkpoint requests remain subject to the store's cadence, while pause, cancel, failure, retry, promotion, and completion boundaries are critical. Later work may tune timing within validated bounds, but it may not reverse bytes-first ordering, weaken state/range validation, persist credentials by default, permit stale revisions to overwrite newer state, or treat interrupted unknown-length bytes as resumable.

@@ -5,8 +5,8 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use download_manager_engine::network::{ProbeClient, ProbeMode, RangeValidationError};
 use download_manager_engine::scheduler::{
-    ConcurrencyLimits, DownloadScheduler, SchedulerError, SchedulerOptions, TransferKind,
-    WorkerCount,
+    ConcurrencyLimits, DownloadScheduler, SchedulerError, SchedulerOptions, TransferCancellation,
+    TransferKind, WorkerCount, transfer_progress_channel,
 };
 use download_manager_engine::storage::{FileRange, PartialFile, StorageError};
 use download_manager_test_server::{
@@ -149,6 +149,75 @@ async fn idle_worker_hedges_one_slow_tail_without_overlapping_storage() {
     let promotion = partial.promote().expect("publish hedged output");
     assert_eq!(
         fs::read(promotion.final_path()).expect("read output"),
+        fixture.bytes(
+            0,
+            usize::try_from(fixture.len).expect("fixture fits memory"),
+            0,
+        )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn controlled_stop_waits_for_workers_and_resume_skips_completed_ranges() {
+    let fixture = Fixture {
+        len: 8 * MIB,
+        seed: 94,
+    };
+    let server = stalled_server(fixture.clone(), Duration::from_millis(80));
+    let probe = ProbeClient::new()
+        .expect("probe client")
+        .probe(&server.url("/fixture"))
+        .await
+        .expect("probe fixture");
+    let directory = TestDirectory::new("controlled-stop");
+    let partial = PartialFile::create(directory.path(), "controlled.bin", fixture.len)
+        .expect("create partial");
+    let scheduler = DownloadScheduler::new().expect("scheduler");
+    let cancellation = TransferCancellation::new();
+    let (reporter, mut progress) = transfer_progress_channel();
+    let running_scheduler = scheduler.clone();
+    let running_probe = probe.clone();
+    let running_partial = partial.clone();
+    let running_cancellation = cancellation.clone();
+    let transfer = tokio::spawn(async move {
+        running_scheduler
+            .transfer_controlled(
+                &running_probe,
+                &running_partial,
+                WorkerCount::Four,
+                &running_cancellation,
+                reporter,
+            )
+            .await
+    });
+
+    loop {
+        let sample = progress.changed().await.expect("progress remains open");
+        if sample.bytes_completed() >= MIB {
+            assert!(sample.active_workers() <= 4);
+            break;
+        }
+    }
+    cancellation.cancel();
+    assert_eq!(
+        transfer.await.expect("controlled worker joins"),
+        Err(SchedulerError::Cancelled)
+    );
+    assert_eq!(progress.latest().active_workers(), 0);
+    let retained = partial.completed_ranges();
+    assert!(!retained.is_empty());
+    let request_count = server.requests().len();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert_eq!(server.requests().len(), request_count);
+
+    scheduler
+        .transfer(&probe, &partial, WorkerCount::Four)
+        .await
+        .expect("resume missing work");
+    assert_eq!(partial.completed_ranges(), vec![range(0, fixture.len)]);
+    let output = partial.promote().expect("publish resumed output");
+    assert_eq!(
+        fs::read(output.final_path()).expect("read output"),
         fixture.bytes(
             0,
             usize::try_from(fixture.len).expect("fixture fits memory"),

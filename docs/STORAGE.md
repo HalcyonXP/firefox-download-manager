@@ -1,6 +1,6 @@
 # Partial-file storage policy
 
-Status: implemented for issues #6 through #8
+Status: implemented for issues #6 through #9
 
 Last updated: 2026-09-04
 
@@ -100,4 +100,6 @@ Filesystems that do not support same-directory hard links fail publication expli
 
 The [persistent task-state policy](STATE.md) records only completed ranges returned after storage flushes file bytes. On restart, storage reopens an ordinary exact-length partial with canonical durable coverage and no active assignments; completed bytes cannot be reassigned, while uncheckpointed bytes may be overwritten safely. For an interrupted unknown-length stream, recovery validates the managed file but deliberately assigns no coverage and `begin_stream` truncates it before reuse. Ordinary object drop still preserves the partial for recovery, and its path is exposed only to trusted persistence code.
 
-The fixed-concurrency scheduler in issue #8 uses these APIs for both ranged and sequential transfers. A ranged response is fully bounded and validated before it acquires the assignment writer; a sequential response owns the one streaming writer and becomes complete only at EOF. Issue #17 will extend final integrity validation, and issue #18 will review the complete path trust boundary. Later changes may strengthen checks but may not weaken assignment bounds, bytes-first checkpoint ordering, exact coverage, unknown-stream restart, or create-new final publication.
+The fixed-concurrency scheduler uses these APIs for both ranged and sequential transfers. A ranged response is fully bounded and validated before it acquires the assignment writer; a sequential response owns the one streaming writer and becomes complete only at EOF. The task controller's cooperative stop waits for scheduler workers before requesting `durable_completed_ranges`, so pause/cancel cannot checkpoint a range whose writer is still active. Cancellation `keep` retains that safe coverage; `delete` removes the validated managed partial before forgetting its path/ranges and never targets a final file.
+
+Issue #17 will extend final integrity validation, and issue #18 will review the complete path trust boundary. Later changes may strengthen checks but may not weaken assignment bounds, bytes-first checkpoint ordering, exact coverage, unknown-stream restart, or create-new final publication.

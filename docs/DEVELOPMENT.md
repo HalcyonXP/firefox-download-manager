@@ -41,7 +41,7 @@ extension/
   dist/                 Generated unpacked extension (ignored)
 crates/
   protocol/             Rust Native Messaging types and framing boundary
-  engine/               Networking, scheduling, persistence, and storage
+  engine/               Networking, scheduling, task control, progress, persistence, and storage
   native-host/          Native Messaging executable
   test-server/          Local deterministic adversarial HTTP fixtures
 protocol/
@@ -68,8 +68,11 @@ The browser extension build never contains the Rust helper. The native helper ne
 | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | Treat Rust lint warnings as failures |
 | `cargo test --workspace --all-features --locked` | Run all Rust tests |
 | `cargo build --workspace --all-features --locked` | Build all Rust targets |
+| `cargo test -p download-manager-engine --test task_lifecycle --locked` | Run pause/resume/cancel/retry/progress integration tests |
 
 `extension/dist` and `target` are disposable. Do not edit or commit them.
+
+The task-lifecycle integration suite uses only loopback deterministic fixtures. It covers durable pause/reopen/resume over missing ranges, periodic bytes-first checkpoints, keep/delete cancellation, cancellation-aware probe and retry sleeps, a shared probe/transfer retry budget, retry exhaustion and `Retry-After`, fatal no-retry errors, changed resource identity, known/unknown progress, event cadence/overflow, final publication, and runtime-ownership failures. Timing assertions use generous bounds around monotonic behavior; repeat this test target when changing cancellation or event races.
 
 ## Manual extension loading
 

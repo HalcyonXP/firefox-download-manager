@@ -26,4 +26,4 @@ Unsupported behavior falls back to one fresh stream only before segmented output
 
 ## Consequences
 
-The adversarial server is foundational test infrastructure. Resource mutation, redirects, encoding, retries, and tail hedging must preserve the same assignment and identity invariants.
+The adversarial server is foundational test infrastructure. Resource mutation, redirects, encoding, retries, cooperative stops, and tail hedging must preserve the same assignment and identity invariants. Task-level retries may repeat only transport failures and selected transient HTTP statuses under one bounded exponential-jitter budget; protocol/storage failures remain fatal, and an explicit retry reprobes retained identity.

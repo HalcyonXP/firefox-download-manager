@@ -9,6 +9,7 @@ use download_manager_engine::persistence::{
     MAX_STATE_BYTES, PartialCleanup, PersistenceError, ResourceIdentity, StateValidationError,
     TaskId, TaskMetadata, TaskState, TaskStore, TimestampMillis, TransferMode,
 };
+use download_manager_engine::progress::MAX_SAFE_INTEGER;
 use download_manager_engine::storage::{FileRange, PartialFile};
 use serde_json::{Value, json};
 
@@ -129,6 +130,15 @@ fn metadata_boundary_rejects_credentials_invalid_validators_and_time_rollback() 
     );
     assert_eq!(
         ResourceIdentity::new(
+            "https://cdn.example.test/oversized.bin",
+            Some(MAX_SAFE_INTEGER + 1),
+            Validators::default(),
+            TransferMode::Single,
+        ),
+        Err(StateValidationError::InvalidResource)
+    );
+    assert_eq!(
+        ResourceIdentity::new(
             "https://cdn.example.test/file.bin",
             Some(8),
             Validators {
@@ -224,6 +234,7 @@ fn round_trip_persists_identity_paths_validators_and_completed_ranges_only() {
     assert!(text.contains("W/\\\"resource-v1\\\""));
     assert!(text.contains("Thu, 04 Sep 2025 10:00:00 GMT"));
     assert!(text.contains("completed_ranges"));
+    assert!(text.contains("\"workers\":4"));
     assert!(!text.contains("cookies"));
     assert!(!text.contains("authorization"));
     assert!(!text.contains("headers"));
@@ -239,12 +250,85 @@ fn round_trip_persists_identity_paths_validators_and_completed_ranges_only() {
     );
     assert_eq!(loaded.completed_ranges(), &[range(0, 4)]);
     assert_eq!(loaded.bytes_completed(), 4);
+    assert_eq!(loaded.workers(), 4);
 
     let debug = format!("{loaded:?}");
     assert!(!debug.contains("signature=required"));
     assert!(!debug.contains("round-trip"));
     assert!(!debug.contains("payload.bin"));
     assert!(!format!("{store:?}").contains("round-trip"));
+}
+
+#[test]
+fn worker_selection_is_strict_and_legacy_version_one_records_default_to_four() {
+    let fixture = TestDirectories::new("persisted-workers");
+    assert_eq!(
+        TaskMetadata::new_with_workers(
+            "https://origin.example.test/file.bin",
+            fixture.destination(),
+            "file.bin",
+            3,
+        ),
+        Err(StateValidationError::InvalidWorkerCount)
+    );
+    let store = TaskStore::open(fixture.state()).expect("open store");
+    let task = TaskMetadata::new_with_workers(
+        "https://origin.example.test/file.bin",
+        fixture.destination(),
+        "file.bin",
+        8,
+    )
+    .expect("create eight-worker task");
+    store
+        .checkpoint(&task, CheckpointUrgency::Critical)
+        .expect("persist worker selection");
+    assert_eq!(store.load_all().expect("load task").tasks()[0].workers(), 8);
+
+    let path = state_path(&store, task.task_id());
+    let mut value: Value =
+        serde_json::from_slice(&fs::read(&path).expect("read state")).expect("parse state");
+    value["version"] = json!(1);
+    value["task"]
+        .as_object_mut()
+        .expect("task object")
+        .remove("workers");
+    fs::write(
+        &path,
+        serde_json::to_vec(&value).expect("serialize legacy state"),
+    )
+    .expect("write legacy state");
+    let report = store.load_all().expect("load legacy state");
+    assert!(report.failures().is_empty());
+    assert_eq!(report.tasks()[0].workers(), 4);
+    let mut migrated: Value =
+        serde_json::from_slice(&fs::read(&path).expect("read migrated state"))
+            .expect("parse migrated state");
+    assert_eq!(migrated["version"], json!(2));
+    assert_eq!(migrated["task"]["workers"], json!(4));
+
+    let mut future_shaped_legacy = migrated.clone();
+    future_shaped_legacy["version"] = json!(1);
+    fs::write(
+        &path,
+        serde_json::to_vec(&future_shaped_legacy).expect("serialize future-shaped legacy state"),
+    )
+    .expect("write future-shaped legacy state");
+    let malformed = store.load_all().expect("load malformed legacy state");
+    assert_failure(&malformed, task.task_id(), &LoadFailureReason::Malformed);
+
+    migrated["task"]["workers"] = json!(3);
+    fs::write(
+        &path,
+        serde_json::to_vec(&migrated).expect("serialize invalid worker state"),
+    )
+    .expect("write invalid worker state");
+    let invalid = store.load_all().expect("load invalid worker state");
+    assert!(invalid.tasks().is_empty());
+    assert_failure(
+        &invalid,
+        task.task_id(),
+        &LoadFailureReason::InvalidTask(StateValidationError::InvalidWorkerCount),
+    );
 }
 
 #[test]
@@ -552,12 +636,12 @@ fn corrupt_unknown_and_future_records_fail_independently_and_remain_on_disk() {
     let duplicate = String::from_utf8(valid_bytes.clone())
         .expect("valid UTF-8 state")
         .replace(&task.task_id().to_string(), &duplicate_id.to_string())
-        .replacen("\"version\":1", "\"version\":1,\"version\":1", 1);
+        .replacen("\"version\":2", "\"version\":2,\"version\":2", 1);
     fs::write(state_path(&store, duplicate_id), duplicate).expect("write duplicate field state");
 
     let future_id = TaskId::new();
     let mut future: Value = serde_json::from_slice(&valid_bytes).expect("parse valid state");
-    future["version"] = json!(2);
+    future["version"] = json!(3);
     future["task"]["task_id"] = json!(future_id.to_string());
     fs::write(
         state_path(&store, future_id),
@@ -605,7 +689,7 @@ fn corrupt_unknown_and_future_records_fail_independently_and_remain_on_disk() {
     assert_failure(
         &report,
         future_id,
-        &LoadFailureReason::IncompatibleVersion { found: 2 },
+        &LoadFailureReason::IncompatibleVersion { found: 3 },
     );
     assert_failure(&report, unknown_id, &LoadFailureReason::Malformed);
     assert_failure(&report, format_id, &LoadFailureReason::UnknownFormat);
@@ -799,6 +883,45 @@ fn completed_cleanup_removes_only_metadata_and_never_final_output() {
         fs::read(retained_final).expect("read retained final"),
         b"RETAINED"
     );
+}
+
+#[test]
+fn cancelled_partial_can_be_deleted_while_terminal_history_remains() {
+    let fixture = TestDirectories::new("cancel-discard");
+    let store = TaskStore::open(fixture.state()).expect("open store");
+    let (mut task, partial) = downloading_task(fixture.destination(), 8);
+    let mut writer = partial.assign(range(0, 4)).expect("assign prefix");
+    writer.write(b"KEEP").expect("write prefix");
+    writer.finish().expect("finish prefix");
+    task.refresh_completed(&partial, timestamp(6))
+        .expect("capture prefix");
+    task.transition(TaskState::Cancelled, timestamp(7))
+        .expect("cancel task");
+    store
+        .checkpoint(&task, CheckpointUrgency::Critical)
+        .expect("save cancellation");
+    let partial_path = partial.partial_path().to_owned();
+    drop(partial);
+
+    assert!(
+        store
+            .discard_terminal_partial(&mut task, timestamp(8))
+            .expect("discard cancelled partial")
+    );
+    assert!(!partial_path.exists());
+    assert_eq!(task.state(), TaskState::Cancelled);
+    assert_eq!(task.partial_path(), None);
+    assert!(task.completed_ranges().is_empty());
+    assert!(state_path(&store, task.task_id()).exists());
+    assert!(
+        !store
+            .discard_terminal_partial(&mut task, timestamp(9))
+            .expect("discard remains idempotent")
+    );
+
+    let report = store.load_all().expect("reload cancellation history");
+    assert!(report.failures().is_empty());
+    assert_eq!(report.tasks(), &[task]);
 }
 
 #[test]
