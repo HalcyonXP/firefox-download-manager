@@ -156,6 +156,19 @@ A release must preserve these invariants:
 - Installation, upgrade, and removal are tested from Windows paths containing spaces.
 - Known limitations and troubleshooting are documented.
 
+## Project views and automation
+
+Saved views provide:
+
+- A Kanban board grouped by status
+- The current `M0 — Foundation` milestone
+- Native-helper work
+- Firefox-extension work
+- Security-sensitive work
+- An unfiltered all-work table
+
+Enabled workflows automatically add open issues and pull requests from this repository, initialize added items as **Backlog**, move linked pull-request work to **In Review**, move changes-requested work to **In Progress**, move closed or merged work to **Done**, and return reopened work to **Ready**. Existing sub-issues are also added automatically.
+
 ## Planning conventions
 
 - Milestones describe user-visible delivery stages.
@@ -163,4 +176,5 @@ A release must preserve these invariants:
 - `priority: critical` identifies milestone exit-path work.
 - `priority: high` identifies important work that does not block the earliest vertical slice.
 - Area labels identify ownership boundaries without duplicating milestones.
+- Automation outcomes must be verified; workflow automation does not replace acceptance review.
 - Scope changes should update this document and the architecture decision record in the same pull request.

@@ -35,6 +35,8 @@ If code, documentation, and an issue disagree, stop and resolve the contradictio
 
 ## GitHub workflow
 
+Saved project views are available for the status board, current milestone, native helper, Firefox extension, security work, and all work.
+
 For each issue:
 
 1. Confirm its dependencies and acceptance criteria.
@@ -43,9 +45,11 @@ For each issue:
 4. Implement tests with the behavior whenever practical.
 5. Run formatting, linting, unit tests, integration tests, and builds relevant to the change.
 6. Commit and push the branch; open a pull request containing `Closes #<number>`.
-7. Move the item to **In Review** while CI and review are pending.
-8. Merge only when acceptance criteria are satisfied, then move it to **Done**.
+7. Confirm the linked pull request moves the item to **In Review**.
+8. Merge only when acceptance criteria are satisfied; closing or merging should move the item to **Done**.
 9. Promote newly unblocked issue(s) from **Backlog** to **Ready**.
+
+Project automations add new open repository issues and pull requests, place added items in **Backlog**, move linked pull-request work to **In Review**, move changes-requested work to **In Progress**, move closed/merged work to **Done**, and move reopened work to **Ready**. Verify automation outcomes rather than assuming they ran.
 
 Keep commits and pull requests scoped to one issue unless two work items are inseparable and that decision is documented.
 
