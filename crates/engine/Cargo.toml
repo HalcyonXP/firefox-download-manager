@@ -1,0 +1,13 @@
+[package]
+name = "download-manager-engine"
+description = "Download scheduling, validation, persistence, and storage engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+download-manager-protocol = { version = "=0.1.0", path = "../protocol" }
+
+[lints]
+workspace = true

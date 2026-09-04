@@ -1,0 +1,13 @@
+[package]
+name = "download-manager-native-host"
+description = "Firefox Native Messaging host for the Download Manager"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+download-manager-engine = { version = "=0.1.0", path = "../engine" }
+
+[lints]
+workspace = true

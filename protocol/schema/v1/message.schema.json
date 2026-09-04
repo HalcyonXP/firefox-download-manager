@@ -39,12 +39,7 @@
     },
     "workerCount": {
       "type": "integer",
-      "enum": [
-        1,
-        2,
-        4,
-        8
-      ]
+      "enum": [1, 2, 4, 8]
     },
     "taskState": {
       "type": "string",
@@ -62,11 +57,7 @@
     },
     "transferMode": {
       "type": "string",
-      "enum": [
-        "pending",
-        "single",
-        "segmented"
-      ]
+      "enum": ["pending", "single", "segmented"]
     },
     "errorContext": {
       "type": "object",
@@ -134,10 +125,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "code",
-        "display_message"
-      ]
+      "required": ["code", "display_message"]
     },
     "settings": {
       "type": "object",
@@ -260,15 +248,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "name",
-        "value",
-        "domain",
-        "path",
-        "secure",
-        "http_only",
-        "expires_at"
-      ]
+      "required": ["name", "value", "domain", "path", "secure", "http_only", "expires_at"]
     },
     "authorization": {
       "type": "object",
@@ -285,10 +265,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "scheme",
-        "value"
-      ]
+      "required": ["scheme", "value"]
     },
     "credentials": {
       "type": "object",
@@ -337,10 +314,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "algorithm",
-        "digest"
-      ]
+      "required": ["algorithm", "digest"]
     },
     "task": {
       "type": "object",
@@ -484,13 +458,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "snapshot_id",
-        "page_index",
-        "tasks",
-        "next_cursor",
-        "complete"
-      ]
+      "required": ["snapshot_id", "page_index", "tasks", "next_cursor", "complete"]
     },
     "helloPayload": {
       "type": "object",
@@ -518,11 +486,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "supported_versions",
-        "client_name",
-        "client_version"
-      ]
+      "required": ["supported_versions", "client_name", "client_version"]
     },
     "addPayload": {
       "type": "object",
@@ -555,9 +519,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "url"
-      ]
+      "required": ["url"]
     },
     "taskPayload": {
       "type": "object",
@@ -567,9 +529,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "task_id"
-      ]
+      "required": ["task_id"]
     },
     "cancelPayload": {
       "type": "object",
@@ -579,17 +539,11 @@
         },
         "partial_policy": {
           "type": "string",
-          "enum": [
-            "keep",
-            "delete"
-          ]
+          "enum": ["keep", "delete"]
         }
       },
       "additionalProperties": false,
-      "required": [
-        "task_id",
-        "partial_policy"
-      ]
+      "required": ["task_id", "partial_policy"]
     },
     "removePayload": {
       "type": "object",
@@ -602,10 +556,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "task_id",
-        "delete_partial"
-      ]
+      "required": ["task_id", "delete_partial"]
     },
     "listPayload": {
       "type": "object",
@@ -632,11 +583,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "cursor",
-        "limit",
-        "include_terminal"
-      ]
+      "required": ["cursor", "limit", "include_terminal"]
     },
     "updateSettingsPayload": {
       "type": "object",
@@ -646,9 +593,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "settings"
-      ]
+      "required": ["settings"]
     },
     "helloResult": {
       "type": "object",
@@ -666,12 +611,7 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": [
-              "snapshots",
-              "coalesced_progress",
-              "authenticated_requests",
-              "sha256"
-            ]
+            "enum": ["snapshots", "coalesced_progress", "authenticated_requests", "sha256"]
           }
         },
         "max_message_bytes": {
@@ -679,12 +619,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "selected_version",
-        "helper_version",
-        "capabilities",
-        "max_message_bytes"
-      ]
+      "required": ["selected_version", "helper_version", "capabilities", "max_message_bytes"]
     },
     "removeResult": {
       "type": "object",
@@ -694,9 +629,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "removed_task_id"
-      ]
+      "required": ["removed_task_id"]
     },
     "commandMessage": {
       "type": "object",
@@ -729,13 +662,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "protocol_version",
-        "correlation_id",
-        "kind",
-        "command",
-        "payload"
-      ],
+      "required": ["protocol_version", "correlation_id", "kind", "command", "payload"],
       "allOf": [
         {
           "if": {
@@ -744,9 +671,7 @@
                 "const": "hello"
               }
             },
-            "required": [
-              "command"
-            ]
+            "required": ["command"]
           },
           "then": {
             "properties": {
@@ -763,9 +688,7 @@
                 "const": "add"
               }
             },
-            "required": [
-              "command"
-            ]
+            "required": ["command"]
           },
           "then": {
             "properties": {
@@ -782,9 +705,7 @@
                 "const": "pause"
               }
             },
-            "required": [
-              "command"
-            ]
+            "required": ["command"]
           },
           "then": {
             "properties": {
@@ -801,9 +722,7 @@
                 "const": "resume"
               }
             },
-            "required": [
-              "command"
-            ]
+            "required": ["command"]
           },
           "then": {
             "properties": {
@@ -820,9 +739,7 @@
                 "const": "cancel"
               }
             },
-            "required": [
-              "command"
-            ]
+            "required": ["command"]
           },
           "then": {
             "properties": {
@@ -839,9 +756,7 @@
                 "const": "remove"
               }
             },
-            "required": [
-              "command"
-            ]
+            "required": ["command"]
           },
           "then": {
             "properties": {
@@ -858,9 +773,7 @@
                 "const": "list"
               }
             },
-            "required": [
-              "command"
-            ]
+            "required": ["command"]
           },
           "then": {
             "properties": {
@@ -877,9 +790,7 @@
                 "const": "get"
               }
             },
-            "required": [
-              "command"
-            ]
+            "required": ["command"]
           },
           "then": {
             "properties": {
@@ -896,9 +807,7 @@
                 "const": "update_settings"
               }
             },
-            "required": [
-              "command"
-            ]
+            "required": ["command"]
           },
           "then": {
             "properties": {
@@ -946,13 +855,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "protocol_version",
-        "correlation_id",
-        "kind",
-        "command",
-        "ok"
-      ],
+      "required": ["protocol_version", "correlation_id", "kind", "command", "ok"],
       "allOf": [
         {
           "if": {
@@ -961,22 +864,16 @@
                 "const": true
               }
             },
-            "required": [
-              "ok"
-            ]
+            "required": ["ok"]
           },
           "then": {
-            "required": [
-              "result"
-            ],
+            "required": ["result"],
             "properties": {
               "error": false
             }
           },
           "else": {
-            "required": [
-              "error"
-            ],
+            "required": ["error"],
             "properties": {
               "result": false
             }
@@ -989,9 +886,7 @@
                 "const": "protocol"
               }
             },
-            "required": [
-              "command"
-            ]
+            "required": ["command"]
           },
           "then": {
             "properties": {
@@ -1011,10 +906,7 @@
                 "const": true
               }
             },
-            "required": [
-              "command",
-              "ok"
-            ]
+            "required": ["command", "ok"]
           },
           "then": {
             "properties": {
@@ -1034,10 +926,7 @@
                 "const": true
               }
             },
-            "required": [
-              "command",
-              "ok"
-            ]
+            "required": ["command", "ok"]
           },
           "then": {
             "properties": {
@@ -1057,10 +946,7 @@
                 "const": true
               }
             },
-            "required": [
-              "command",
-              "ok"
-            ]
+            "required": ["command", "ok"]
           },
           "then": {
             "properties": {
@@ -1080,10 +966,7 @@
                 "const": true
               }
             },
-            "required": [
-              "command",
-              "ok"
-            ]
+            "required": ["command", "ok"]
           },
           "then": {
             "properties": {
@@ -1103,10 +986,7 @@
                 "const": true
               }
             },
-            "required": [
-              "command",
-              "ok"
-            ]
+            "required": ["command", "ok"]
           },
           "then": {
             "properties": {
@@ -1126,10 +1006,7 @@
                 "const": true
               }
             },
-            "required": [
-              "command",
-              "ok"
-            ]
+            "required": ["command", "ok"]
           },
           "then": {
             "properties": {
@@ -1149,10 +1026,7 @@
                 "const": true
               }
             },
-            "required": [
-              "command",
-              "ok"
-            ]
+            "required": ["command", "ok"]
           },
           "then": {
             "properties": {
@@ -1172,10 +1046,7 @@
                 "const": true
               }
             },
-            "required": [
-              "command",
-              "ok"
-            ]
+            "required": ["command", "ok"]
           },
           "then": {
             "properties": {
@@ -1195,10 +1066,7 @@
                 "const": true
               }
             },
-            "required": [
-              "command",
-              "ok"
-            ]
+            "required": ["command", "ok"]
           },
           "then": {
             "properties": {
@@ -1221,10 +1089,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "task",
-        "previous_state"
-      ]
+      "required": ["task", "previous_state"]
     },
     "progressData": {
       "type": "object",
@@ -1311,10 +1176,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "task_id",
-        "warning"
-      ]
+      "required": ["task_id", "warning"]
     },
     "failedData": {
       "type": "object",
@@ -1327,10 +1189,7 @@
         }
       },
       "additionalProperties": false,
-      "required": [
-        "task",
-        "error"
-      ]
+      "required": ["task", "error"]
     },
     "eventMessage": {
       "type": "object",
@@ -1346,14 +1205,7 @@
         },
         "event": {
           "type": "string",
-          "enum": [
-            "snapshot",
-            "state_changed",
-            "progress",
-            "warning",
-            "completed",
-            "failed"
-          ]
+          "enum": ["snapshot", "state_changed", "progress", "warning", "completed", "failed"]
         },
         "sequence": {
           "type": "integer",
@@ -1385,9 +1237,7 @@
                 "const": "snapshot"
               }
             },
-            "required": [
-              "event"
-            ]
+            "required": ["event"]
           },
           "then": {
             "properties": {
@@ -1404,9 +1254,7 @@
                 "const": "state_changed"
               }
             },
-            "required": [
-              "event"
-            ]
+            "required": ["event"]
           },
           "then": {
             "properties": {
@@ -1423,9 +1271,7 @@
                 "const": "progress"
               }
             },
-            "required": [
-              "event"
-            ]
+            "required": ["event"]
           },
           "then": {
             "properties": {
@@ -1442,9 +1288,7 @@
                 "const": "warning"
               }
             },
-            "required": [
-              "event"
-            ]
+            "required": ["event"]
           },
           "then": {
             "properties": {
@@ -1461,9 +1305,7 @@
                 "const": "completed"
               }
             },
-            "required": [
-              "event"
-            ]
+            "required": ["event"]
           },
           "then": {
             "properties": {
@@ -1480,9 +1322,7 @@
                 "const": "failed"
               }
             },
-            "required": [
-              "event"
-            ]
+            "required": ["event"]
           },
           "then": {
             "properties": {

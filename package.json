@@ -1,0 +1,38 @@
+{
+  "name": "firefox-download-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Firefox Developer Edition extension and native download helper",
+  "engines": {
+    "node": ">=24 <27",
+    "npm": ">=11"
+  },
+  "packageManager": "npm@11.18.0",
+  "scripts": {
+    "build": "npm run clean && node scripts/build-extension.mjs",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run protocol:check && npm run build && npm run extension:check",
+    "clean": "node scripts/clean.mjs",
+    "extension:check": "node scripts/validate-extension.mjs",
+    "format": "prettier --write \"extension/**/*.{ts,json}\" \"scripts/**/*.mjs\" \"*.{json,mjs}\" \".github/**/*.{yml,yaml}\" \"protocol/schema/**/*.json\"",
+    "format:check": "prettier --check \"extension/**/*.{ts,json}\" \"scripts/**/*.mjs\" \"*.{json,mjs}\" \".github/**/*.{yml,yaml}\" \"protocol/schema/**/*.json\"",
+    "licenses:js": "license-checker-rseidelsohn --summary --excludePrivatePackages",
+    "lint": "eslint extension scripts *.config.mjs",
+    "protocol:check": "node scripts/validate-protocol.mjs",
+    "test": "vitest run",
+    "typecheck": "tsc -p extension/tsconfig.json"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/firefox-webext-browser": "143.0.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "esbuild": "0.28.2",
+    "eslint": "10.9.1",
+    "globals": "17.12.0",
+    "license-checker-rseidelsohn": "5.0.1",
+    "prettier": "3.9.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.69.0",
+    "vitest": "4.1.11"
+  }
+}
