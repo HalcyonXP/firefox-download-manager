@@ -2,7 +2,7 @@
 
 GitHub execution board: [Firefox Download Manager](https://github.com/users/HalcyonXP/projects/1)
 
-Current state: planning is complete. Issue [#1](https://github.com/HalcyonXP/download-manager/issues/1) is **Ready**; all dependent work remains in **Backlog**.
+Current state is maintained on the project board. Planning is complete; implementation proceeds through the lowest-numbered issue in **Ready** status, with dependent work retained in **Backlog** until it is unblocked.
 
 ## Product goal
 
@@ -34,7 +34,7 @@ The Firefox extension captures user intent and displays state. A Rust native hel
 - Cloud accounts, synchronization, telemetry, analytics, or a remote updater
 - Cross-platform packaging in the first release
 
-## Proposed architecture
+## Architecture
 
 ```text
 ┌──────────────────────────────────┐
@@ -58,7 +58,7 @@ The Firefox extension captures user intent and displays state. A Rust native hel
 └──────────────────────────────────┘
 ```
 
-The final architecture choices and trust boundaries are tracked in [#1](https://github.com/HalcyonXP/download-manager/issues/1). The protocol contract is tracked in [#2](https://github.com/HalcyonXP/download-manager/issues/2).
+The accepted component boundaries and decisions are recorded in [ARCHITECTURE.md](ARCHITECTURE.md) and its linked architecture decision records. The threat model and sensitive-data rules are recorded in [SECURITY.md](SECURITY.md). The detailed protocol contract is tracked in [#2](https://github.com/HalcyonXP/download-manager/issues/2).
 
 ## Delivery milestones
 

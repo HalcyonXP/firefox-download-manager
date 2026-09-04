@@ -1,0 +1,26 @@
+# ADR-0004: Use unique partial files and versioned recoverable metadata
+
+- Status: Accepted
+- Date: 2026-09-04
+- Reversibility: The encoding is reversible; safety semantics are not
+
+## Context
+
+Concurrent workers must write large files without browser memory assembly. Crashes can occur between body writes and metadata updates. User destinations may contain existing files, hostile names, links, sharing locks, or filesystems with different rename guarantees.
+
+## Decision
+
+Create a unique `.part` file with create-new semantics in the selected destination and preallocate it where supported. Every write carries an assignment and is bounds-checked before random-access I/O. Keep versioned task metadata in the user-scoped application state directory and update it through write/flush/replace at a bounded cadence.
+
+On recovery, distrust both metadata and the partial file and validate their agreement. On completion, independently verify coverage and size, flush, select a non-existing final pathname, and atomically rename on the same filesystem where supported. Never overwrite an existing final file and never mark success before promotion.
+
+## Rejected alternatives
+
+- **One temporary file per segment plus concatenation:** doubles I/O and creates a separate error-prone merge step.
+- **Write directly to the final name:** exposes incomplete content and collision risk.
+- **In-memory progress only:** cannot recover after process failure.
+- **Database as an initial requirement:** adds migration and locking complexity before the state volume warrants it; the concrete encoding remains deferred.
+
+## Consequences
+
+The storage API must model assignment ownership, durability points, and promotion explicitly. Metadata schema versions and migrations are mandatory. Cleanup of completed, cancelled, corrupt, and abandoned state must be a deliberate policy.

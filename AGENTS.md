@@ -7,7 +7,7 @@ This repository contains a local download manager for Firefox Developer Edition 
 - Project board: https://github.com/users/HalcyonXP/projects/1
 - Project plan: `docs/PROJECT_PLAN.md`
 - Work items and acceptance criteria: GitHub Issues
-- Start with the lowest-numbered issue in **Ready** status. At handoff, this is issue #1.
+- Start with the lowest-numbered issue in **Ready** status. At the initial implementation handoff, this was issue #1; use the board for current status.
 
 If code, documentation, and an issue disagree, stop and resolve the contradiction explicitly. Update the plan when scope changes.
 
