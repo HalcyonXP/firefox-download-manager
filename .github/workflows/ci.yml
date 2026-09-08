@@ -47,6 +47,14 @@ jobs:
       - name: Test Rust
         run: cargo test --workspace --all-features --locked
 
+      - name: Repeat cancellation regressions
+        shell: pwsh
+        run: |
+          1..10 | ForEach-Object {
+            cargo test -p download-manager-engine --test scheduler stop --locked
+            if ($LASTEXITCODE -ne 0) { throw "Cancellation regression failed" }
+          }
+
       - name: Build Rust
         run: cargo build --workspace --all-features --locked
 

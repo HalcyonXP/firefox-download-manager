@@ -206,9 +206,21 @@ async fn controlled_stop_waits_for_workers_and_resume_skips_completed_ranges() {
     assert_eq!(progress.latest().active_workers(), 0);
     let retained = partial.completed_ranges();
     assert!(!retained.is_empty());
-    let request_count = server.requests().len();
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    assert_eq!(server.requests().len(), request_count);
+    // Remote observation can lag already-sent requests. Local reporter closure,
+    // stable coverage and unchanged bytes are the cancellation contract.
+    let stopped = progress.latest();
+    let bytes = fs::read(partial.partial_path()).expect("read stopped partial");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while progress.changed().await.is_some() {}
+    })
+    .await
+    .expect("all worker reporters close");
+    assert_eq!(progress.latest(), stopped);
+    assert_eq!(partial.completed_ranges(), retained);
+    assert_eq!(
+        fs::read(partial.partial_path()).expect("read stable partial"),
+        bytes
+    );
 
     scheduler
         .transfer(&probe, &partial, WorkerCount::Four)
@@ -223,6 +235,98 @@ async fn controlled_stop_waits_for_workers_and_resume_skips_completed_ranges() {
             usize::try_from(fixture.len).expect("fixture fits memory"),
             0,
         )
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn received_requests_can_be_observed_after_join_without_post_stop_workers_or_writes() {
+    let fixture = Fixture {
+        len: 8 * MIB,
+        seed: 95,
+    };
+    let server = stalled_server(fixture.clone(), Duration::from_millis(20));
+    let probe = ProbeClient::new()
+        .expect("client")
+        .probe(&server.url("/fixture"))
+        .await
+        .expect("probe before gate");
+    let directory = TestDirectory::new("late-observation");
+    let partial = PartialFile::create(directory.path(), "late.bin", fixture.len).expect("partial");
+    let mut writer = partial
+        .assign(range(0, MIB))
+        .expect("seed retained coverage");
+    writer
+        .write(&fixture.bytes(0, usize::try_from(MIB).expect("bounded"), 0))
+        .expect("seed bytes");
+    writer.finish().expect("seed completed range");
+    let gate = server.pause_observation();
+    let observed_before = server.requests().len();
+    let cancellation = TransferCancellation::new();
+    let (reporter, mut progress) = transfer_progress_channel();
+    let scheduler = DownloadScheduler::new().expect("scheduler");
+    let running_scheduler = scheduler.clone();
+    let running_probe = probe.clone();
+    let running_partial = partial.clone();
+    let running_cancellation = cancellation.clone();
+    let transfer = tokio::spawn(async move {
+        running_scheduler
+            .transfer_controlled(
+                &running_probe,
+                &running_partial,
+                WorkerCount::Four,
+                &running_cancellation,
+                reporter,
+            )
+            .await
+    });
+    assert!(
+        gate.wait_for_pending(4, Duration::from_secs(5)),
+        "headers received before cancellation"
+    );
+    assert_eq!(server.requests().len(), observed_before);
+    cancellation.cancel();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(5), transfer)
+            .await
+            .expect("bounded join")
+            .expect("worker join"),
+        Err(SchedulerError::Cancelled)
+    );
+    while progress.changed().await.is_some() {}
+    let stopped = progress.latest();
+    assert_eq!(stopped.active_workers(), 0);
+    assert_eq!(stopped.requests_started(), 4);
+    assert_eq!(partial.completed_ranges(), vec![range(0, MIB)]);
+    let stopped_bytes = fs::read(partial.partial_path()).expect("stopped bytes");
+    drop(gate);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while server.requests().len() < observed_before + 4 {
+            tokio::time::sleep(Duration::from_millis(2)).await;
+        }
+    })
+    .await
+    .expect("already-received requests enter ledger");
+    assert_eq!(server.requests().len(), observed_before + 4);
+    assert_eq!(progress.latest(), stopped);
+    assert_eq!(
+        fs::read(partial.partial_path()).expect("no late writes"),
+        stopped_bytes
+    );
+    let resume_start = server.requests().len();
+    scheduler
+        .transfer(&probe, &partial, WorkerCount::Four)
+        .await
+        .expect("resume only missing work");
+    for request in &server.requests()[resume_start..] {
+        assert!(
+            request.range.expect("ranged resume").start >= MIB,
+            "retained bytes never requested"
+        );
+    }
+    let result = partial.promote().expect("validated promotion");
+    assert_eq!(
+        fs::read(result.final_path()).expect("final bytes"),
+        fixture.bytes(0, usize::try_from(fixture.len).expect("bounded fixture"), 0)
     );
 }
 
