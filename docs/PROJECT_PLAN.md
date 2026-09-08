@@ -209,6 +209,17 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 
 [SECURITY_REVIEW.md](SECURITY_REVIEW.md) records the scoped review, fixed wildcard-permission and validator-redaction findings, explicit Firefox 156/CSP/private-window policy, actual native log/state inspection, and dependency audits. Review completion is not release approval. #27 must resolve development-installer reparse/ownership/transactional-upgrade findings and re-run the affected security checks. #28 must qualify the final policy/artifacts in Firefox and the target installation environment, without touching an unowned live profile.
 
-### Packaging work in progress (#27)
+### Packaging checkpoint (#27)
 
 [PACKAGING_PLAN.md](PACKAGING_PLAN.md) records the local Rust setup/candidate-artifact design, ownership and recovery requirements, and remaining evidence. The Rust setup coordinator/CLI, bounded helper probe, candidate builder and preservation/fault tests now exist; old development scripts are refusal-only stubs. The initial static MSVC proposal was replaced by a reviewed pinned LLVM/MinGW/UCRT release target after distribution-term review. Actual public package CI `34274073613` passed on Windows Server x64 and Windows 11 ARM64 with x64 emulation; repeated clean-target builds were byte-identical within each environment, not across environments. The CI candidate also passed a native Windows 11 x64 probe locally without registration or browser use. #28 final browser/resource qualification and release remain pending.
+
+### Post-packaging baseline correction (#39)
+
+#27 / PR #38 merged as `9928058` after two successful PR runs. Merged-main CI `34277988932` then failed a release-target progress-event minimum-count assertion. #39 blocks #28 until this baseline is verified; #28 returned to Backlog, with its draft qualification harness preserved separately. [PROGRESS_REGRESSION.md](PROGRESS_REGRESSION.md) records the invalid timing/count premise, explicit response-barrier replacement, late-consumer counterexample and evidence limits. Prior #32 cancellation-observation work remains intact. This interruption changes the immediate sequence, not release scope or supported-platform requirements.
+
+### Additional retry-control baseline correction (#41)
+
+#27 / PR #38 merged as `9928058`. #39 / PR #40 addresses a failed merged-main progress-count assertion, but its CI `34283625146` then failed an existing one-second probe-cancellation timeout while the progress cases passed. #41 is an independent focused correction from main; [RETRY_CANCELLATION_REGRESSION.md](RETRY_CANCELLATION_REGRESSION.md) separates deterministic retry readiness from joined, durably checkpointed acknowledgement. #39 is paused behind #41, and #28 remains in Backlog. Resolve #41 with its own gates, update #39 onto verified main, and require the combined baseline before resuming qualification. No failed CI result or required release coverage is waived.
+
+
+#41 / PR #42 subsequently merged as `78a92ea` after CI `34286434188` passed all three jobs. #39 is now updated onto that main and its full combined gate must pass; merged-main CI `34287899024` was still pending at this integration checkpoint. #28 stays blocked until the current baseline is verified. A successful Dependabot Updates run is not the CI workflow and is never used as that gate.

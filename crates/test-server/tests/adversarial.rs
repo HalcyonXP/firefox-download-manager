@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -30,9 +30,12 @@ fn start_server(rules: Vec<FaultRule>) -> (TestServer, Fixture) {
 }
 
 fn get(server: &TestServer, path: &str, range: Option<ByteRange>) -> Response {
+    get_at_address(server.address(), path, range)
+}
+
+fn get_at_address(address: SocketAddr, path: &str, range: Option<ByteRange>) -> Response {
     let started = Instant::now();
-    let mut stream =
-        TcpStream::connect(server.address()).expect("fixture should accept a connection");
+    let mut stream = TcpStream::connect(address).expect("fixture should accept a connection");
     stream
         .set_read_timeout(Some(Duration::from_secs(3)))
         .expect("fixture timeout should configure");
@@ -41,8 +44,7 @@ fn get(server: &TestServer, path: &str, range: Option<ByteRange>) -> Response {
     });
     write!(
         stream,
-        "GET {path} HTTP/1.1\r\nHost: {}\r\nAccept-Encoding: identity\r\n{range_header}Connection: close\r\n\r\n",
-        server.address()
+        "GET {path} HTTP/1.1\r\nHost: {address}\r\nAccept-Encoding: identity\r\n{range_header}Connection: close\r\n\r\n"
     )
     .expect("fixture request should write");
 
@@ -317,4 +319,49 @@ fn custom_faults_target_selected_requests_and_ranges() {
     assert_eq!(requests.len(), 3);
     assert_eq!(requests[1].request_number, 2);
     assert_eq!(requests[2].range, Some(range(100, 109)));
+}
+
+#[test]
+fn selected_response_pause_preserves_observation_and_releases_on_guard_or_server_drop() {
+    for release_server in [false, true] {
+        let (server, fixture) = start_server(Vec::new());
+        let range = ByteRange { start: 0, end: 15 };
+        let selector = RequestSelector {
+            path: Some("/fixture".to_owned()),
+            request_number: None,
+            range: Some(range),
+        };
+        let pause = server
+            .pause_responses(selector.clone())
+            .expect("pause selected response");
+        assert_eq!(
+            server
+                .pause_responses(selector)
+                .expect_err("reject overlapping pause")
+                .kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        assert!(!pause.wait_for_pending(1, Duration::ZERO));
+        let address = server.address();
+        let reader = thread::spawn(move || get_at_address(address, "/fixture", Some(range)));
+        assert!(pause.wait_for_pending(1, Duration::from_secs(3)));
+        assert!(
+            !reader.is_finished(),
+            "response cannot finish before explicit release"
+        );
+        assert_eq!(server.requests().len(), 1);
+        assert_eq!(server.requests()[0].range, Some(range));
+        // A nonmatching full GET still works while the selected response is held.
+        let other = get(&server, "/fixture", None);
+        assert_eq!(other.status, 200);
+        assert_eq!(other.body, fixture.bytes(0, 1024, 0));
+        if release_server {
+            drop(server);
+        } else {
+            drop(pause);
+        }
+        let result = reader.join().expect("owned response reader");
+        assert_eq!(result.status, 206);
+        assert_eq!(result.body, fixture.bytes(0, 16, 0));
+    }
 }
