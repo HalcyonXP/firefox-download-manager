@@ -466,3 +466,159 @@ impl Drop for TestDirectory {
         let _ = fs::remove_dir_all(&self.path);
     }
 }
+
+#[test]
+fn sha256_known_vectors_are_streamed_and_publication_requires_the_owned_lease() {
+    use download_manager_engine::integrity::ExpectedSha256;
+    let directory = TestDirectory::new("sha256-vectors");
+    for (index, (bytes, digest)) in [
+        (
+            Vec::new(),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        ),
+        (
+            b"abc".to_vec(),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+        ),
+        (
+            vec![b'a'; 1_000_000],
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("vector-{index}.bin");
+        let partial = if bytes.is_empty() {
+            PartialFile::create(directory.path(), &name, 0).expect("empty")
+        } else {
+            completed_storage(directory.path(), &name, &bytes)
+        };
+        let mut checks = 0;
+        let lease = partial
+            .validate(ExpectedSha256::parse(digest), || {
+                checks += 1;
+                false
+            })
+            .expect("known hash");
+        assert_eq!(
+            checks,
+            bytes.len().div_ceil(256 * 1024) + 2,
+            "one bounded chunk per cancellation check, plus initial/EOF checks"
+        );
+        assert!(!directory.path().join(&name).exists());
+        assert!(matches!(
+            partial.validate(None, || false),
+            Err(StorageError::NotActive)
+        ));
+        assert!(
+            matches!(partial.promote(), Err(StorageError::NotActive)),
+            "a clone cannot bypass the active validation lease"
+        );
+        let output = lease.promote().expect("publish validated file");
+        assert_eq!(fs::read(output.final_path()).expect("output"), bytes);
+    }
+}
+
+#[test]
+fn sha256_detects_disk_corruption_and_cancelled_validation_can_be_repeated() {
+    use download_manager_engine::integrity::ExpectedSha256;
+    use std::io::Write;
+    let directory = TestDirectory::new("sha256-failure");
+    let partial = completed_storage(directory.path(), "million.bin", &vec![b'a'; 1_000_000]);
+    let expected =
+        ExpectedSha256::parse("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+    let mut checks = 0;
+    assert!(matches!(
+        partial.validate(expected, || {
+            checks += 1;
+            checks == 3
+        }),
+        Err(StorageError::ValidationCancelled)
+    ));
+    assert_eq!(checks, 3);
+    assert!(!directory.path().join("million.bin").exists());
+    let lease = partial
+        .validate(expected, || false)
+        .expect("retry full validation");
+    drop(lease);
+    let mut external = OpenOptions::new()
+        .write(true)
+        .open(partial.partial_path())
+        .expect("open mutation handle");
+    external.write_all(b"b").expect("same-length corruption");
+    external.sync_all().expect("flush corruption");
+    assert!(matches!(
+        partial.validate(expected, || false),
+        Err(StorageError::ChecksumMismatch)
+    ));
+    assert!(!directory.path().join("million.bin").exists());
+}
+
+#[test]
+fn sha256_cannot_validate_active_assignments_gaps_or_changed_lengths() {
+    use download_manager_engine::integrity::ExpectedSha256;
+    let directory = TestDirectory::new("sha256-structure");
+    let partial = PartialFile::create(directory.path(), "gap.bin", 4).expect("partial");
+    let mut writer = partial.assign(range(0, 2)).expect("assignment");
+    assert!(matches!(
+        partial.validate(None, || false),
+        Err(StorageError::ActiveAssignments { .. })
+    ));
+    writer.write(b"ab").expect("bytes");
+    writer.finish().expect("finish");
+    assert!(matches!(
+        partial.validate(None, || false),
+        Err(StorageError::IncompleteCoverage)
+    ));
+    let complete = completed_storage(directory.path(), "length.bin", b"abc");
+    OpenOptions::new()
+        .write(true)
+        .open(complete.partial_path())
+        .expect("file")
+        .set_len(2)
+        .expect("truncate");
+    assert!(matches!(
+        complete.validate(
+            ExpectedSha256::parse(
+                "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            ),
+            || false
+        ),
+        Err(StorageError::FileLengthChanged { .. })
+    ));
+    assert!(!directory.path().join("length.bin").exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn sha256_windows_lock_rejects_competing_io_and_releases_on_lease_drop() {
+    use std::io::Write;
+    let directory = TestDirectory::new("sha256-lock");
+    let partial = completed_storage(directory.path(), "locked.bin", b"abc");
+    let mut external = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(partial.partial_path())
+        .expect("external handle");
+    external.try_lock().expect("competing owner");
+    assert!(matches!(
+        partial.validate(None, || false),
+        Err(StorageError::Io {
+            failure: download_manager_engine::storage::IoFailure::FileLocked,
+            ..
+        })
+    ));
+    assert!(
+        partial.validate(None, || false).is_err(),
+        "failed acquisition never unlocks the other owner"
+    );
+    external.unlock().expect("release competitor");
+    let lease = partial.validate(None, || false).expect("validation lease");
+    assert!(
+        external.write_all(b"x").is_err(),
+        "ordinary competing I/O is locked out"
+    );
+    drop(lease);
+    external.write_all(b"a").expect("lease released");
+}

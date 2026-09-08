@@ -2075,3 +2075,170 @@ async fn settings_reconfiguration_preserves_known_origin_cooldown() {
     assert_eq!(after.active(), 0);
     engine.shutdown().await.expect("shutdown");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sha256_completion_covers_all_worker_counts_single_fallback_empty_and_collision() {
+    use download_manager_engine::integrity::ExpectedSha256;
+    let fixture = Fixture {
+        len: 2 * MIB + 53,
+        seed: 33,
+    };
+    let bytes = fixture.bytes(0, usize::try_from(fixture.len).expect("size"), 0);
+    // Independent Python hashlib digest of the documented fixture formula.
+    let digest = "533406bc0c38f16af711c9eee95f57379ca1c285838b27f31dabfbe4d2e930de";
+    let server = TestServer::start(ServerConfig {
+        fixture: fixture.clone(),
+        rules: Vec::new(),
+    })
+    .expect("server");
+    for (workers, route) in [
+        (WorkerCount::One, "/fixture"),
+        (WorkerCount::Two, "/fixture"),
+        (WorkerCount::Four, "/fixture"),
+        (WorkerCount::Eight, "/fixture"),
+        (WorkerCount::Eight, "/ignore-range"),
+        (WorkerCount::Four, "/unknown-length"),
+        (WorkerCount::One, "/empty"),
+    ] {
+        let directories = TestDirectories::new("sha256-success");
+        fs::write(directories.destination().join("integrity.bin"), b"existing").expect("collision");
+        let engine =
+            TaskEngine::open(directories.state(), TaskEngineOptions::default()).expect("engine");
+        let expected = if route == "/empty" {
+            ExpectedSha256::parse(
+                "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            )
+        } else {
+            ExpectedSha256::parse(digest)
+        };
+        let task = engine
+            .create_task_with_integrity(
+                &server.url(route),
+                directories.destination(),
+                "integrity.bin",
+                workers,
+                None,
+                expected,
+            )
+            .expect("create");
+        engine.start(task.task_id()).expect("start");
+        let completed = engine
+            .wait_until_inactive(task.task_id())
+            .await
+            .expect("completion");
+        assert_eq!(completed.state(), TaskState::Completed);
+        let output =
+            fs::read(directories.destination().join(completed.display_name())).expect("output");
+        assert_eq!(
+            output,
+            if route == "/empty" {
+                Vec::new()
+            } else {
+                bytes.clone()
+            }
+        );
+        assert_eq!(
+            completed.bytes_completed(),
+            u64::try_from(output.len()).expect("size")
+        );
+        assert_eq!(
+            fs::read(directories.destination().join("integrity.bin")).expect("collision preserved"),
+            b"existing"
+        );
+        let events = drain_events(&engine);
+        let states = events
+            .iter()
+            .filter_map(|event| match event.kind() {
+                TaskEventKind::StateChanged { task, .. } => Some(task.state()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(states.ends_with(&[
+            TaskState::Validating,
+            TaskState::Promoting,
+            TaskState::Completed
+        ]));
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| matches!(event.kind(), TaskEventKind::Completed(_)))
+                .count(),
+            1
+        );
+        engine.shutdown().await.expect("shutdown");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn sha256_mismatch_retention_and_restart_never_drop_the_immutable_expected_digest() {
+    use download_manager_engine::integrity::ExpectedSha256;
+    let server = TestServer::start(ServerConfig::default()).expect("server");
+    for keep in [true, false] {
+        let directories = TestDirectories::new("sha256-mismatch");
+        let options = TaskEngineOptions::default().with_failure_retention(keep);
+        let engine = TaskEngine::open(directories.state(), options).expect("engine");
+        let expected = ExpectedSha256::parse(&"f".repeat(64));
+        let task = engine
+            .create_task_with_integrity(
+                &server.url("/fixture"),
+                directories.destination(),
+                "mismatch.bin",
+                WorkerCount::Four,
+                None,
+                expected,
+            )
+            .expect("create");
+        engine.start(task.task_id()).expect("start");
+        let failed = engine
+            .wait_until_inactive(task.task_id())
+            .await
+            .expect("failure");
+        assert_eq!(failed.state(), TaskState::Failed);
+        assert_eq!(
+            failed.failure().expect("reason").kind(),
+            TaskFailureKind::ChecksumMismatch
+        );
+        assert!(!directories.destination().join("mismatch.bin").exists());
+        assert!(
+            !drain_events(&engine)
+                .iter()
+                .any(|event| matches!(event.kind(), TaskEventKind::Completed(_)))
+        );
+        assert_eq!(
+            fs::read_dir(directories.destination())
+                .expect("directory")
+                .count(),
+            usize::from(keep)
+        );
+        engine.shutdown().await.expect("shutdown");
+        drop(engine);
+        let state_path = directories
+            .state()
+            .join("tasks")
+            .join(format!("{}.task.json", task.task_id()));
+        let record: serde_json::Value =
+            serde_json::from_slice(&fs::read(state_path).expect("state")).expect("JSON");
+        assert_eq!(record["version"], 4);
+        assert_eq!(record["task"]["expected_sha256"], "f".repeat(64));
+        let recovered = TaskEngine::open(directories.state(), options).expect("recover");
+        let before = server.requests().len();
+        recovered.resume(task.task_id()).await.expect("retry");
+        let retried = recovered
+            .wait_until_inactive(task.task_id())
+            .await
+            .expect("retried");
+        assert_eq!(
+            retried.failure().expect("still protected").kind(),
+            TaskFailureKind::ChecksumMismatch
+        );
+        assert!(!directories.destination().join("mismatch.bin").exists());
+        if keep {
+            assert_eq!(
+                server.requests().len() - before,
+                2,
+                "retained complete coverage is reprobed and rehashed, never trusted merely by size"
+            );
+        }
+        recovered.shutdown().await.expect("shutdown");
+    }
+}

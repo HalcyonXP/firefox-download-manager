@@ -61,7 +61,7 @@ function helloCorrelation(port: FakePort): string {
   return message.correlation_id;
 }
 
-function acceptHello(port: FakePort): void {
+function acceptHello(port: FakePort, capabilities = ["snapshots", "coalesced_progress"]): void {
   port.onMessage.emit({
     protocol_version: 2,
     correlation_id: helloCorrelation(port),
@@ -71,7 +71,7 @@ function acceptHello(port: FakePort): void {
     result: {
       selected_version: 2,
       helper_version: "0.1.0",
-      capabilities: ["snapshots", "coalesced_progress"],
+      capabilities,
       max_message_bytes: 1_048_576,
     },
   });
@@ -292,6 +292,29 @@ describe("session capability gate", () => {
       connection.command("add", { request_context: { credentials: { cookies: [] } } }),
     ).rejects.toMatchObject({ failure: "protocol_error" });
     expect(port.sent).toHaveLength(1);
+    connection.disconnect();
+  });
+});
+
+describe("checksum capability gate after reconnect", () => {
+  it("never silently drops a digest when the replacement helper lacks SHA-256", async () => {
+    const first = new FakePort();
+    const second = new FakePort();
+    let connects = 0;
+    const connection = new NativeConnection(() => (connects++ === 0 ? first : second), "0.1.0");
+    const ready = connection.connect();
+    acceptHello(first, ["snapshots", "coalesced_progress", "sha256"]);
+    snapshot(first, 0, []);
+    await ready;
+    expect(connection.supports("sha256")).toBe(true);
+    connection.disconnect();
+    const add = connection.command("add", {
+      checksum: { algorithm: "sha256", digest: "a".repeat(64) },
+    });
+    acceptHello(second);
+    snapshot(second, 0, []);
+    await expect(add).rejects.toMatchObject({ failure: "protocol_error" });
+    expect(second.sent).toHaveLength(1);
     connection.disconnect();
   });
 });

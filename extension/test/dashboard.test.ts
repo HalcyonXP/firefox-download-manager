@@ -13,6 +13,7 @@ describe("dashboard projection", () => {
       "Remove history",
       "Open folder",
     ]);
+    expect(actionsFor("validating").map((item) => item.label)).toEqual(["Cancel", "Open folder"]);
     expect(actionsFor("promoting").map((item) => item.label)).toEqual(["Open folder"]);
     expect(actionsFor("paused").map((item) => item.label)).toContain("Resume");
     expect(actionsFor("queued").map((item) => item.label)).toContain("Start");
@@ -31,4 +32,17 @@ describe("dashboard projection", () => {
       } as NativeTask),
     ).toContain("ETA unknown");
   });
+});
+
+it("does not mistake download rate/ETA for validation progress", () => {
+  const text = progressText({
+    state: "validating",
+    bytes_completed: 100,
+    expected_size: 100,
+    eta_seconds: 0,
+    speed_bytes_per_second: 1000,
+  } as NativeTask);
+  expect(text).toContain("final name withheld");
+  expect(text).not.toContain("/s");
+  expect(text).not.toContain("0s remaining");
 });

@@ -267,6 +267,13 @@ export class NativeConnection {
     ) {
       throw new NativeConnectionError("protocol_error");
     }
+    if (
+      command === "add" &&
+      isRecord(payload) &&
+      payload.checksum !== undefined &&
+      !this.supports("sha256")
+    )
+      throw new NativeConnectionError("protocol_error");
     if (this.#commands.size >= 32) throw new NativeConnectionError("unavailable");
     const correlation = this.#nextCorrelation("command");
     const message = {

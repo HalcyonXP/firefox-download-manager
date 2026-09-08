@@ -55,3 +55,25 @@ describe("explicit creation boundary", () => {
     expect(connectionMessage(new Error("cookie=secret"))).not.toContain("secret");
   });
 });
+
+describe("optional expected SHA-256", () => {
+  const valid = {
+    url: "https://example.test/file",
+    destination: "C:\\Downloads",
+    filename: "hash.bin",
+    workers: 4,
+  };
+  it("omits blank values and normalizes a valid expectation", () => {
+    expect(creationPayload({ ...valid, checksum: "" }).checksum).toBeUndefined();
+    expect(creationPayload({ ...valid, checksum: `  ${"A1".repeat(32)}  ` }).checksum).toEqual({
+      algorithm: "sha256",
+      digest: "a1".repeat(32),
+    });
+  });
+  it.each(["g".repeat(64), "a".repeat(63), "a".repeat(65), "é".repeat(32)])(
+    "rejects malformed digests",
+    (checksum) => {
+      expect(() => creationPayload({ ...valid, checksum })).toThrow("64 hexadecimal");
+    },
+  );
+});

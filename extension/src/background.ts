@@ -124,7 +124,8 @@ browser.runtime.onConnect.addListener((port) => {
             typeof input?.url !== "string" ||
             typeof input.destination !== "string" ||
             typeof input.filename !== "string" ||
-            typeof input.workers !== "number"
+            typeof input.workers !== "number" ||
+            (input.checksum !== undefined && typeof input.checksum !== "string")
           )
             throw new Error("invalid input");
           const session = "session" in message ? (message.session as SessionInput) : undefined;

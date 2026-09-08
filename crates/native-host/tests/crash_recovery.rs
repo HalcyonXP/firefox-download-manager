@@ -91,6 +91,7 @@ fn forced_process_kill_recovers_durable_ranges_and_resumes_exact_bytes() {
         )));
     fs::create_dir_all(root.0.join("Profile/Downloads")).expect("downloads");
     fs::create_dir_all(root.0.join("Local App Data")).expect("app data");
+    // Expected SHA-256 independently computed with Python hashlib from the documented fixture formula.
     let fixture = Fixture {
         len: 8 * MIB,
         seed: 89,
@@ -114,7 +115,7 @@ fn forced_process_kill_recovers_durable_ranges_and_resumes_exact_bytes() {
     first.hello();
     first.send(
         "add",
-        &json!({"url":server.url("/fixture"),"suggested_filename":"crash.bin","workers":4}),
+        &json!({"url":server.url("/fixture"),"suggested_filename":"crash.bin","workers":4,"checksum":{"algorithm":"sha256","digest":"8da825cc025655c14fd604596e953db07bfdacdfa12361af4f89d67f00eaa934"}}),
     );
     let added = first.wait(|value| value["command"] == "add");
     assert_eq!(added["ok"], true);

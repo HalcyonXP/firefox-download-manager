@@ -26,7 +26,7 @@
 
 ## Decision and learning history — 2026-09-08
 
-The user authorized autonomous development toward an installable release, without changing their live browser profile. Initial work through the native host was followed by explicit capture, dashboard/protocol v2, settings, and strong resource identity. Implementation now includes #23 session handoff. #32 restored the cancellation baseline with deterministic local-ownership evidence; #24/#25 are next feature work.
+The user authorized autonomous development toward an installable release, without changing their live browser profile. Initial work through the native host was followed by explicit capture, dashboard/protocol v2, settings, and strong resource identity. Implementation now includes #23 session handoff, #24 polite admission, and #25 integrity/SHA-256. #32 restored the cancellation baseline with deterministic local-ownership evidence. #26–#28 remain security, packaging, and release work.
 
 #19 interpreted “resolved filename” as a visible, editable, Windows-safe proposed name, because the then-current v1 contract had no preview command. That is an implementation decision, not a separately confirmed user preference. Their later opt-in referrer/cookie boundary is now implemented in #23. Mocked Firefox transport was useful rendered-UI evidence, not real Firefox Native Messaging qualification.
 
@@ -45,7 +45,7 @@ The prior 150 ms stable-server-ledger assertion conflated remote observation wit
 
 - **Session handoff**: explicit per-download transfer of eligible default-store cookies and optional same-origin referrer/HTTPS Basic or Bearer values. Not a request clone, cookie jar, or consent to inspect arbitrary browsing data.
 - **Site permission**: Firefox's optional scheme/host grant, covering all ports; do not confuse it with the helper's exact scheme/host/port **origin confinement**.
-- **Needs-session marker**: a required non-secret internal-v3 Boolean. It forbids a restarted task from silently sending without memory-only context; it contains no cookie values.
+- **Needs-session marker**: a required non-secret Boolean introduced in internal v3 and retained in v4. It forbids a restarted task from silently sending without memory-only context; it contains no cookie values.
 - **Fresh authenticated retry**: sign in and create a new task. V2 does not accept replacement credentials on resume, and previously retained bytes cannot change authentication context.
 
 Initial testing caught two implementation/evidence mistakes: old persistence tests hardcoded v2 as current/v3 as future, and a new recovery test expected a control error where `resume` deliberately returns an authoritative failed snapshot. Tests now preserve the actual contracts, including strict legacy migration and required-marker corruption rejection. An early blanket 401/403-to-expired mapping was corrected: only supplied context can expire; unauthenticated 401 is required-auth and 403 remains ordinary HTTP failure.
@@ -60,3 +60,11 @@ The #23 actual-Firefox slice used a fresh profile, real optional-permission appr
 - **Tail hedge**: one optional duplicate of the sole remaining assignment, not generic worker restart or overlapping committed bytes. It is off by default; the favorable loopback measurement is not general throughput evidence.
 
 #24 closed the previously uncapped-probe path, retained pressure across settings changes, and corrected HTTP-date Retry-After rounding: fractional remaining seconds round up, not down before a server deadline. The old tail regression initially failed because its formerly implicit duplication policy became opt-in; it now opts in explicitly and the default no-duplication baseline is measured separately. Full original range/cancellation invariants remain enforced.
+
+## Integrity terms and learning (#25)
+
+- **Expected SHA-256**: optional immutable per-Add digest obtained by the user, never silently removed on retry, reconnect, or recovery. Not a signature or a server-selected validation policy.
+- **Validation lease**: non-cloneable ownership of frozen helper storage and its file lock, spanning validation through one no-overwrite promotion. Unpublished lease drop permits a future full revalidation. Not a continuous guarantee against external mutation of published files.
+- **Transfer versus validation progress**: byte counts/download rate describe transfer; the checking/publishing phases have no invented hashing ETA. Cancel is supported while validating, not after promotion begins.
+
+Format-v4 tests exposed the need for genuine old v1/v2/v3 shapes without newer keys. State review also caught the old documentation/Serde nullable-key omission mismatch; v4 now enforces required nullable task/validator keys. An initial phase-metric change broke the established completed-transfer-rate projection; it was replaced with UI-only checking/publishing text, preserving completed history metrics. Independent known vectors and Python fixture digests avoid relying solely on the same hashing implementation for expected test results. See [INTEGRITY.md](INTEGRITY.md).

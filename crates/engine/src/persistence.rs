@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::{Uuid, Variant};
 
+use crate::integrity::ExpectedSha256;
 use crate::network::{EntityTag, ProbeMode, ResourceProbe, Validators};
 use crate::progress::MAX_SAFE_INTEGER;
 use crate::storage::{
@@ -27,7 +28,7 @@ use crate::storage::{
 };
 
 /// Current internal task-state format version.
-pub const STATE_FORMAT_VERSION: u64 = 3;
+pub const STATE_FORMAT_VERSION: u64 = 4;
 /// Maximum bytes accepted for one task-state file.
 pub const MAX_STATE_BYTES: usize = 256 * 1024;
 /// Maximum canonical completed ranges accepted per task.
@@ -210,6 +211,9 @@ pub enum TransferMode {
 /// Validation failures for task metadata and state mutations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum StateValidationError {
+    /// Persisted expected SHA-256 did not contain exactly 64 hex characters.
+    #[error("expected checksum is invalid")]
+    InvalidChecksum,
     /// Task identifier is not canonical.
     #[error("task identifier is invalid")]
     InvalidTaskId,
@@ -367,6 +371,7 @@ pub struct TaskMetadata {
     state: TaskState,
     original_url: String,
     needs_session: bool,
+    expected_sha256: Option<ExpectedSha256>,
     resource: Option<ResourceIdentity>,
     destination: PathBuf,
     display_name: String,
@@ -454,6 +459,7 @@ impl TaskMetadata {
             state: TaskState::Queued,
             original_url,
             needs_session: false,
+            expected_sha256: None,
             resource: None,
             destination,
             display_name,
@@ -470,6 +476,16 @@ impl TaskMetadata {
     #[must_use]
     pub const fn needs_session(&self) -> bool {
         self.needs_session
+    }
+
+    /// Immutable optional user-provided checksum, including after recovery.
+    #[must_use]
+    pub const fn expected_sha256(&self) -> Option<ExpectedSha256> {
+        self.expected_sha256
+    }
+
+    pub(crate) fn require_checksum(&mut self, expected: ExpectedSha256) {
+        self.expected_sha256 = Some(expected);
     }
 
     pub(crate) fn require_session(&mut self) {
@@ -1688,6 +1704,43 @@ struct VersionProbe {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersistedTask {
+    #[serde(deserialize_with = "required_nullable")]
+    expected_sha256: Option<String>,
+    needs_session: bool,
+    task_id: String,
+    revision: u64,
+    state: TaskState,
+    original_url: String,
+    #[serde(deserialize_with = "required_nullable")]
+    final_url: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    expected_size: Option<u64>,
+    #[serde(deserialize_with = "required_validators")]
+    validators: PersistedValidators,
+    transfer_mode: TransferMode,
+    destination: String,
+    display_name: String,
+    workers: u8,
+    #[serde(deserialize_with = "required_nullable")]
+    partial_path: Option<String>,
+    #[serde(deserialize_with = "required_nullable")]
+    final_path: Option<String>,
+    completed_ranges: Vec<PersistedRange>,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedEnvelopeV3 {
+    format: String,
+    version: u64,
+    task: PersistedTaskV3,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedTaskV3 {
     needs_session: bool,
     task_id: String,
     revision: u64,
@@ -1764,10 +1817,59 @@ struct PersistedTaskV1 {
     updated_at_ms: u64,
 }
 
+fn required_nullable<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
+    deserializer: D,
+) -> Result<Option<T>, D::Error> {
+    Option::<T>::deserialize(deserializer)
+}
+fn required_validators<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<PersistedValidators, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct RequiredValidators {
+        #[serde(deserialize_with = "required_nullable")]
+        etag: Option<String>,
+        #[serde(deserialize_with = "required_nullable")]
+        last_modified: Option<String>,
+    }
+    let raw = RequiredValidators::deserialize(deserializer)?;
+    Ok(PersistedValidators {
+        etag: raw.etag,
+        last_modified: raw.last_modified,
+    })
+}
+
+impl PersistedTaskV3 {
+    fn migrate(self) -> PersistedTask {
+        PersistedTask {
+            expected_sha256: None,
+            needs_session: self.needs_session,
+            task_id: self.task_id,
+            revision: self.revision,
+            state: self.state,
+            original_url: self.original_url,
+            final_url: self.final_url,
+            expected_size: self.expected_size,
+            validators: self.validators,
+            transfer_mode: self.transfer_mode,
+            destination: self.destination,
+            display_name: self.display_name,
+            workers: self.workers,
+            partial_path: self.partial_path,
+            final_path: self.final_path,
+            completed_ranges: self.completed_ranges,
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.updated_at_ms,
+        }
+    }
+}
+
 impl PersistedTaskV2 {
     fn migrate(self) -> PersistedTask {
         PersistedTask {
             needs_session: false,
+            expected_sha256: None,
             task_id: self.task_id,
             revision: self.revision,
             state: self.state,
@@ -1796,6 +1898,7 @@ impl PersistedTaskV1 {
             state: self.state,
             original_url: self.original_url,
             needs_session: false,
+            expected_sha256: None,
             final_url: self.final_url,
             expected_size: self.expected_size,
             validators: self.validators,
@@ -1848,6 +1951,7 @@ impl PersistedTask {
             state: task.state,
             original_url: task.original_url.clone(),
             needs_session: task.needs_session,
+            expected_sha256: task.expected_sha256.map(ExpectedSha256::to_hex),
             final_url: resource.map(|identity| identity.final_url.clone()),
             expected_size: resource.and_then(ResourceIdentity::expected_size),
             validators: PersistedValidators::from_validators(
@@ -1948,6 +2052,11 @@ fn load_task_file(path: &Path, filename_id: TaskId) -> Result<LoadedTaskFile, Lo
                 serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
             (envelope.task, false)
         }
+        3 => {
+            let envelope: PersistedEnvelopeV3 =
+                serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
+            (envelope.task.migrate(), true)
+        }
         2 => {
             let envelope: PersistedEnvelopeV2 =
                 serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
@@ -2030,6 +2139,11 @@ fn task_from_persisted(raw: PersistedTask) -> Result<TaskMetadata, StateValidati
 
     let task = TaskMetadata {
         task_id,
+        expected_sha256: raw
+            .expected_sha256
+            .as_deref()
+            .map(|value| ExpectedSha256::parse(value).ok_or(StateValidationError::InvalidChecksum))
+            .transpose()?,
         needs_session: raw.needs_session,
         revision: raw.revision,
         state: raw.state,

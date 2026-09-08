@@ -4,10 +4,12 @@
 //! assignment and advances sequentially within it. Only fully written
 //! assignments become completed coverage.
 
+use crate::integrity::ExpectedSha256;
+use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fmt;
-use std::fs::{self, File, OpenOptions};
-use std::io::{self, Seek, SeekFrom, Write};
+use std::fs::{self, File, OpenOptions, TryLockError};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -161,6 +163,8 @@ pub enum StorageOperation {
     Write,
     /// Read file metadata or flush file contents.
     Flush,
+    /// Stream integrity validation through the owned file.
+    Validate,
     /// Atomically publish a completed file.
     Publish,
     /// Remove a checkpointed redundant partial link.
@@ -177,6 +181,7 @@ impl fmt::Display for StorageOperation {
             Self::Write => "write partial file",
             Self::Flush => "flush partial file",
             Self::Publish => "publish final file",
+            Self::Validate => "validate partial file",
             Self::CleanupPartial => "remove redundant partial link",
         };
         formatter.write_str(text)
@@ -220,6 +225,12 @@ impl fmt::Display for IoFailure {
 /// Safe storage-layer failures. Display text intentionally contains no path.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum StorageError {
+    /// Optional supplied digest did not match the owned complete file.
+    #[error("the partial file did not match the supplied SHA-256 digest")]
+    ChecksumMismatch,
+    /// Cooperative cancellation interrupted validation before publication.
+    #[error("file validation was cancelled")]
+    ValidationCancelled,
     /// A half-open range was empty or reversed.
     #[error("invalid byte range [{start}, {end})")]
     InvalidRange {
@@ -431,6 +442,8 @@ struct Inner {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Lifecycle {
     Active,
+    Validating,
+    Validated,
     Publishing,
     Published,
 }
@@ -825,8 +838,124 @@ impl PartialFile {
     /// incomplete, file identity changed, flushing fails, or the filesystem
     /// cannot create the final link.
     pub fn promote(&self) -> Result<Promotion, StorageError> {
+        self.validate(None, || false)?.promote()
+    }
+
+    /// Freezes helper writers, validates exact coverage/length, and optionally
+    /// hashes in 256 KiB chunks. The returned lease retains the file lock and
+    /// exclusive helper lifecycle through promotion or cancellation.
+    ///
+    /// # Errors
+    /// Rejects active/missing coverage, changed file identity/length, a locked
+    /// file, read/flush failure, cancellation, or checksum mismatch.
+    pub fn validate(
+        &self,
+        expected: Option<ExpectedSha256>,
+        mut cancelled: impl FnMut() -> bool,
+    ) -> Result<ValidatedPartial, StorageError> {
+        let expected_len = {
+            let mut state = lock(&self.inner.state);
+            if state.lifecycle != Lifecycle::Active {
+                return Err(StorageError::NotActive);
+            }
+            if !state.active.is_empty() || state.stream_active {
+                return Err(StorageError::ActiveAssignments {
+                    count: state.active.len() + usize::from(state.stream_active),
+                });
+            }
+            let size = lock(&self.inner.expected_len).ok_or(StorageError::LengthUnknown)?;
+            if !has_exact_coverage(&state.completed, size) {
+                return Err(StorageError::IncompleteCoverage);
+            }
+            state.lifecycle = Lifecycle::Validating;
+            size
+        };
+        let mut lease = ValidatedPartial {
+            partial: self.clone(),
+            locked: false,
+        };
+        {
+            let mut file_guard = lock(&self.inner.file);
+            let file = file_guard.as_mut().ok_or(StorageError::NotActive)?;
+            if !opened_file_matches_path(file, &self.inner.partial_path)
+                .map_err(|error| map_io(StorageOperation::Validate, &error))?
+            {
+                return Err(StorageError::InvalidDestination);
+            }
+            match file.try_lock() {
+                Ok(()) => lease.locked = true,
+                Err(TryLockError::WouldBlock) => {
+                    return Err(StorageError::Io {
+                        operation: StorageOperation::Validate,
+                        failure: IoFailure::FileLocked,
+                        os_code: None,
+                    });
+                }
+                Err(TryLockError::Error(error)) => {
+                    return Err(map_io(StorageOperation::Validate, &error));
+                }
+            }
+            file.sync_all()
+                .map_err(|error| map_io(StorageOperation::Validate, &error))?;
+            let actual = file
+                .metadata()
+                .map_err(|error| map_io(StorageOperation::Validate, &error))?
+                .len();
+            if actual != expected_len {
+                return Err(StorageError::FileLengthChanged {
+                    expected: expected_len,
+                    actual,
+                });
+            }
+            if cancelled() {
+                return Err(StorageError::ValidationCancelled);
+            }
+            if let Some(expected) = expected {
+                file.seek(SeekFrom::Start(0))
+                    .map_err(|error| map_io(StorageOperation::Validate, &error))?;
+                let mut buffer = vec![0_u8; 256 * 1024];
+                let mut hasher = Sha256::new();
+                let mut read = 0_u64;
+                loop {
+                    if cancelled() {
+                        return Err(StorageError::ValidationCancelled);
+                    }
+                    let count = file
+                        .read(&mut buffer)
+                        .map_err(|error| map_io(StorageOperation::Validate, &error))?;
+                    if count == 0 {
+                        break;
+                    }
+                    read = read
+                        .checked_add(u64::try_from(count).map_err(|_| StorageError::NotActive)?)
+                        .ok_or(StorageError::NotActive)?;
+                    if read > expected_len {
+                        return Err(StorageError::FileLengthChanged {
+                            expected: expected_len,
+                            actual: read,
+                        });
+                    }
+                    hasher.update(&buffer[..count]);
+                }
+                if read != expected_len {
+                    return Err(StorageError::FileLengthChanged {
+                        expected: expected_len,
+                        actual: read,
+                    });
+                }
+                let actual: [u8; 32] = hasher.finalize().into();
+                if actual != expected.bytes() {
+                    return Err(StorageError::ChecksumMismatch);
+                }
+            }
+        }
+        lock(&self.inner.state).lifecycle = Lifecycle::Validated;
+        Ok(lease)
+    }
+
+    fn promote_validated(&self) -> Result<Promotion, StorageError> {
         let mut state = lock(&self.inner.state);
-        if state.lifecycle != Lifecycle::Active {
+        if state.lifecycle != Lifecycle::Validated {
             return Err(StorageError::NotActive);
         }
         if !state.active.is_empty() || state.stream_active {
@@ -844,7 +973,7 @@ impl PartialFile {
         let final_path = match publication {
             Ok(path) => path,
             Err(error) => {
-                state.lifecycle = Lifecycle::Active;
+                state.lifecycle = Lifecycle::Validated;
                 return Err(error);
             }
         };
@@ -900,6 +1029,39 @@ impl PartialFile {
         }
 
         Err(StorageError::FinalNameExhausted)
+    }
+}
+
+/// Exclusive validated-file ownership; cannot be cloned or reconstructed from paths.
+/// Dropping an unpublished lease re-enables a future complete validation attempt.
+pub struct ValidatedPartial {
+    partial: PartialFile,
+    locked: bool,
+}
+
+impl ValidatedPartial {
+    /// Publishes only this still-owned validated file with create-new semantics.
+    /// # Errors
+    /// Reports the same no-overwrite publication failures as `PartialFile::promote`.
+    pub fn promote(self) -> Result<Promotion, StorageError> {
+        self.partial.promote_validated()
+    }
+}
+
+impl Drop for ValidatedPartial {
+    fn drop(&mut self) {
+        let mut state = lock(&self.partial.inner.state);
+        if self.locked
+            && let Some(file) = lock(&self.partial.inner.file).as_ref()
+        {
+            let _ = file.unlock();
+        }
+        if matches!(
+            state.lifecycle,
+            Lifecycle::Validating | Lifecycle::Validated
+        ) {
+            state.lifecycle = Lifecycle::Active;
+        }
     }
 }
 

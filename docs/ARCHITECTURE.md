@@ -142,7 +142,7 @@ The local fixture is test-only. It generates reproducible bytes and controlled H
 
 ### Recover state
 
-Persisted metadata, not the extension, describes recoverable work. On startup, the helper validates schema version, task transitions, paths, resource identity, partial/final lengths, publication same-file identity, completed ranges, and the fixed worker selection. Formats v1/v2 have explicit strict migrations to format v3 with its required non-secret session marker; unknown future versions are not interpreted. Valid interrupted `downloading` tasks become paused, incomplete probe/validation phases fail safely, and a recorded promoted final link can complete recovery. Corrupt, incompatible, or identity-conflicting state is preserved and diagnosed; it is never resumed optimistically.
+Persisted metadata, not the extension, describes recoverable work. On startup, the helper validates schema version, task transitions, paths, resource identity, partial/final lengths, publication same-file identity, completed ranges, and the fixed worker selection. Formats v1/v2/v3 have explicit dedicated migrations to format v4, which requires the session marker and nullable immutable expected-checksum key; unknown future versions are not interpreted. Valid interrupted `downloading` tasks become paused, incomplete probe/validation phases fail safely, and a recorded promoted final link can complete recovery. Corrupt, incompatible, or identity-conflicting state is preserved and diagnosed; it is never resumed optimistically.
 
 ## Task lifecycle
 
@@ -205,7 +205,6 @@ The following remain deliberately reversible and belong to later issues:
 - empirically tuned progress cadence within the implemented 100 ms–60 second bound;
 - measured tail-hedge and retry-delay tuning within implemented safety bounds;
 - release packaging/upgrade technology beyond the current-user registration scripts;
-- optional checksum UX; and
 - future cross-platform packaging.
 
 No deferred choice may weaken the correctness and security invariants above.
@@ -213,3 +212,7 @@ No deferred choice may weaken the correctness and security invariants above.
 ## Shared request admission (#24)
 
 Probe bytes, redirected probe hops, and transfer workers share one admission domain. It combines configured global/origin caps, retained server cooldown, bounded origin state, and future-width reduction. A dropped response/permit relinquishes local ownership; remote observation may lag as established in #32. Settings reconfiguration preserves outstanding pressure. Worker `416` permits one fresh identity revalidation, not blind retries or body merging. Experimental tail duplication is opt-in and off by default. [RELIABILITY.md](RELIABILITY.md) records exact behavior, measurements, and limits.
+
+### Integrity completion (#25)
+
+[INTEGRITY.md](INTEGRITY.md) describes always-on exact size/coverage checks and optional SHA-256. Hashing streams the owned file through a 256 KiB buffer on a joined blocking task; a non-cloneable validation lease freezes helper writes through create-new promotion. Mismatch uses the explicit failure-retention setting and never emits success. Expected digests survive retry/recovery in internal format v4; the wire stays v2. Validation Cancel is cooperative, and last download throughput is not projected as hashing ETA.
