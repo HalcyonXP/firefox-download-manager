@@ -31,3 +31,9 @@ Twenty consecutive local MSVC debug runs of the two `progress_events_` integrati
 CI now repeats the two integration cases ten times using the actual LLVM/MinGW release-target lifecycle executable produced by the preceding clean build, before the second clean build removes test outputs. Existing cancellation repetitions and all workspace gates remain enabled. “Deterministic” describes the controlled causal boundary, not guaranteed execution under arbitrary scheduler starvation or a timing benchmark.
 
 #28 is paused in Backlog behind #39. Its separate draft harness is preserved on `issue-28-release-qualification`; it is not mixed into this fix or represented as passing qualification. A passing #39 baseline will permit qualification work to resume, not approve a release or resolve native Windows 11 x64 Firefox coverage.
+
+## Update after the independent #41 correction
+
+At `9c9b81d`, all local gates, a clean LLVM release-target workspace build/test, and twenty repeated integration pairs on each local target passed. Mutation checks confirmed that removing ordinary events makes the gated test reach its intended deadline and removing coalescing fails the keyed-buffer assertion; original source was restored before normal reruns.
+
+PR CI `34283625146` passed both progress cases but failed the separate one-second probe-cancellation test. [RETRY_CANCELLATION_REGRESSION.md](RETRY_CANCELLATION_REGRESSION.md) preserves that failure and the independently reviewed #41 correction. PR #42 passed CI `34286434188` and merged as `78a92ea`. This #39 branch incorporates that main, preserving both the readiness/checkpoint and progress/coalescing regressions and both release-target repetition steps. The combined final-tip CI remains required; no failed run has been waived and #28 has not resumed.

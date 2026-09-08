@@ -216,3 +216,10 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 ### Post-packaging baseline correction (#39)
 
 #27 / PR #38 merged as `9928058` after two successful PR runs. Merged-main CI `34277988932` then failed a release-target progress-event minimum-count assertion. #39 blocks #28 until this baseline is verified; #28 returned to Backlog, with its draft qualification harness preserved separately. [PROGRESS_REGRESSION.md](PROGRESS_REGRESSION.md) records the invalid timing/count premise, explicit response-barrier replacement, late-consumer counterexample and evidence limits. Prior #32 cancellation-observation work remains intact. This interruption changes the immediate sequence, not release scope or supported-platform requirements.
+
+### Additional retry-control baseline correction (#41)
+
+#27 / PR #38 merged as `9928058`. #39 / PR #40 addresses a failed merged-main progress-count assertion, but its CI `34283625146` then failed an existing one-second probe-cancellation timeout while the progress cases passed. #41 is an independent focused correction from main; [RETRY_CANCELLATION_REGRESSION.md](RETRY_CANCELLATION_REGRESSION.md) separates deterministic retry readiness from joined, durably checkpointed acknowledgement. #39 is paused behind #41, and #28 remains in Backlog. Resolve #41 with its own gates, update #39 onto verified main, and require the combined baseline before resuming qualification. No failed CI result or required release coverage is waived.
+
+
+#41 / PR #42 subsequently merged as `78a92ea` after CI `34286434188` passed all three jobs. #39 is now updated onto that main and its full combined gate must pass; merged-main CI `34287899024` was still pending at this integration checkpoint. #28 stays blocked until the current baseline is verified. A successful Dependabot Updates run is not the CI workflow and is never used as that gate.

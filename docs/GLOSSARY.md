@@ -97,3 +97,6 @@ The review found a real wildcard-pattern construction edge case, not an observed
 - **Ordinary progress cadence**: minimum spacing between replaceable progress events, not a guaranteed consumer delivery frequency. Missed ticks and unread same-task samples may be coalesced.
 - **Terminal snapshot versus ordinary progress**: the terminal snapshot carries final joined metrics; the last ordinary progress event can be older and is not itself a completion barrier.
 - **Selected response pause**: test-only gate after a matching request enters the server ledger, before its response starts. Distinct from the pre-ledger observation pause used for cancellation tests; neither is a sleep-based readiness guess.
+
+- **Retry cancellation readiness**: the retry wait becomes ready for a cancellation signal without requiring its timer to expire. It is distinct from when the executor schedules that ready future.
+- **Durable control acknowledgement**: the pause/cancel/shutdown result follows safe owned-work stopping and the critical checkpoint. A test deadlock-containment deadline is not a product latency SLO or permission to abandon blocking filesystem work.

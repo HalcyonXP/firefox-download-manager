@@ -23,6 +23,9 @@ use download_manager_test_server::{
 
 static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(1);
 const MIB: u64 = 1024 * 1024;
+// Deadlock containment, not a durable-control latency SLO. Retry-wait readiness
+// has a deterministic never-expiring-timer unit test independent of disk I/O.
+const CONTROL_TEST_DEADLINE: Duration = Duration::from_secs(15);
 
 #[test]
 fn start_without_a_tokio_runtime_fails_without_mutating_queued_state() {
@@ -460,9 +463,9 @@ async fn shutdown_interrupts_probe_backoff_without_marking_user_cancellation() {
     engine.start(task.task_id()).expect("start task");
     wait_for_retry_event(&engine, task.task_id()).await;
 
-    let snapshots = tokio::time::timeout(Duration::from_secs(1), engine.shutdown())
+    let snapshots = tokio::time::timeout(CONTROL_TEST_DEADLINE, engine.shutdown())
         .await
-        .expect("shutdown did not interrupt retry")
+        .expect("shutdown acknowledgement deadline")
         .expect("shutdown engine");
     let failed = snapshots
         .iter()
@@ -474,6 +477,7 @@ async fn shutdown_interrupts_probe_backoff_without_marking_user_cancellation() {
         TaskFailureKind::State
     );
     assert_eq!(server.requests().len(), 1);
+    assert_checkpoint_state(directories.state(), task.task_id(), "failed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -977,16 +981,15 @@ async fn pause_interrupts_transfer_retry_sleep() {
         .start(pause_task.task_id())
         .expect("start pause task");
     wait_for_retry_event(&pause_engine, pause_task.task_id()).await;
-    let started = std::time::Instant::now();
     let paused = tokio::time::timeout(
-        Duration::from_secs(1),
+        CONTROL_TEST_DEADLINE,
         pause_engine.pause(pause_task.task_id()),
     )
     .await
-    .expect("pause did not interrupt retry sleep")
+    .expect("pause acknowledgement deadline")
     .expect("pause task");
     assert_eq!(paused.state(), TaskState::Paused);
-    assert!(started.elapsed() < Duration::from_secs(1));
+    assert_checkpoint_state(pause_directories.state(), pause_task.task_id(), "paused");
     assert_eq!(transfer_server.requests().len(), 3);
     pause_engine
         .resume(pause_task.task_id())
@@ -1040,13 +1043,18 @@ async fn cancel_interrupts_probe_retry_sleep() {
         .expect("start cancel task");
     wait_for_retry_event(&cancel_engine, cancel_task.task_id()).await;
     let cancelled = tokio::time::timeout(
-        Duration::from_secs(1),
+        CONTROL_TEST_DEADLINE,
         cancel_engine.cancel(cancel_task.task_id(), CancelPartialPolicy::Keep),
     )
     .await
-    .expect("cancel did not interrupt probe retry sleep")
+    .expect("cancel acknowledgement deadline")
     .expect("cancel probing task");
     assert_eq!(cancelled.state(), TaskState::Cancelled);
+    assert_checkpoint_state(
+        cancel_directories.state(),
+        cancel_task.task_id(),
+        "cancelled",
+    );
     assert_eq!(probe_server.requests().len(), 1);
     assert!(
         cancel_engine
@@ -1427,6 +1435,17 @@ async fn retries_are_bounded_respect_retry_after_and_skip_fatal_protocol_errors(
             .iter()
             .all(|event| !matches!(event.kind(), TaskEventKind::RetryScheduled(_)))
     );
+}
+
+fn assert_checkpoint_state(
+    directory: &Path,
+    task_id: download_manager_engine::persistence::TaskId,
+    expected: &str,
+) {
+    let record = directory.join("tasks").join(format!("{task_id}.task.json"));
+    let bytes = fs::read(record).expect("read acknowledged critical checkpoint");
+    let stored: serde_json::Value = serde_json::from_slice(&bytes).expect("decode checkpoint");
+    assert_eq!(stored["task"]["state"], expected);
 }
 
 fn long_retry_options() -> TaskEngineOptions {

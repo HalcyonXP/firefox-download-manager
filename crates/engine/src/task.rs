@@ -2882,8 +2882,15 @@ fn mark_retry_wait(task: &Arc<ManagedTask>) {
 }
 
 async fn wait_retry(delay: Duration, cancellation: &TransferCancellation) -> bool {
+    wait_retry_until(tokio::time::sleep(delay), cancellation).await
+}
+
+async fn wait_retry_until(
+    timer: impl std::future::Future<Output = ()>,
+    cancellation: &TransferCancellation,
+) -> bool {
     tokio::select! {
-        () = tokio::time::sleep(delay) => !cancellation.is_cancelled(),
+        () = timer => !cancellation.is_cancelled(),
         () = cancellation.cancelled() => false,
     }
 }
@@ -3237,6 +3244,34 @@ mod tests {
         }
         assert!(events.try_next().expect("empty queue").is_none());
         assert!(!events.overflowed.load(std::sync::atomic::Ordering::Acquire));
+    }
+
+    #[test]
+    fn retry_wait_is_ready_for_cancellation_without_timer_expiry() {
+        use std::future::{Future, pending, ready};
+        use std::task::{Context, Poll, Waker};
+
+        let mut context = Context::from_waker(Waker::noop());
+        for cancel_before_poll in [false, true] {
+            let signal = super::TransferCancellation::new();
+            if cancel_before_poll {
+                signal.cancel();
+            }
+            // This timer cannot expire; readiness cannot be attributed to a
+            // sleep, fast filesystem, virtual-time auto-advance or runner speed.
+            let mut waiter = std::pin::pin!(super::wait_retry_until(pending(), &signal));
+            if !cancel_before_poll {
+                assert_eq!(waiter.as_mut().poll(&mut context), Poll::Pending);
+                signal.cancel();
+            }
+            assert_eq!(waiter.as_mut().poll(&mut context), Poll::Ready(false));
+        }
+        let signal = super::TransferCancellation::new();
+        let mut elapsed = std::pin::pin!(super::wait_retry_until(ready(()), &signal));
+        assert_eq!(elapsed.as_mut().poll(&mut context), Poll::Ready(true));
+        signal.cancel();
+        let mut both_ready = std::pin::pin!(super::wait_retry_until(ready(()), &signal));
+        assert_eq!(both_ready.as_mut().poll(&mut context), Poll::Ready(false));
     }
 
     #[test]
