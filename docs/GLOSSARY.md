@@ -93,3 +93,6 @@ The review found a real wildcard-pattern construction edge case, not an observed
 
 - **Descriptor digest versus ZIP digest**: `descriptor_sha256` identifies `package.json`; `PACKAGE-SHA256SUMS.txt` identifies the distributable ZIP. Initial #27 evidence used the ambiguous `package_sha256` key for the descriptor, corrected before release.
 - **Same-environment reproducibility**: independent clean Cargo target builds match all package bytes on one environment. Both local and CI comparisons passed; local-versus-CI binaries differed, so cross-environment bit reproducibility is not claimed.
+
+- **Retry cancellation readiness**: the retry wait becomes ready for a cancellation signal without requiring its timer to expire. It is distinct from when the executor schedules that ready future.
+- **Durable control acknowledgement**: the pause/cancel/shutdown result follows safe owned-work stopping and the critical checkpoint. A test deadlock-containment deadline is not a product latency SLO or permission to abandon blocking filesystem work.
