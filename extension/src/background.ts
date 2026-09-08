@@ -1,11 +1,95 @@
 import { NativeConnection } from "./native-connection";
-import { PROTOCOL_VERSION } from "./protocol";
+import { connectionMessage, creationPayload, directUrl, type CreationInput } from "./creation";
 
 export const nativeConnection = new NativeConnection();
+const captures = new Map<string, { url: string; expires: number }>();
+const menuId = "download-with-manager";
 
-// Event listeners are registered synchronously because Firefox may recreate
-// this Manifest V3 event page. Authoritative task state will live in the helper.
+async function openManager(url?: string): Promise<void> {
+  const now = Date.now();
+  for (const [key, value] of captures) if (value.expires < now) captures.delete(key);
+  let fragment = "";
+  if (url !== undefined) {
+    directUrl(url);
+    if (captures.size >= 32) captures.delete(captures.keys().next().value!);
+    fragment = crypto.randomUUID();
+    captures.set(fragment, { url, expires: now + 60_000 });
+  }
+  await browser.tabs.create({ url: browser.runtime.getURL(`manager.html#${fragment}`) });
+}
+
 browser.runtime.onInstalled.addListener(() => {
-  void PROTOCOL_VERSION;
-  void nativeConnection;
+  void browser.menus.removeAll().then(() =>
+    browser.menus.create({
+      id: menuId,
+      title: "Download with Manager",
+      contexts: ["link"],
+      targetUrlPatterns: ["http://*/*", "https://*/*"],
+    }),
+  );
+});
+browser.action.onClicked.addListener(() => {
+  void openManager();
+});
+browser.menus.onClicked.addListener((info) => {
+  // No page URL/referrer, content scraping, or built-in download cancellation.
+  if (info.menuItemId === menuId && info.linkUrl)
+    void openManager(info.linkUrl).catch(() => openManager());
+});
+
+browser.runtime.onConnect.addListener((port) => {
+  if (
+    port.name !== "manager-ui" ||
+    port.sender?.id !== browser.runtime.id ||
+    port.sender.url?.split("#")[0] !== browser.runtime.getURL("manager.html")
+  ) {
+    port.disconnect();
+    return;
+  }
+  const send = (value: unknown): void => {
+    try {
+      port.postMessage(value);
+    } catch {
+      /* UI closed; helper remains authoritative. */
+    }
+  };
+  const unsubscribe = nativeConnection.subscribe((state) => send({ kind: "state", state }));
+  port.onDisconnect.addListener(unsubscribe);
+  let busy = false;
+  port.onMessage.addListener((message: unknown) => {
+    if (typeof message !== "object" || message === null || !("action" in message)) return;
+    if (message.action === "capture" && "key" in message && typeof message.key === "string") {
+      const captured = captures.get(message.key);
+      captures.delete(message.key);
+      send({
+        kind: "capture",
+        url: captured && captured.expires >= Date.now() ? captured.url : "",
+      });
+      return;
+    }
+    if (busy) return;
+    busy = true;
+    void (async () => {
+      try {
+        if (message.action === "connect") await nativeConnection.connect();
+        else if (message.action === "add" && "input" in message) {
+          const input = message.input as CreationInput;
+          if (
+            typeof input?.url !== "string" ||
+            typeof input.destination !== "string" ||
+            typeof input.filename !== "string" ||
+            typeof input.workers !== "number"
+          )
+            throw new Error("invalid input");
+          const task = await nativeConnection.command("add", creationPayload(input));
+          send({ kind: "added", task });
+        }
+      } catch (error) {
+        send({ kind: "error", message: connectionMessage(error) });
+      } finally {
+        busy = false;
+        send({ kind: "idle" });
+      }
+    })();
+  });
 });

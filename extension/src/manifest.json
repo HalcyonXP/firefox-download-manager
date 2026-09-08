@@ -9,9 +9,12 @@
       "strict_min_version": "128.0"
     }
   },
-  "permissions": ["nativeMessaging"],
+  "permissions": ["nativeMessaging", "menus"],
   "background": {
     "scripts": ["background.js"],
     "persistent": false
+  },
+  "action": {
+    "default_title": "Download Manager"
   }
 }

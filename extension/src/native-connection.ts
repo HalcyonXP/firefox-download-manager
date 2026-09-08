@@ -137,6 +137,15 @@ export class NativeConnection {
   readonly #clientVersion: string;
   readonly #tasks = new Map<string, NativeTask>();
   readonly #listeners = new Set<StateListener>();
+  readonly #commands = new Map<
+    string,
+    {
+      command: string;
+      resolve: (task: NativeTask) => void;
+      reject: (error: NativeConnectionError) => void;
+      timeout: ReturnType<typeof setTimeout>;
+    }
+  >();
   #port: NativePort | undefined;
   #pending: PendingConnection | undefined;
   #helloCorrelation: string | undefined;
@@ -210,6 +219,33 @@ export class NativeConnection {
     return pending.promise;
   }
 
+  /** Commands are never replayed automatically after an uncertain disconnect. */
+  async command(
+    command: "add" | "pause" | "resume" | "cancel" | "get",
+    payload: unknown,
+  ): Promise<NativeTask> {
+    await this.connect();
+    if (this.#commands.size >= 32) throw new NativeConnectionError("unavailable");
+    const correlation = this.#nextCorrelation("command");
+    const message = {
+      protocol_version: PROTOCOL_VERSION,
+      correlation_id: correlation,
+      kind: "command",
+      command,
+      payload,
+    };
+    if (!isBoundedMessage(message)) throw new NativeConnectionError("protocol_error");
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => this.#reject(new NativeConnectionError("timeout")), 120_000);
+      this.#commands.set(correlation, { command, resolve, reject, timeout });
+      try {
+        this.#port?.postMessage(message);
+      } catch {
+        this.#reject(new NativeConnectionError("disconnected"));
+      }
+    });
+  }
+
   /** Closes the current port without discarding its last rendered snapshot. */
   disconnect(): void {
     const port = this.#port;
@@ -253,7 +289,30 @@ export class NativeConnection {
   }
 
   #receiveResponse(message: Record<string, unknown>): void {
-    if (message.correlation_id !== this.#helloCorrelation) {
+    const pending = this.#commands.get(String(message.correlation_id));
+    if (pending !== undefined) {
+      if (!this.#helloAccepted || message.command !== pending.command) {
+        this.#reject(new NativeConnectionError("protocol_error"));
+        return;
+      }
+      clearTimeout(pending.timeout);
+      this.#commands.delete(String(message.correlation_id));
+      if (message.ok === false && isTaskError(message.error)) {
+        pending.reject(new NativeConnectionError("helper_error", message.error.code));
+        return;
+      }
+      const task = nativeTask(message.result);
+      if (task === undefined) {
+        pending.reject(new NativeConnectionError("protocol_error"));
+        this.#reject(new NativeConnectionError("protocol_error"));
+        return;
+      }
+      this.#tasks.set(task.task_id, task);
+      pending.resolve(task);
+      this.#notify();
+      return;
+    }
+    if (this.#helloAccepted || message.correlation_id !== this.#helloCorrelation) {
       this.#reject(new NativeConnectionError("protocol_error"));
       return;
     }
@@ -431,6 +490,11 @@ export class NativeConnection {
     const port = this.#port;
     this.#port = undefined;
     pending?.reject(error);
+    for (const command of this.#commands.values()) {
+      clearTimeout(command.timeout);
+      command.reject(error);
+    }
+    this.#commands.clear();
     try {
       port?.disconnect();
     } catch {

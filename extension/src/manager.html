@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Download Manager</title><link rel="stylesheet" href="manager.css"><script src="manager.js" defer></script></head>
+<body><header><div><p class="eyebrow">FIREFOX · LOCAL DOWNLOADS</p><h1>Download Manager</h1></div><div class="connection"><span id="connection">Helper disconnected</span><button id="reconnect" type="button">Reconnect</button></div></header>
+<main><section aria-labelledby="create-heading" class="panel"><h2 id="create-heading">New download</h2><p>Direct HTTP(S) files. Your browser’s other downloads stay untouched.</p>
+<form id="create"><label for="url">Download URL</label><input id="url" type="url" required autocomplete="off" spellcheck="false" maxlength="16384" placeholder="https://example.com/file.zip">
+<div class="fields"><div><label for="filename">Save as</label><input id="filename" required maxlength="180" value="download" autocomplete="off"></div><div><label for="workers">Connections</label><select id="workers"><option>1</option><option>2</option><option selected>4</option><option>8</option></select></div></div>
+<label for="destination">Destination folder</label><input id="destination" required autocomplete="off" spellcheck="false" placeholder="C:\Users\you\Downloads" aria-describedby="destination-help"><p id="destination-help" class="hint">An existing local Windows folder. Existing files are never overwritten; collisions receive a numbered name.</p>
+<p class="hint">The URL proposes a filename; you can change it. The manager uses your chosen name, not an untrusted server-provided path. Session cookies are not transferred.</p>
+<button id="submit" class="primary" type="submit">Download with Manager</button></form></section>
+<p id="feedback" role="status" aria-live="polite"></p><section id="queue" class="panel" aria-labelledby="queue-heading"><h2 id="queue-heading">Downloads</h2><p id="queue-summary">No downloads yet.</p><div id="tasks"></div></section>
+</main><footer>Native networking · Validated output · No telemetry</footer></body></html>

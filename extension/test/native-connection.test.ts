@@ -239,3 +239,43 @@ describe("NativeConnection", () => {
     expect(gapPort.disconnected).toBe(true);
   });
 });
+
+describe("operational commands", () => {
+  it("correlates add and publishes the authoritative result", async () => {
+    const port = new FakePort();
+    const connection = new NativeConnection(() => port, "0.1.0");
+    const ready = connection.connect();
+    acceptHello(port);
+    snapshot(port, 0, []);
+    await ready;
+    const added = connection.command("add", { url: "https://example.invalid/file.bin" });
+    await Promise.resolve();
+    const sent = port.sent[1] as Record<string, unknown>;
+    const value = task("a4ac080c-862f-4ea8-b60c-06a9718b2306");
+    port.onMessage.emit({
+      protocol_version: 1,
+      correlation_id: sent.correlation_id,
+      kind: "response",
+      command: "add",
+      ok: true,
+      result: value,
+    });
+    await expect(added).resolves.toMatchObject(value);
+    expect(connection.state().tasks).toHaveLength(1);
+    connection.disconnect();
+  });
+
+  it("rejects a disconnected command without replaying it on reconnect", async () => {
+    const port = new FakePort();
+    const connection = new NativeConnection(() => port, "0.1.0");
+    const ready = connection.connect();
+    acceptHello(port);
+    snapshot(port, 0, []);
+    await ready;
+    const added = connection.command("add", {});
+    await Promise.resolve();
+    connection.disconnect();
+    await expect(added).rejects.toMatchObject({ failure: "disconnected" });
+    expect(port.sent).toHaveLength(2);
+  });
+});

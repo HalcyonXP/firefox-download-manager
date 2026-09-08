@@ -14,8 +14,8 @@ assert.equal(
 assert.equal(source.background?.persistent, false, "Firefox MV3 background must be restartable");
 assert.deepEqual(
   source.permissions ?? [],
-  ["nativeMessaging"],
-  "extension should request only the Native Messaging permission",
+  ["nativeMessaging", "menus"],
+  "extension should request only Native Messaging and explicit link menu permissions",
 );
 assert.deepEqual(source.host_permissions ?? [], [], "scaffold should request no host access");
 
