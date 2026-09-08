@@ -64,6 +64,9 @@ jobs:
       - name: Test package allowlist and deterministic archives
         run: python -m unittest discover -s scripts -p "test_build_package.py"
 
+      - name: Test qualification fixture and reporting boundaries
+        run: python -m unittest discover -s scripts -p "test_qualification.py"
+
       - name: Build checksummed Windows x64 candidate
         shell: pwsh
         run: ./scripts/build-package.ps1 -TestRust -Rebuild
@@ -88,6 +91,9 @@ jobs:
             if ($LASTEXITCODE) { throw "Release-target progress regression failed" }
           }
 
+      - name: Exercise actual candidate native matrix and 2 GiB resource fixture
+        run: python scripts/qualification/native.py --package artifacts/package --report artifacts/native-evidence.json
+
       - name: Repeat clean-target build and compare bytes
         shell: pwsh
         run: |
@@ -106,6 +112,7 @@ jobs:
             artifacts/package
             artifacts/install-evidence.json
             artifacts/reproducibility.json
+            artifacts/native-evidence.json
           if-no-files-found: error
 
       - name: Upload extension build

@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import struct
 import subprocess
@@ -15,7 +16,10 @@ import tempfile
 import threading
 import time
 
-from fixture import Fixture, SMALL_SIZE, expected_sha256
+if __package__:
+    from .fixture import Fixture, SMALL_SIZE, expected_sha256
+else:
+    from fixture import Fixture, SMALL_SIZE, expected_sha256
 
 MAX_FRAME = 1024 * 1024
 
@@ -23,6 +27,37 @@ MAX_FRAME = 1024 * 1024
 def file_sha256(path):
     with path.open("rb") as source:
         return hashlib.file_digest(source, "sha256").hexdigest()
+
+
+def owned_architecture(host):
+    kernel = ctypes.WinDLL(str(Path(os.environ["WINDIR"]) / "System32/kernel32.dll"), use_last_error=True)
+    kernel.IsWow64Process2.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.USHORT), ctypes.POINTER(wintypes.USHORT)]
+    kernel.IsWow64Process2.restype = wintypes.BOOL
+    process, native = wintypes.USHORT(), wintypes.USHORT()
+    if not kernel.IsWow64Process2(int(host.process._handle), ctypes.byref(process), ctypes.byref(native)):
+        raise RuntimeError("owned helper architecture query failed")
+    if (process.value, native.value) == (0, 0x8664):
+        return {"native_machine": "AMD64", "helper_execution": "native_x64"}
+    if (process.value, native.value) == (0x8664, 0xAA64):
+        return {"native_machine": "ARM64", "helper_execution": "x64_emulation"}
+    raise RuntimeError("unsupported qualification execution architecture")
+
+
+def evidence_identity(package):
+    directory = Path(__file__).resolve().parent
+    repository = directory.parents[1]
+    revision = subprocess.run(["git", "-C", str(repository), "rev-parse", "HEAD"], check=True,
+                              capture_output=True, text=True, timeout=15).stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise RuntimeError("invalid harness revision")
+    dirty = bool(subprocess.run(["git", "-C", str(repository), "status", "--porcelain"], check=True,
+                               capture_output=True, timeout=15).stdout)
+    descriptor = json.loads((package / "package.json").read_text(encoding="utf-8"))
+    return {"descriptor_sha256": file_sha256(package / "package.json"),
+            "helper_sha256": file_sha256(package / "download-manager-native-host.exe"),
+            "package_source_commit": descriptor["commit"], "package_target": descriptor["target"],
+            "harness_revision": revision, "harness_worktree_dirty": dirty, "python_version": platform.python_version(),
+            "harness_files_sha256": {name: file_sha256(directory / name) for name in ("native.py", "fixture.py")}}
 
 
 def read_exact(stream, size):
@@ -243,6 +278,7 @@ def matrix(package, root, fixture):
     host = Host(package, root)
     checks = []
     try:
+        architecture = owned_architecture(host)
         for workers in (1, 2, 4, 8):
             name = f"workers-{workers}.bin"
             completed(host, host.add(fixture.url("range"), name, workers), name, SMALL_SIZE, workers)
@@ -284,13 +320,14 @@ def matrix(package, root, fixture):
         checks.append("actual-owned-helper-kill-restart-explicit-resume-exact-output")
     finally:
         host.close()
-    return checks
+    return checks, architecture
 
 
 def large(package, root, fixture, size):
     host = Host(package, root)
     metrics = Measurements(host)
     try:
+        architecture = owned_architecture(host)
         digest = expected_sha256(size)
         start_metrics = metrics.sample()
         start = time.monotonic()
@@ -309,7 +346,7 @@ def large(package, root, fixture, size):
         final = metrics.sample()
         path = host.destination / "large.bin"
         assert path.stat().st_size == size and file_sha256(path) == digest
-        return {"size_bytes": size, "expected_sha256": digest, "workers": 4, "elapsed_seconds": elapsed,
+        return {**architecture, "size_bytes": size, "expected_sha256": digest, "workers": 4, "elapsed_seconds": elapsed,
                 "cpu_seconds": final["cpu_seconds"] - start_metrics["cpu_seconds"],
                 "peak_working_set_bytes": final["peak_working_set_bytes"],
                 "peak_sampled_private_usage_bytes": max([final["private_usage_bytes"], *[s["private_usage_bytes"] for s in samples]]),
@@ -317,29 +354,44 @@ def large(package, root, fixture, size):
                 "aggregate_io_read_bytes": final["aggregate_io_read_bytes"] - start_metrics["aggregate_io_read_bytes"],
                 "aggregate_io_write_bytes": final["aggregate_io_write_bytes"] - start_metrics["aggregate_io_write_bytes"],
                 "native_events": sum(host.events.values()) - initial_events, "native_event_bytes": host.event_bytes - initial_bytes,
-                "scope": "loopback transfer+validation to completion; process I/O includes files/network/stdio, not disk-only; no physical-device or Internet/VPN throughput claim"}
+                "scope": "loopback transfer+validation to completion; owned-process memory excludes OS file cache/kernel/other processes; aggregate I/O is not disk-only; no physical-device or Internet/VPN throughput claim"}
     finally:
         host.close()
 
 
 def qualify(package, report, large_size):
+    if os.name != "nt":
+        raise RuntimeError("qualification harness requires Windows")
     package = package.resolve()
+    report = report.resolve()
+    artifacts = Path(__file__).resolve().parents[2] / "artifacts"
+    try:
+        report.relative_to(artifacts.resolve())
+    except ValueError:
+        raise RuntimeError("report must be beneath artifacts") from None
+    if report.exists() or report.is_symlink() or report.suffix != ".json":
+        raise RuntimeError("use a new JSON report beneath artifacts")
     subprocess.run([str(package / "download-manager-setup.exe"), "verify"], check=True, timeout=30, capture_output=True)
+    identity = evidence_identity(package)
     parent = Path(tempfile.mkdtemp(prefix="dm28 artifact ")).resolve()
     fixture = Fixture(large_size)
     try:
         if large_size and shutil.disk_usage(parent).free < large_size * 2 + 512 * 1024 * 1024:
             raise RuntimeError("insufficient free space for bounded owned fixture")
-        checks = matrix(package, parent / "Matrix", fixture)
+        checks, architecture = matrix(package, parent / "Matrix", fixture)
         performance = large(package, parent / "Resources", fixture, large_size) if large_size else None
-        evidence = {"descriptor_sha256": file_sha256(package / "package.json"), "helper_sha256": file_sha256(package / "download-manager-native-host.exe"),
-                    "os": platform.platform(), "process_machine": platform.machine(), "checks": checks, "resources": performance,
+        if evidence_identity(package) != identity:
+            raise RuntimeError("artifact or harness identity changed during qualification")
+        evidence = {**identity, **architecture, "os": platform.platform(), "harness_process_machine": platform.machine(),
+                    "checks": checks, "resources": performance,
                     "scope": "actual packaged native artifact only; no Firefox/registration/profile access; not release approval"}
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(json.dumps(evidence, indent=2) + "\n", encoding="utf-8")
     finally:
         fixture.close()
         shutil.rmtree(parent)
+    # A report is only committed after owned helper/fixture/root cleanup succeeds.
+    report.parent.mkdir(parents=True, exist_ok=True)
+    with report.open("x", encoding="utf-8") as target:
+        target.write(json.dumps(evidence, indent=2) + "\n")
     print("Native artifact matrix passed; report is scoped, not Firefox/release approval.")
 
 

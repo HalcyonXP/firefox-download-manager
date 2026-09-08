@@ -3,6 +3,7 @@ from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hashlib
 import re
+import socket
 import threading
 import time
 from urllib.parse import urlsplit
@@ -19,6 +20,51 @@ def expected_sha256(size):
     return digest.hexdigest()
 
 
+class BoundedServer(ThreadingHTTPServer):
+    daemon_threads = True
+
+    def __init__(self, *args):
+        super().__init__(*args)
+        self.ownership = threading.Lock()
+        self.handlers = []
+        self.errors = 0
+
+    def process_request(self, request, address):
+        with self.ownership:
+            self.handlers = [(t, s) for t, s in self.handlers if t.is_alive()]
+            if len(self.handlers) >= 32:
+                self.shutdown_request(request)
+                return
+            thread = threading.Thread(target=self.process_request_thread, args=(request, address), daemon=True)
+            self.handlers.append((thread, request))
+            try:
+                thread.start()
+            except Exception:
+                self.handlers.remove((thread, request))
+                self.shutdown_request(request)
+                raise
+
+    def handle_error(self, *_):
+        # Never print an unexpected request, header or exception chain.
+        with self.ownership:
+            self.errors += 1
+
+    def join_owned_handlers(self):
+        # Called after the accept loop joins: no new ownership can be added.
+        with self.ownership:
+            handlers = list(self.handlers)
+        for _, connection in handlers:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        deadline = time.monotonic() + 10
+        for thread, _ in handlers:
+            thread.join(timeout=max(0, deadline - time.monotonic()))
+        if any(t.is_alive() for t, _ in handlers) or self.errors:
+            raise RuntimeError("owned fixture handler failed or did not join")
+
+
 class Fixture:
     def __init__(self, large_size=2 * 1024**3):
         self.large_size = large_size
@@ -26,7 +72,7 @@ class Fixture:
         self.requests = Counter()
         self.active = 0
         self.peak = 0
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server = BoundedServer(("127.0.0.1", 0), Handler)
         self.server.daemon_threads = True
         self.server.fixture = self
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -37,17 +83,19 @@ class Fixture:
 
     def close(self):
         self.server.shutdown()
-        self.server.server_close()
         self.thread.join(timeout=10)
-        deadline = time.monotonic() + 10
-        while self.active and time.monotonic() < deadline:
-            time.sleep(0.02)
+        self.server.join_owned_handlers()
+        self.server.server_close()
         if self.thread.is_alive() or self.active:
             raise RuntimeError("owned fixture did not finish its bounded shutdown")
 
 
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(10)  # Apply before request/header parsing.
 
     def log_message(self, *_):
         pass
@@ -69,7 +117,8 @@ class Handler(BaseHTTPRequestHandler):
         start, end = 0, size - 1
         ranged = False
         if body and mode != "single" and self.headers.get("Range"):
-            match = re.fullmatch(r"bytes=([0-9]+)-([0-9]+)", self.headers["Range"])
+            value = self.headers["Range"]
+            match = re.fullmatch(r"bytes=([0-9]+)-([0-9]+)", value) if len(value) <= 64 else None
             if not match or not 0 <= int(match[1]) <= int(match[2]) < size:
                 self.send_response(416)
                 self.send_header("Content-Range", f"bytes */{size}")
