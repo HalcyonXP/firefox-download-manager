@@ -198,3 +198,5 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 ## Implementation decisions since the public-authority handoff
 
 #32/#33 restored the failed cancellation baseline; public PR and merged-main Windows CI passed with repeated cancellation regressions. #23 implements per-download default-store session handoff, not full session cloning. Its conservative private/container/partition limitations, permission granularity, memory-only recovery behavior, and fresh-task retry are in [AUTHENTICATION.md](AUTHENTICATION.md) and ADR 0010. Wire v2 is unchanged; internal task state is v3. #24/#25 and the security/packaging/real-browser release gates remain required.
+
+#24 extends concurrency admission to probes/redirects as well as transfers, retains 429/503 guidance across peer tasks and settings, reduces effective retry widths, and permits only bounded identity revalidation after a worker 416. Optional tail duplication is now off by default; local fixture timing/request-cost evidence and its limits are in [RELIABILITY.md](RELIABILITY.md). No wire change or benchmark-driven arbitrary worker restart policy is introduced.

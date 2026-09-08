@@ -88,9 +88,9 @@ Completed coverage is represented canonically as ordered, non-overlapping, in-bo
 ## Availability and server-impact controls
 
 - Per-task worker count is restricted to 1, 2, 4, or 8, with four default and eight maximum.
-- Transfer-request per-host and global concurrency semaphores are independent and shared across tasks; broader adaptive throttling remains issue #24.
+- HTTP admission limits are independent and shared across all probes, redirected probe hops, and transfer requests. #24 adds shared origin cooldown and adaptive pressure; see [RELIABILITY.md](RELIABILITY.md).
 - Ranged bodies are limited to 8 MiB per assignment and plans to 1,000,000 requests.
-- Only the sole remaining tail can be hedged, at most once; only one response can own its range.
+- Tail duplication is off by default. Explicit engine opt-in can hedge only the sole remaining tail, at most once; only one validated response can own its range.
 - Undeclared-length streams have an explicit byte cap and restart from zero after interruption.
 - One run has zero through 20 retries after its initial attempt; retries use capped exponential equal jitter.
 - Only transport failures and HTTP `408`, `425`, `429`, `500`, `502`, `503`, and `504` are automatic retry candidates.

@@ -125,7 +125,16 @@ async fn idle_worker_hedges_one_slow_tail_without_overlapping_storage() {
     let directory = TestDirectory::new("tail-hedge");
     let partial =
         PartialFile::create(directory.path(), "tail.bin", fixture.len).expect("create partial");
-    let scheduler = scheduler(8, 8, Duration::from_millis(50), 64 * MIB);
+    let scheduler = DownloadScheduler::with_options(
+        SchedulerOptions::new(
+            ConcurrencyLimits::new(8, 8).expect("limits"),
+            Duration::from_millis(50),
+            64 * MIB,
+        )
+        .expect("options")
+        .with_tail_hedging(true),
+    )
+    .expect("opt-in scheduler");
 
     let started = Instant::now();
     let summary = scheduler
@@ -826,5 +835,62 @@ async fn unproven_identity_uses_one_stream_and_never_reuses_completed_storage() 
             Err(SchedulerError::InvalidCompletedCoverage)
         );
         assert_eq!(server.requests().len(), requests);
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "explicit local fixture measurement; not a general throughput benchmark"]
+async fn measure_optional_tail_hedging_against_default_no_duplication() {
+    for trial in 1..=5 {
+        for enabled in [false, true] {
+            let fixture = Fixture {
+                len: 8 * MIB,
+                seed: 53,
+            };
+            let server = TestServer::start(ServerConfig {
+                fixture: fixture.clone(),
+                rules: vec![FaultRule {
+                    selector: RequestSelector {
+                        path: Some("/fixture".into()),
+                        range: Some(ByteRange::new(0, MIB - 1).expect("tail assignment")),
+                        request_number: None,
+                    },
+                    fault: Fault::StallFirst(Duration::from_millis(600)),
+                }],
+            })
+            .expect("server");
+            let scheduler = DownloadScheduler::with_options(
+                SchedulerOptions::new(
+                    ConcurrencyLimits::new(8, 16).expect("limits"),
+                    Duration::from_millis(50),
+                    64 * MIB,
+                )
+                .expect("options")
+                .with_tail_hedging(enabled),
+            )
+            .expect("scheduler");
+            let client = ProbeClient::with_admission(scheduler.admission()).expect("probe client");
+            let probe = client.probe(&server.url("/fixture")).await.expect("probe");
+            let directory = TestDirectory::new("tail-measurement");
+            let partial =
+                PartialFile::create(directory.path(), "tail.bin", fixture.len).expect("partial");
+            let started = Instant::now();
+            let summary = scheduler
+                .transfer(&probe, &partial, WorkerCount::Four)
+                .await
+                .expect("transfer");
+            let elapsed_ms = started.elapsed().as_millis();
+            assert_eq!(summary.hedged_requests(), u64::from(enabled));
+            let promoted = partial.promote().expect("promote");
+            assert_eq!(
+                std::fs::read(promoted.final_path()).expect("output"),
+                fixture.bytes(0, usize::try_from(fixture.len).expect("length"), 0)
+            );
+            println!(
+                "tail_fixture trial={trial} enabled={enabled} elapsed_ms={elapsed_ms} requests={} hedges={}",
+                summary.requests_started(),
+                summary.hedged_requests()
+            );
+        }
     }
 }

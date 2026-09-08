@@ -58,15 +58,15 @@ For assignment `[start, end]` within a known `total`, every worker response must
 
 Unknown totals, malformed numbers, duplicate singleton headers, missing known validators, unexpected transforms, and inconsistent boundaries fail closed. A `200` is never sliced or merged as a range.
 
-## Fixed-concurrency transfer
+## Configured concurrency and optional tail work
 
 For a proven known-size resource with a strong ETag, the scheduler subtracts durable completed coverage and lazily divides only the missing gaps into large requests. Ordinary assignments are between 1 MiB and 8 MiB, subject to a smaller final fragment. This limits request overhead while bounding each response buffer. The request plan is rejected if it would exceed 1,000,000 assignments.
 
-Supported task worker counts are exactly 1, 2, 4, and 8. Four is the default and eight is the initial cap. Workers pull from one synchronized gap queue, so faster workers continue with unassigned bytes without creating overlap. After all other work is complete, one idle worker may duplicate the sole stalled tail request after a bounded delay. Both responses are validated and buffered independently, but only the first complete response can claim the storage assignment; the loser is cancelled and can never write.
+Supported task worker counts are exactly 1, 2, 4, and 8. Four is the default and eight is the initial cap. Workers pull from one synchronized gap queue, so faster workers continue with unassigned bytes without creating overlap. Tail duplication is off by default. With an explicit experimental engine opt-in, after all other work is complete one idle worker may duplicate the sole stalled tail request after a bounded delay. Both responses are validated and buffered independently, but only the first complete response can claim the storage assignment; the loser is cancelled and can never write.
 
 Every worker sends `Accept-Encoding: identity`. It also sends `If-Range` with the probed strong ETag. Last-Modified is still compared when present, but no longer substitutes for strong byte identity. Redirect following is disabled for transfer requests: the response URL must remain the exact probed final URL. Status, range, total, declared length, encoding, validators, and exact EOF are revalidated before the buffered assignment is passed to storage.
 
-A shared global semaphore and one semaphore per URL origin independently limit concurrent requests across tasks. The defaults are 16 globally and 8 per origin; validated configuration caps them at 32 and 8 respectively. Per-task workers remain capped at eight regardless of those aggregate limits.
+Shared admission independently limits all concurrent HTTP requests across tasks, including both probe bytes and every redirected probe hop. Origin pressure can further reduce effective admission width. The defaults are 16 globally and 8 per origin; validated configuration caps them at 32 and 8 respectively. Per-task workers remain capped at eight regardless of those aggregate limits; transient transfer retries reduce effective width without changing the persisted selection. See [RELIABILITY.md](RELIABILITY.md) for shared 429/503 cooldown, minimum Retry-After deadlines, bounded worker-416 revalidation, and measured optional-tail policy.
 
 ## Strong resource identity and recovery (#22)
 

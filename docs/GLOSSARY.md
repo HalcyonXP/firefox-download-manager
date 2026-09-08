@@ -51,3 +51,12 @@ The prior 150 ms stable-server-ledger assertion conflated remote observation wit
 Initial testing caught two implementation/evidence mistakes: old persistence tests hardcoded v2 as current/v3 as future, and a new recovery test expected a control error where `resume` deliberately returns an authoritative failed snapshot. Tests now preserve the actual contracts, including strict legacy migration and required-marker corruption rejection. An early blanket 401/403-to-expired mapping was corrected: only supplied context can expire; unauthenticated 401 is required-auth and 403 remains ordinary HTTP failure.
 
 The #23 actual-Firefox slice used a fresh profile, real optional-permission approval, actual native transport, and exact 4 MiB output. Its first test ledger included unrelated favicon traffic; selection was corrected and the test rerun from a new profile. A later run was intentionally blocked by an existing unowned Firefox process. Do not terminate that process, treat prototype automation as a release installer, or publish its raw local profiles/logs. #28 must harden and extend the release harness rather than reuse its early cleanup assumptions blindly.
+
+## Reliability vocabulary (#24)
+
+- **Admission cap**: maximum locally admitted HTTP requests (including probes and redirects), not an assertion about idle/TIME_WAIT sockets or HTTP/2 stream-to-socket ratios.
+- **Configured workers**: the persisted user selection. **Effective workers**: current transfer width, reduced on transient retries without changing that selection or retry budget.
+- **Origin cooldown**: a shared monotonic not-before deadline from 429/503; peers cannot bypass it by starting another task or saving settings. Already-admitted work may finish.
+- **Tail hedge**: one optional duplicate of the sole remaining assignment, not generic worker restart or overlapping committed bytes. It is off by default; the favorable loopback measurement is not general throughput evidence.
+
+#24 closed the previously uncapped-probe path, retained pressure across settings changes, and corrected HTTP-date Retry-After rounding: fractional remaining seconds round up, not down before a server deadline. The old tail regression initially failed because its formerly implicit duplication policy became opt-in; it now opts in explicitly and the default no-duplication baseline is measured separately. Full original range/cancellation invariants remain enforced.

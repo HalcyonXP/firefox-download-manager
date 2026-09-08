@@ -209,3 +209,7 @@ The following remain deliberately reversible and belong to later issues:
 - future cross-platform packaging.
 
 No deferred choice may weaken the correctness and security invariants above.
+
+## Shared request admission (#24)
+
+Probe bytes, redirected probe hops, and transfer workers share one admission domain. It combines configured global/origin caps, retained server cooldown, bounded origin state, and future-width reduction. A dropped response/permit relinquishes local ownership; remote observation may lag as established in #32. Settings reconfiguration preserves outstanding pressure. Worker `416` permits one fresh identity revalidation, not blind retries or body merging. Experimental tail duplication is opt-in and off by default. [RELIABILITY.md](RELIABILITY.md) records exact behavior, measurements, and limits.
