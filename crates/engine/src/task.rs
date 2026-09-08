@@ -538,9 +538,16 @@ pub struct RetryScheduled {
     maximum_retries: u8,
     delay_millis: u64,
     http_status: Option<u16>,
+    next_workers: Option<WorkerCount>,
 }
 
 impl RetryScheduled {
+    /// Effective next transfer width, not a persisted user setting. None during initial probing.
+    #[must_use]
+    pub const fn next_workers(self) -> Option<WorkerCount> {
+        self.next_workers
+    }
+
     /// Affected task.
     #[must_use]
     pub const fn task_id(self) -> TaskId {
@@ -584,7 +591,7 @@ pub enum TaskEventKind {
     },
     /// Coalescible absolute progress sample.
     Progress(TaskProgress),
-    /// Engine-local bounded retry bookkeeping. Protocol v1 has no direct
+    /// Engine-local bounded retry bookkeeping. Protocol v2 has no direct
     /// retry-scheduled event shape, so the connection adapter consumes this
     /// replaceable bookkeeping internally rather than serializing a new
     /// discriminator or field.
@@ -944,11 +951,15 @@ enum RunKind {
 #[derive(Debug)]
 struct RetryBudget {
     used: u8,
+    workers: Option<WorkerCount>,
 }
 
 impl RetryBudget {
     const fn new() -> Self {
-        Self { used: 0 }
+        Self {
+            used: 0,
+            workers: None,
+        }
     }
 }
 
@@ -977,7 +988,8 @@ impl TaskEngine {
     ) -> Result<Self, TaskEngineError> {
         let store = TaskStore::open(state_root)?;
         let loaded = store.load_all()?;
-        let probe_client = ProbeClient::new().map_err(TaskEngineError::ProbeSetup)?;
+        let probe_client = ProbeClient::with_admission(scheduler.admission())
+            .map_err(TaskEngineError::ProbeSetup)?;
         let mut recovery = TaskRecoveryReport {
             failures: loaded.failures().to_vec(),
             normalized_tasks: Vec::new(),
@@ -1013,7 +1025,7 @@ impl TaskEngine {
     pub fn reconfigure(
         &mut self,
         options: TaskEngineOptions,
-        scheduler: DownloadScheduler,
+        mut scheduler: DownloadScheduler,
     ) -> Result<(), TaskEngineError> {
         let inner = Arc::get_mut(&mut self.inner).ok_or(TaskEngineError::InvalidTaskState)?;
         if lock(&inner.tasks)
@@ -1027,8 +1039,14 @@ impl TaskEngine {
         {
             return Err(TaskEngineError::InvalidTaskState);
         }
+        scheduler
+            .inherit_pressure(&inner.scheduler)
+            .map_err(TaskEngineError::SchedulerSetup)?;
+        let probe_client = ProbeClient::with_admission(scheduler.admission())
+            .map_err(TaskEngineError::ProbeSetup)?;
         inner.options = options;
         inner.scheduler = scheduler;
+        inner.probe_client = probe_client;
         Ok(())
     }
 
@@ -1619,26 +1637,13 @@ async fn run_task(
     kind: RunKind,
 ) {
     let mut budget = RetryBudget::new();
-    let prepared = match kind {
-        RunKind::Initial => {
-            prepare_initial(&inner, &task, generation, &cancellation, &mut budget).await
-        }
-        RunKind::Resume => {
-            prepare_resume(&inner, &task, generation, &cancellation, &mut budget).await
-        }
+    let Some((mut probe, partial, mut workers)) =
+        prepare_run(&inner, &task, generation, &cancellation, kind, &mut budget).await
+    else {
+        return;
     };
-    let (probe, partial, workers) = match prepared {
-        Ok(value) => value,
-        Err(RunError::Cancelled) => {
-            finish_stop(&inner, &task, generation);
-            return;
-        }
-        Err(RunError::Failed(failure)) => {
-            fail_run(&inner, &task, generation, failure);
-            return;
-        }
-    };
-
+    budget.workers = Some(workers);
+    let mut revalidated_416 = false;
     loop {
         let transfer = run_transfer_attempt(
             &inner,
@@ -1678,15 +1683,33 @@ async fn run_task(
                     finish_stop(&inner, &task, generation);
                     return;
                 }
-                if scheduler_retry_data(&error).is_some() {
-                    let retry_after = scheduler_retry_data(&error).and_then(|data| data.1);
-                    if let Some(delay) = schedule_retry(
-                        &inner,
-                        task_id(&task),
-                        &mut budget,
-                        retry_after,
-                        scheduler_retry_data(&error).and_then(|data| data.0),
-                    ) {
+                let retry_data = if matches!(error, SchedulerError::HttpStatus { status: 416, .. })
+                    && !revalidated_416
+                {
+                    revalidated_416 = true;
+                    match revalidate_worker_range(&inner, &task, &probe, &cancellation, &mut budget)
+                        .await
+                    {
+                        Ok(refreshed) => probe = refreshed,
+                        Err(RunError::Cancelled) => {
+                            finish_stop(&inner, &task, generation);
+                            return;
+                        }
+                        Err(RunError::Failed(failure)) => {
+                            fail_run(&inner, &task, generation, failure);
+                            return;
+                        }
+                    }
+                    Some((Some(416), None))
+                } else {
+                    scheduler_retry_data(&error)
+                };
+                if let Some((status, retry_after)) = retry_data {
+                    workers = workers.reduced();
+                    budget.workers = Some(workers);
+                    if let Some(delay) =
+                        schedule_retry(&inner, task_id(&task), &mut budget, retry_after, status)
+                    {
                         mark_retry_wait(&task);
                         if wait_retry(delay, &cancellation).await {
                             continue;
@@ -1700,7 +1723,7 @@ async fn run_task(
                         generation,
                         TaskFailure {
                             kind: TaskFailureKind::RetryExhausted,
-                            http_status: scheduler_retry_data(&error).and_then(|data| data.0),
+                            http_status: status,
                             retry_after_seconds: safe_retry_after(retry_after),
                         },
                     );
@@ -1711,6 +1734,50 @@ async fn run_task(
             }
         }
     }
+}
+
+async fn prepare_run(
+    inner: &TaskEngineInner,
+    task: &Arc<ManagedTask>,
+    generation: u64,
+    cancellation: &TransferCancellation,
+    kind: RunKind,
+    budget: &mut RetryBudget,
+) -> Option<(ResourceProbe, PartialFile, WorkerCount)> {
+    let prepared = match kind {
+        RunKind::Initial => prepare_initial(inner, task, generation, cancellation, budget).await,
+        RunKind::Resume => prepare_resume(inner, task, generation, cancellation, budget).await,
+    };
+    match prepared {
+        Ok(value) => Some(value),
+        Err(RunError::Cancelled) => {
+            finish_stop(inner, task, generation);
+            None
+        }
+        Err(RunError::Failed(failure)) => {
+            fail_run(inner, task, generation, failure);
+            None
+        }
+    }
+}
+
+async fn revalidate_worker_range(
+    inner: &TaskEngineInner,
+    task: &Arc<ManagedTask>,
+    known: &ResourceProbe,
+    cancellation: &TransferCancellation,
+    budget: &mut RetryBudget,
+) -> Result<ResourceProbe, RunError> {
+    let url = lock(&task.state).metadata.original_url().to_owned();
+    let fresh = probe_with_retries(inner, task_id(task), &url, cancellation, budget).await?;
+    if ResourceIdentity::from_probe(&fresh).map_err(run_probe_identity_error)?
+        != ResourceIdentity::from_probe(known).map_err(run_probe_identity_error)?
+    {
+        return Err(RunError::Failed(TaskFailure::new(
+            TaskFailureKind::ResourceChanged,
+        )));
+    }
+    Ok(fresh)
 }
 
 async fn prepare_initial(
@@ -2730,6 +2797,7 @@ fn schedule_retry(
         task_id,
         retry_number,
         maximum_retries: inner.options.retry.maximum_retries,
+        next_workers: budget.workers,
         delay_millis: u64::try_from(delay.as_millis())
             .unwrap_or(MAX_SAFE_INTEGER)
             .min(MAX_SAFE_INTEGER),
@@ -2790,6 +2858,7 @@ const fn retryable_status(status: u16) -> bool {
 
 fn failure_from_probe(error: &ProbeError) -> TaskFailure {
     match error {
+        ProbeError::Admission(_) => TaskFailure::new(TaskFailureKind::RetryExhausted),
         ProbeError::HttpStatus {
             status,
             retry_after_seconds,
@@ -2853,7 +2922,9 @@ fn failure_from_scheduler(error: &SchedulerError) -> TaskFailure {
         }
         SchedulerError::Storage(error) => failure_from_storage(error),
         SchedulerError::Cancelled => TaskFailure::new(TaskFailureKind::Cancelled),
-        SchedulerError::Request => TaskFailure::new(TaskFailureKind::RetryExhausted),
+        SchedulerError::Admission(_) | SchedulerError::Request => {
+            TaskFailure::new(TaskFailureKind::RetryExhausted)
+        }
         _ => TaskFailure::new(TaskFailureKind::Internal),
     }
 }
@@ -3042,6 +3113,7 @@ mod tests {
             TaskEventKind::RetryScheduled(RetryScheduled {
                 task_id: TaskId::new(),
                 retry_number: 1,
+                next_workers: None,
                 maximum_retries: 1,
                 delay_millis: 10,
                 http_status: None,

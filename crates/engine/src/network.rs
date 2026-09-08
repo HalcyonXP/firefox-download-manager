@@ -1,5 +1,6 @@
 //! HTTP probing and strict byte-range response validation.
 
+use crate::admission::{Admission, AdmissionError, RequestPermit};
 use crate::auth::{ContextError, RequestContext};
 use std::fmt;
 use std::sync::Arc;
@@ -268,6 +269,9 @@ pub enum RangeValidationError {
 /// Probe operation failure with no URL or response text in its display form.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ProbeError {
+    /// Shared request admission rejected this operation.
+    #[error("probe admission failed: {0}")]
+    Admission(#[from] AdmissionError),
     /// Invalid or expired memory-only session.
     #[error("request session is unavailable: {0}")]
     Context(#[from] ContextError),
@@ -309,6 +313,7 @@ pub enum ProbeError {
 #[derive(Clone, Debug)]
 pub struct ProbeClient {
     client: Client,
+    admission: Admission,
 }
 
 impl ProbeClient {
@@ -319,6 +324,15 @@ impl ProbeClient {
     ///
     /// Returns [`ProbeError::ClientSetup`] if the HTTP client cannot be built.
     pub fn new() -> Result<Self, ProbeError> {
+        Self::with_admission(Admission::new(
+            crate::scheduler::ConcurrencyLimits::default(),
+        ))
+    }
+
+    /// Shares admission with the transfer scheduler, including redirect hops.
+    /// # Errors
+    /// Returns client setup failure without exposing request context.
+    pub fn with_admission(admission: Admission) -> Result<Self, ProbeError> {
         let client = Client::builder()
             .redirect(Policy::none())
             .referer(false)
@@ -327,7 +341,7 @@ impl ProbeClient {
             .user_agent("FirefoxDownloadManager/0.1")
             .build()
             .map_err(|_| ProbeError::ClientSetup)?;
-        Ok(Self { client })
+        Ok(Self { client, admission })
     }
 
     /// Probes a direct HTTP(S) resource with `Range: bytes=0-0`.
@@ -457,8 +471,9 @@ impl ProbeClient {
         range: &str,
         context: Option<&RequestContext>,
         follow: bool,
-    ) -> Result<reqwest::Response, ProbeError> {
+    ) -> Result<AdmittedResponse, ProbeError> {
         for depth in 0..=MAX_REDIRECTS {
+            let permit = self.admission.acquire(&url).await?;
             let headers =
                 context.map_or_else(|| Ok(HeaderMap::new()), |context| context.headers(&url))?;
             let response = self
@@ -470,11 +485,18 @@ impl ProbeClient {
                 .send()
                 .await
                 .map_err(|error| classify_request_error(&error))?;
+            permit.observe(
+                response.status().as_u16(),
+                retry_after_seconds(response.headers()),
+            );
             if context.is_some() && matches!(response.status().as_u16(), 401 | 403) {
                 return Err(ContextError::Expired.into());
             }
             if !response.status().is_redirection() {
-                return Ok(response);
+                return Ok(AdmittedResponse {
+                    response,
+                    _permit: permit,
+                });
             }
             if !follow
                 || depth == MAX_REDIRECTS
@@ -505,6 +527,24 @@ impl ProbeClient {
 impl Default for ProbeClient {
     fn default() -> Self {
         Self::new().expect("static HTTP client configuration should be valid")
+    }
+}
+
+// Response ownership drops before its permit; no probe can release admission
+// while its body is still being consumed.
+struct AdmittedResponse {
+    response: reqwest::Response,
+    _permit: RequestPermit,
+}
+impl std::ops::Deref for AdmittedResponse {
+    type Target = reqwest::Response;
+    fn deref(&self) -> &Self::Target {
+        &self.response
+    }
+}
+impl std::ops::DerefMut for AdmittedResponse {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.response
     }
 }
 
@@ -711,7 +751,7 @@ pub(crate) fn validate_expected_validators(
     Ok(())
 }
 
-async fn read_exact_body(mut response: reqwest::Response, expected: u64) -> Result<(), ProbeError> {
+async fn read_exact_body(mut response: AdmittedResponse, expected: u64) -> Result<(), ProbeError> {
     let mut received = 0_u64;
     while let Some(chunk) = response
         .chunk()
@@ -732,15 +772,21 @@ async fn read_exact_body(mut response: reqwest::Response, expected: u64) -> Resu
 }
 
 pub(crate) fn retry_after_seconds(headers: &HeaderMap) -> Option<u64> {
+    retry_after_at(headers, SystemTime::now())
+}
+
+fn retry_after_at(headers: &HeaderMap, now: SystemTime) -> Option<u64> {
     let value = single_header(headers, RETRY_AFTER).ok().flatten()?;
     if let Some(seconds) = parse_u64(value) {
         return Some(seconds);
     }
     let target = httpdate::parse_http_date(value).ok()?;
-    target
-        .duration_since(SystemTime::now())
-        .ok()
-        .map(|value| value.as_secs())
+    let delay = target.duration_since(now).unwrap_or_default();
+    Some(
+        delay
+            .as_secs()
+            .saturating_add(u64::from(delay.subsec_nanos() != 0)),
+    )
 }
 
 fn filename_from_headers_or_url(headers: &HeaderMap, url: &Url) -> Option<String> {
@@ -955,6 +1001,25 @@ mod tests {
             filename_from_content_disposition("attachment; odd; filename=fallback.bin").as_deref(),
             Some("fallback.bin")
         );
+    }
+
+    #[test]
+    fn retry_after_http_date_rounds_up_instead_of_retrying_before_the_deadline() {
+        let mut headers = HeaderMap::new();
+        let target = std::time::UNIX_EPOCH + std::time::Duration::from_secs(2);
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            HeaderValue::from_str(&httpdate::fmt_http_date(target)).expect("date"),
+        );
+        for (millis, expected) in [(1000, 1), (1500, 1), (1999, 1), (2000, 0), (3000, 0)] {
+            assert_eq!(
+                super::retry_after_at(
+                    &headers,
+                    std::time::UNIX_EPOCH + std::time::Duration::from_millis(millis)
+                ),
+                Some(expected)
+            );
+        }
     }
 
     #[test]

@@ -1813,3 +1813,265 @@ async fn rejected_session_is_actionable_nonretrying_and_cannot_be_replaced_on_re
     );
     engine.shutdown().await.expect("shutdown");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn transfer_and_new_task_probe_share_caps_and_both_cancel_waiters_safely() {
+    let server = TestServer::start(ServerConfig::default()).expect("server");
+    let scheduler = DownloadScheduler::with_options(
+        SchedulerOptions::new(
+            ConcurrencyLimits::new(1, 1).expect("limits"),
+            Duration::from_secs(30),
+            64 * MIB,
+        )
+        .expect("options"),
+    )
+    .expect("scheduler");
+    let admission = scheduler.admission();
+    let directories = TestDirectories::new("shared-probe-transfer-cap");
+    let engine = TaskEngine::open_with_scheduler(
+        directories.state(),
+        TaskEngineOptions::default(),
+        scheduler,
+    )
+    .expect("engine");
+    // Hold one local slot so both tasks can be started deterministically before
+    // any remote handler sees a request. Requests, not delayed server ledger
+    // insertion, are the configured admission boundary.
+    let held = admission
+        .acquire(&reqwest::Url::parse(&server.url("/fixture")).expect("URL"))
+        .await
+        .expect("held admission");
+    let first = engine
+        .create_task_default(
+            &server.url("/fixture"),
+            directories.destination(),
+            "first.bin",
+        )
+        .expect("first");
+    let second = engine
+        .create_task_default(
+            &server.url("/fixture"),
+            directories.destination(),
+            "second.bin",
+        )
+        .expect("second");
+    engine.start(first.task_id()).expect("start first");
+    engine.start(second.task_id()).expect("start second");
+    assert!(server.requests().is_empty());
+    engine
+        .cancel(second.task_id(), CancelPartialPolicy::Delete)
+        .await
+        .expect("cancel admission waiter");
+    drop(held);
+    assert_eq!(
+        engine
+            .wait_until_inactive(first.task_id())
+            .await
+            .expect("first completion")
+            .state(),
+        TaskState::Completed
+    );
+    assert_eq!(admission.peak(), 1);
+    assert_eq!(admission.active(), 0);
+    assert_eq!(
+        engine
+            .snapshot(second.task_id())
+            .expect("cancelled")
+            .state(),
+        TaskState::Cancelled
+    );
+    assert!(!directories.destination().join("second.bin").exists());
+    engine.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn transient_transfer_failures_reduce_only_effective_workers_under_one_retry_budget() {
+    let server = TestServer::start(ServerConfig {
+        fixture: Fixture {
+            len: 16 * MIB,
+            seed: 51,
+        },
+        rules: (3..=50)
+            .map(|number| FaultRule {
+                selector: RequestSelector {
+                    path: Some("/fixture".into()),
+                    request_number: Some(number),
+                    range: None,
+                },
+                fault: Fault::Status {
+                    code: 500,
+                    retry_after_seconds: Some(0),
+                },
+            })
+            .collect(),
+    })
+    .expect("server");
+    let directories = TestDirectories::new("adaptive-width");
+    let options = TaskEngineOptions::new(
+        WorkerCount::Four,
+        RetryPolicy::new(
+            4,
+            Duration::from_millis(10),
+            Duration::from_millis(20),
+            Duration::from_secs(1),
+        )
+        .expect("retry policy"),
+        ProgressPolicy::default(),
+        4096,
+    )
+    .expect("options");
+    let engine = TaskEngine::open(directories.state(), options).expect("engine");
+    let task = engine
+        .create_task(
+            &server.url("/fixture"),
+            directories.destination(),
+            "width.bin",
+            WorkerCount::Eight,
+        )
+        .expect("task");
+    engine.start(task.task_id()).expect("start");
+    let mut widths = Vec::new();
+    loop {
+        let event = tokio::time::timeout(Duration::from_secs(5), engine.next_event())
+            .await
+            .expect("event timeout")
+            .expect("event");
+        match event.kind() {
+            TaskEventKind::RetryScheduled(retry) => {
+                widths.push(retry.next_workers().expect("transfer retry width").get());
+            }
+            TaskEventKind::Failed { failure, .. } => {
+                assert_eq!(failure.kind(), TaskFailureKind::RetryExhausted);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let final_task = engine
+        .wait_until_inactive(task.task_id())
+        .await
+        .expect("final");
+    assert_eq!(widths, vec![4, 2, 1, 1]);
+    assert_eq!(final_task.workers(), WorkerCount::Eight);
+    assert_eq!(
+        engine.metadata(task.task_id()).expect("metadata").workers(),
+        8
+    );
+    assert!(!directories.destination().join("width.bin").exists());
+    engine.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn worker_416_revalidates_once_and_never_merges_changed_or_repeatedly_rejected_ranges() {
+    for scenario in ["unchanged", "changed", "repeated"] {
+        let fixture = Fixture {
+            len: 128 * 1024,
+            seed: 52,
+        };
+        let rule = |number, fault| FaultRule {
+            selector: RequestSelector {
+                path: Some("/fixture".into()),
+                request_number: Some(number),
+                range: None,
+            },
+            fault,
+        };
+        let mut rules = vec![rule(
+            3,
+            Fault::Status {
+                code: 416,
+                retry_after_seconds: None,
+            },
+        )];
+        if scenario == "changed" {
+            rules.extend([rule(4, Fault::Generation(1)), rule(5, Fault::Generation(1))]);
+        }
+        if scenario == "repeated" {
+            rules.push(rule(
+                6,
+                Fault::Status {
+                    code: 416,
+                    retry_after_seconds: None,
+                },
+            ));
+        }
+        let server = TestServer::start(ServerConfig {
+            fixture: fixture.clone(),
+            rules,
+        })
+        .expect("server");
+        let directories = TestDirectories::new("worker-416");
+        let engine =
+            TaskEngine::open(directories.state(), TaskEngineOptions::default()).expect("engine");
+        let task = engine
+            .create_task(
+                &server.url("/fixture"),
+                directories.destination(),
+                "416.bin",
+                WorkerCount::One,
+            )
+            .expect("task");
+        engine.start(task.task_id()).expect("start");
+        let result = engine
+            .wait_until_inactive(task.task_id())
+            .await
+            .expect("result");
+        let requests = server.requests();
+        assert_eq!(
+            requests[3].range,
+            Some(ByteRange::new(0, 0).expect("first byte"))
+        );
+        assert_eq!(
+            requests[4].range,
+            Some(ByteRange::new(fixture.len - 1, fixture.len - 1).expect("last byte"))
+        );
+        if scenario == "unchanged" {
+            assert_eq!(result.state(), TaskState::Completed);
+            assert_eq!(requests.len(), 6);
+            assert_eq!(
+                fs::read(directories.destination().join("416.bin")).expect("output"),
+                fixture.bytes(0, usize::try_from(fixture.len).expect("length"), 0)
+            );
+        } else {
+            assert_eq!(result.state(), TaskState::Failed);
+            assert_eq!(requests.len(), if scenario == "changed" { 5 } else { 6 });
+            assert!(!directories.destination().join("416.bin").exists());
+            if scenario == "changed" {
+                assert_eq!(
+                    result.failure().expect("reason").kind(),
+                    TaskFailureKind::ResourceChanged
+                );
+            }
+        }
+        engine.shutdown().await.expect("shutdown");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn settings_reconfiguration_preserves_known_origin_cooldown() {
+    let directories = TestDirectories::new("pressure-settings");
+    let scheduler = DownloadScheduler::new().expect("scheduler");
+    let before = scheduler.admission();
+    let origin = reqwest::Url::parse("https://example.test/fixture").expect("URL");
+    let permit = before.acquire(&origin).await.expect("initial");
+    permit.observe(429, Some(2));
+    drop(permit);
+    let mut engine = TaskEngine::open_with_scheduler(
+        directories.state(),
+        TaskEngineOptions::default(),
+        scheduler,
+    )
+    .expect("engine");
+    let replacement = DownloadScheduler::new().expect("replacement");
+    let after = replacement.admission();
+    engine
+        .reconfigure(TaskEngineOptions::default(), replacement)
+        .expect("reconfigure");
+    assert!(
+        tokio::time::timeout(Duration::from_millis(30), after.acquire(&origin))
+            .await
+            .is_err()
+    );
+    assert_eq!(after.active(), 0);
+    engine.shutdown().await.expect("shutdown");
+}

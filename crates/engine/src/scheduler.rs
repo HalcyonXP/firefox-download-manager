@@ -7,17 +7,18 @@
 //! request may complete that tail; only the first fully validated body can own
 //! the corresponding storage range.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, Weak};
+use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
+use crate::admission::{Admission, AdmissionError, RequestPermit};
 use reqwest::header::{ACCEPT_ENCODING, CONTENT_LENGTH, IF_RANGE, RANGE};
 use reqwest::redirect::Policy;
 use reqwest::{Client, Response, StatusCode, Url};
 use thiserror::Error;
-use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
+use tokio::sync::watch;
 
 use crate::network::{
     ProbeMode, RangeAssignment, RangeValidationError, ResourceProbe, if_range_value,
@@ -43,7 +44,6 @@ const DEFAULT_PER_HOST_LIMIT: usize = 8;
 const DEFAULT_GLOBAL_LIMIT: usize = 16;
 const MAX_PER_HOST_LIMIT: usize = 8;
 const MAX_GLOBAL_LIMIT: usize = 32;
-const MAX_HOST_LIMITERS: usize = 1024;
 const DEFAULT_TAIL_HEDGE_DELAY: Duration = Duration::from_millis(250);
 const MIN_TAIL_HEDGE_DELAY: Duration = Duration::from_millis(10);
 const MAX_TAIL_HEDGE_DELAY: Duration = Duration::from_secs(30);
@@ -66,6 +66,16 @@ pub enum WorkerCount {
 }
 
 impl WorkerCount {
+    /// Conservative per-run pressure reduction after a failed transfer attempt.
+    #[must_use]
+    pub const fn reduced(self) -> Self {
+        match self {
+            Self::Eight => Self::Four,
+            Self::Four => Self::Two,
+            Self::Two | Self::One => Self::One,
+        }
+    }
+
     /// Number of workers represented by this setting.
     #[must_use]
     pub const fn get(self) -> u8 {
@@ -138,6 +148,7 @@ impl Default for ConcurrencyLimits {
 pub struct SchedulerOptions {
     limits: ConcurrencyLimits,
     tail_hedge_delay: Duration,
+    tail_hedging: bool,
     unknown_stream_limit: u64,
 }
 
@@ -162,8 +173,16 @@ impl SchedulerOptions {
         Ok(Self {
             limits,
             tail_hedge_delay,
+            tail_hedging: false,
             unknown_stream_limit,
         })
+    }
+
+    /// Explicit experimental opt-in; production defaults do not duplicate work.
+    #[must_use]
+    pub const fn with_tail_hedging(mut self, enabled: bool) -> Self {
+        self.tail_hedging = enabled;
+        self
     }
 
     /// Independent request concurrency limits.
@@ -190,6 +209,7 @@ impl Default for SchedulerOptions {
         Self {
             limits: ConcurrencyLimits::default(),
             tail_hedge_delay: DEFAULT_TAIL_HEDGE_DELAY,
+            tail_hedging: false,
             unknown_stream_limit: DEFAULT_UNKNOWN_STREAM_LIMIT,
         }
     }
@@ -428,6 +448,9 @@ impl TransferSummary {
 /// Path-free transfer failures.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SchedulerError {
+    /// Shared request admission rejected this operation.
+    #[error("transfer admission failed: {0}")]
+    Admission(#[from] AdmissionError),
     /// Invalid or expired memory-only session.
     #[error("request session is unavailable: {0}")]
     Context(#[from] crate::auth::ContextError),
@@ -489,10 +512,7 @@ pub struct DownloadScheduler {
 struct SchedulerInner {
     client: Client,
     options: SchedulerOptions,
-    global: Arc<Semaphore>,
-    hosts: Mutex<HashMap<String, Weak<Semaphore>>>,
-    active_requests: AtomicUsize,
-    peak_requests: AtomicUsize,
+    admission: Admission,
 }
 
 impl fmt::Debug for DownloadScheduler {
@@ -500,14 +520,8 @@ impl fmt::Debug for DownloadScheduler {
         formatter
             .debug_struct("DownloadScheduler")
             .field("options", &self.inner.options)
-            .field(
-                "active_requests",
-                &self.inner.active_requests.load(Ordering::Relaxed),
-            )
-            .field(
-                "peak_requests",
-                &self.inner.peak_requests.load(Ordering::Relaxed),
-            )
+            .field("active_requests", &self.inner.admission.active())
+            .field("peak_requests", &self.inner.admission.peak())
             .finish_non_exhaustive()
     }
 }
@@ -542,18 +556,29 @@ impl DownloadScheduler {
             inner: Arc::new(SchedulerInner {
                 client,
                 options,
-                global: Arc::new(Semaphore::new(options.limits.global)),
-                hosts: Mutex::new(HashMap::new()),
-                active_requests: AtomicUsize::new(0),
-                peak_requests: AtomicUsize::new(0),
+                admission: Admission::new(options.limits),
             }),
         })
+    }
+
+    pub(crate) fn inherit_pressure(&mut self, previous: &Self) -> Result<(), SchedulerError> {
+        let inner = Arc::get_mut(&mut self.inner).ok_or(SchedulerError::Coordination)?;
+        inner
+            .admission
+            .inherit_pressure(&previous.inner.admission)?;
+        Ok(())
+    }
+
+    /// Admission domain used by both probes and transfer requests.
+    #[must_use]
+    pub fn admission(&self) -> Admission {
+        self.inner.admission.clone()
     }
 
     /// Highest simultaneous request count observed across this scheduler.
     #[must_use]
     pub fn peak_global_requests(&self) -> usize {
-        self.inner.peak_requests.load(Ordering::Acquire)
+        self.inner.admission.peak()
     }
 
     /// Transfers all currently missing bytes proven by `probe` into `partial`.
@@ -667,7 +692,6 @@ impl DownloadScheduler {
         if missing.is_empty() {
             return Ok(metrics.summary(TransferKind::Segmented, workers.get()));
         }
-        let host = self.host_semaphore(probe.final_url())?;
         let missing_bytes = missing.iter().try_fold(0_u64, |sum, range| {
             sum.checked_add(range.len())
                 .ok_or(SchedulerError::InvalidCompletedCoverage)
@@ -678,6 +702,7 @@ impl DownloadScheduler {
             missing,
             chunk_size,
             self.inner.options.tail_hedge_delay,
+            self.inner.options.tail_hedging,
             cancellation.clone(),
         ));
         let mut handles = tokio::task::JoinSet::new();
@@ -685,12 +710,11 @@ impl DownloadScheduler {
             let scheduler = self.clone();
             let probe = probe.clone();
             let partial = partial.clone();
-            let host = Arc::clone(&host);
             let coordinator = Arc::clone(&coordinator);
             let metrics = Arc::clone(&metrics);
             handles.spawn(async move {
                 scheduler
-                    .range_worker(&probe, &partial, total, host, coordinator, metrics)
+                    .range_worker(&probe, &partial, total, coordinator, metrics)
                     .await
             });
         }
@@ -726,20 +750,12 @@ impl DownloadScheduler {
         probe: &ResourceProbe,
         partial: &PartialFile,
         total: u64,
-        host: Arc<Semaphore>,
         coordinator: Arc<WorkCoordinator>,
         metrics: Arc<TransferMetrics>,
     ) -> Result<(), SchedulerError> {
         while let Some(work) = coordinator.next_work().await? {
             match self
-                .fetch_range(
-                    probe,
-                    total,
-                    work,
-                    Arc::clone(&host),
-                    &coordinator,
-                    &metrics,
-                )
+                .fetch_range(probe, total, work, &coordinator, &metrics)
                 .await
             {
                 Ok(FetchOutcome::Superseded) => coordinator.finish_superseded(work.id),
@@ -775,22 +791,23 @@ impl DownloadScheduler {
         probe: &ResourceProbe,
         total: u64,
         work: Work,
-        host: Arc<Semaphore>,
         coordinator: &WorkCoordinator,
         metrics: &Arc<TransferMetrics>,
     ) -> Result<FetchOutcome, SchedulerError> {
-        let Some(_host_permit) = acquire_or_cancel(host, coordinator, work.id).await? else {
-            return Ok(FetchOutcome::Superseded);
-        };
-        let Some(_global_permit) =
-            acquire_or_cancel(Arc::clone(&self.inner.global), coordinator, work.id).await?
+        let Some(permit) = acquire_or_cancel(
+            &self.inner.admission,
+            probe.final_url(),
+            coordinator,
+            work.id,
+        )
+        .await?
         else {
             return Ok(FetchOutcome::Superseded);
         };
         if coordinator.should_cancel(work.id) {
             return Ok(FetchOutcome::Superseded);
         }
-        let _activity = RequestActivity::begin(Arc::clone(&self.inner), Arc::clone(metrics));
+        let _activity = RequestActivity::begin(Arc::clone(metrics));
         metrics.record_request(work.hedged);
 
         let url = probe.final_url();
@@ -812,6 +829,10 @@ impl DownloadScheduler {
         let Some(mut response) = send_or_cancel(request, coordinator, work.id).await? else {
             return Ok(FetchOutcome::Superseded);
         };
+        permit.observe(
+            response.status().as_u16(),
+            retry_after_seconds(response.headers()),
+        );
         if response.url() != url {
             return Err(SchedulerError::ResponseUrlChanged);
         }
@@ -863,11 +884,10 @@ impl DownloadScheduler {
             return Err(SchedulerError::ProbeStorageMismatch);
         }
 
-        let host = self.host_semaphore(probe.final_url())?;
-        let host_permit = acquire_with_cancellation(host, cancellation).await?;
-        let global_permit =
-            acquire_with_cancellation(Arc::clone(&self.inner.global), cancellation).await?;
-        let activity = RequestActivity::begin(Arc::clone(&self.inner), Arc::clone(&metrics));
+        let permit =
+            acquire_with_cancellation(&self.inner.admission, probe.final_url(), cancellation)
+                .await?;
+        let activity = RequestActivity::begin(Arc::clone(&metrics));
         metrics.record_request(false);
         let request = self
             .inner
@@ -876,13 +896,16 @@ impl DownloadScheduler {
             .headers(probe.request_headers()?)
             .header(ACCEPT_ENCODING, "identity");
         let response = send_with_cancellation(request, cancellation).await?;
+        permit.observe(
+            response.status().as_u16(),
+            retry_after_seconds(response.headers()),
+        );
         let actual = self
             .consume_single_response(response, probe, partial, cancellation, &metrics)
             .await?;
         metrics.complete_single(actual);
         drop(activity);
-        drop(global_permit);
-        drop(host_permit);
+        drop(permit);
         if cancellation.is_cancelled() {
             return Err(SchedulerError::Cancelled);
         }
@@ -964,21 +987,6 @@ impl DownloadScheduler {
         };
 
         Ok(actual)
-    }
-
-    fn host_semaphore(&self, url: &Url) -> Result<Arc<Semaphore>, SchedulerError> {
-        let key = url.origin().ascii_serialization();
-        let mut hosts = lock(&self.inner.hosts);
-        hosts.retain(|_, semaphore| semaphore.strong_count() > 0);
-        if let Some(existing) = hosts.get(&key).and_then(Weak::upgrade) {
-            return Ok(existing);
-        }
-        if hosts.len() >= MAX_HOST_LIMITERS {
-            return Err(SchedulerError::Coordination);
-        }
-        let semaphore = Arc::new(Semaphore::new(self.inner.options.limits.per_host));
-        hosts.insert(key, Arc::downgrade(&semaphore));
-        Ok(semaphore)
     }
 }
 
@@ -1082,38 +1090,17 @@ impl TransferMetrics {
 }
 
 struct RequestActivity {
-    scheduler: Arc<SchedulerInner>,
     transfer: Arc<TransferMetrics>,
 }
-
 impl RequestActivity {
-    fn begin(scheduler: Arc<SchedulerInner>, transfer: Arc<TransferMetrics>) -> Self {
-        let active = scheduler.active_requests.fetch_add(1, Ordering::AcqRel) + 1;
-        update_peak(&scheduler.peak_requests, active);
+    fn begin(transfer: Arc<TransferMetrics>) -> Self {
         transfer.worker_started();
-        Self {
-            scheduler,
-            transfer,
-        }
+        Self { transfer }
     }
 }
-
 impl Drop for RequestActivity {
     fn drop(&mut self) {
-        self.scheduler
-            .active_requests
-            .fetch_sub(1, Ordering::AcqRel);
         self.transfer.worker_stopped();
-    }
-}
-
-fn update_peak(peak: &AtomicUsize, candidate: usize) {
-    let mut current = peak.load(Ordering::Relaxed);
-    while candidate > current {
-        match peak.compare_exchange_weak(current, candidate, Ordering::AcqRel, Ordering::Relaxed) {
-            Ok(_) => break,
-            Err(observed) => current = observed,
-        }
     }
 }
 
@@ -1154,6 +1141,7 @@ struct WorkCoordinator {
     cancellation: TransferCancellation,
     chunk_size: u64,
     hedge_delay: Duration,
+    hedging: bool,
 }
 
 impl WorkCoordinator {
@@ -1161,6 +1149,7 @@ impl WorkCoordinator {
         missing: Vec<FileRange>,
         chunk_size: u64,
         hedge_delay: Duration,
+        hedging: bool,
         cancellation: TransferCancellation,
     ) -> Self {
         let (changes, _) = watch::channel(0);
@@ -1175,6 +1164,7 @@ impl WorkCoordinator {
             cancellation,
             chunk_size,
             hedge_delay,
+            hedging,
         }
     }
 
@@ -1216,7 +1206,7 @@ impl WorkCoordinator {
                 let now = Instant::now();
                 let mut remaining = None;
                 let mut hedge = None;
-                let sole_tail = state.in_flight.len() == 1;
+                let sole_tail = self.hedging && state.in_flight.len() == 1;
                 for (&id, chunk) in &state.in_flight {
                     if !sole_tail {
                         break;
@@ -1360,11 +1350,12 @@ enum FetchOutcome {
 }
 
 async fn acquire_or_cancel(
-    semaphore: Arc<Semaphore>,
+    admission: &Admission,
+    url: &Url,
     coordinator: &WorkCoordinator,
     id: u64,
-) -> Result<Option<OwnedSemaphorePermit>, SchedulerError> {
-    let acquire = semaphore.acquire_owned();
+) -> Result<Option<RequestPermit>, SchedulerError> {
+    let acquire = admission.acquire(url);
     tokio::pin!(acquire);
     let mut changes = coordinator.subscribe();
     let mut cancellation = coordinator.cancellation.subscribe();
@@ -1376,7 +1367,7 @@ async fn acquire_or_cancel(
             result = &mut acquire => {
                 return result
                     .map(Some)
-                    .map_err(|_| SchedulerError::Coordination);
+                    .map_err(SchedulerError::Admission);
             }
             result = changes.changed() => {
                 result.map_err(|_| SchedulerError::Coordination)?;
@@ -1445,12 +1436,13 @@ async fn next_chunk_or_cancel(
 }
 
 async fn acquire_with_cancellation(
-    semaphore: Arc<Semaphore>,
+    admission: &Admission,
+    url: &Url,
     cancellation: &TransferCancellation,
-) -> Result<OwnedSemaphorePermit, SchedulerError> {
+) -> Result<RequestPermit, SchedulerError> {
     let permit = tokio::select! {
-        result = semaphore.acquire_owned() => {
-            result.map_err(|_| SchedulerError::Coordination)?
+        result = admission.acquire(url) => {
+            result.map_err(SchedulerError::Admission)?
         }
         () = cancellation.cancelled() => return Err(SchedulerError::Cancelled),
     };
