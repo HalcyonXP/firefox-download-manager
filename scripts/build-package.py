@@ -198,7 +198,9 @@ def build(binary_dir, output, development=False):
             "package_version": version, "target": "x86_64-pc-windows-gnullvm", "source_dirty": dirty,
             "development": development, "qualification": "Not asserted by builder; see release notes for this exact checksum.",
             "recipe": "development-unqualified" if development else "windows-x64-llvm-ucrt-v1", "rustc": command("rustc", "-V"), "cargo": command("cargo", "-V"),
-            "node": command("node", "--version"), "python": platform.python_version(), "zlib": zlib.ZLIB_VERSION, "wire_version": 2, "task_state_version": 4,
+            "node": command("node", "--version"),
+            "npm": command(str(Path(os.environ["WINDIR"]) / "System32/cmd.exe"), "/d", "/c", "npm --version"),
+            "cmake": command("cmake", "--version").splitlines()[0], "ninja": command("ninja", "--version"), "python": platform.python_version(), "zlib": zlib.ZLIB_VERSION, "wire_version": 2, "task_state_version": 4,
             "toolchain": {"archive": TOOLCHAIN.name + ".zip", "sha256": TOOLCHAIN_SHA256,
                           "clang": command(str(TOOLCHAIN / "bin/x86_64-w64-mingw32-clang.exe"), "--version").splitlines()[0]},
             "settings_version": 2, "minimum_firefox": "156.0", "imports": {}, "mingw_runtime_objects": {}}
@@ -217,8 +219,9 @@ def build(binary_dir, output, development=False):
     if manifest["version"] != version or manifest["browser_specific_settings"]["gecko"]["strict_min_version"] != "156.0":
         raise ValueError("mixed extension version/policy")
     archive(out / PAYLOADS[2], {name: ext / name for name in EXTENSION}, epoch)
-    shutil.copyfile(ordinary(ROOT / "docs/INSTALLATION.md"), out / "INSTALL.md")
-    shutil.copyfile(ordinary(ROOT / "docs/PACKAGE_SECURITY.md"), out / "SECURITY.md")
+    for source, target in [("INSTALLATION.md", "INSTALL.md"), ("PACKAGE_SECURITY.md", "SECURITY.md")]:
+        # A clean Git worktree can still have CRLF before index normalization.
+        (out / target).write_text(ordinary(ROOT / "docs" / source).read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
     notice, inventory = notices()
     (out / "THIRD-PARTY-NOTICES.txt").write_text(notice, encoding="utf-8", newline="\n")
     info["dependencies"] = inventory

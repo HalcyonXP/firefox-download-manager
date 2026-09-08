@@ -110,7 +110,7 @@ def test(package, report):
     before = (sha(task), sha(download))
     owned_values = set()
     foreign = str(parent / "Synthetic Foreign Host.json")
-    evidence = {"package_sha256": sha(package / "package.json"), "os": platform.platform(),
+    evidence = {"descriptor_sha256": sha(package / "package.json"), "os": platform.platform(),
                 "process_machine": platform.machine(), "native_architecture": os.environ.get("PROCESSOR_ARCHITEW6432", os.environ.get("PROCESSOR_ARCHITECTURE")),
                 "kind": "actual package/native registry lifecycle, not Firefox UI qualification", "checks": []}
     try:

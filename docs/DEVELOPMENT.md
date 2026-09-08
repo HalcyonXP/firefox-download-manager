@@ -146,3 +146,5 @@ The helper must reserve standard output for Native Messaging frames. Local diagn
 ## CI
 
 `.github/workflows/ci.yml` runs extension/protocol/manifest checks and the full Rust format/lint/test/build sequence. The `windows-latest` job installs the built helper into a temporary path containing spaces, verifies its HKCU registration and live framed hello/snapshot exchange, and removes it in a `finally` block. Dependency policy runs on Linux because `cargo-deny` is platform-independent. CI uploads the generated extension directory for inspection but does not publish a release.
+
+For repeatability measurements, `build-package.ps1 -Rebuild` explicitly cleans only its dedicated `target/package-build` Cargo cache before compilation. Compare new output directories with `scripts/compare-packages.py`; do not treat a cached no-op build or a same-environment match as cross-machine proof. Final-artifact qualification uses exact candidate/release checksums, not an assumed rebuild identity.

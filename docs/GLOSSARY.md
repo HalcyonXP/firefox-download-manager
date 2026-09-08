@@ -77,7 +77,7 @@ Format-v4 tests exposed the need for genuine old v1/v2/v3 shapes without newer k
 
 The review found a real wildcard-pattern construction edge case, not an observed cookie breach. It also corrected stale no-host-access prose, redacted opaque validators, and narrowed the unqualified Firefox 128 claim to the actually exercised 156 API baseline. These are implementation safety decisions, not newly confirmed user preferences. The actual privacy fixture initially violated its own exact-referrer contract and returned AUTH_EXPIRED; the test input, not the server contract, was corrected.
 
-## Packaging terms (#27, implementation in progress)
+## Packaging terms (#27)
 
 - **Package descriptor**: bounded, closed metadata for fixed local payload leaves, paired version and file SHA-256 values. Hash consistency does not authenticate the publisher or prove the asserted source commit.
 - **Installation receipt**: versioned ownership/recovery metadata for generated installation files; not task state, a signature or a compromised-account defense.
@@ -90,3 +90,6 @@ The review found a real wildcard-pattern construction edge case, not an observed
 - **Candidate versus qualified release**: a checksummed builder/CI artifact has consistency/provenance metadata, not #28 browser/installation/resource approval.
 - **Static support with system UCRT**: LLVM/MinGW runtime support is linked into the x64 executable; Microsoft UCRT/API DLLs are supplied by Windows. This is not the superseded static MSVC CRT proposal.
 - **Windows 11 x64 emulation evidence**: running the x64 artifact on a fresh ARM64 Windows 11 runner; distinct from native x64 coverage and from a factory-clean image without development tools.
+
+- **Descriptor digest versus ZIP digest**: `descriptor_sha256` identifies `package.json`; `PACKAGE-SHA256SUMS.txt` identifies the distributable ZIP. Initial #27 evidence used the ambiguous `package_sha256` key for the descriptor, corrected before release.
+- **Same-environment reproducibility**: independent clean Cargo target builds match all package bytes on one environment. Both local and CI comparisons passed; local-versus-CI binaries differed, so cross-environment bit reproducibility is not claimed.
