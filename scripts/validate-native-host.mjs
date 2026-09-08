@@ -38,23 +38,27 @@ assert.match(
   new RegExp(`ALLOWED_EXTENSION_ID: &str = "${extensionId.replace(".", "\\.")}"`),
 );
 
+const setup = await readFile("crates/setup/src/lib.rs", "utf8");
+const registry = await readFile("crates/setup/src/registry.rs", "utf8");
+assert.ok(setup.includes(`HOST_NAME: &str = "${hostName}"`));
+assert.ok(setup.includes(`EXTENSION_ID: &str = "${extensionId}"`));
+assert.ok(registry.includes(`NativeMessagingHosts\\${hostName}`));
+assert.ok(registry.includes("HKEY_CURRENT_USER"));
+assert.ok(!registry.includes("HKEY_LOCAL_MACHINE"));
+assert.ok(!registry.includes("delete_subkey_all"));
 for (const script of [installScript, uninstallScript]) {
-  assert.ok(script.includes(hostName), "registration script host name drifted");
-  assert.ok(script.includes("HKCU:\\Software\\Mozilla\\NativeMessagingHosts"));
+  assert.ok(script.includes("retired"), "unsafe development fallback must stay retired");
+  assert.ok(script.includes("throw"));
   for (const forbidden of [
-    "HKLM:",
-    "New-NetFirewallRule",
-    "route.exe",
-    "netsh",
-    "sc.exe",
-    "schtasks",
-    "VpnConnection",
+    "New-Item",
+    "Copy-Item",
+    "Remove-Item",
+    "Set-ItemProperty",
+    "SetExecutionPolicy",
   ]) {
-    assert.ok(
-      !script.includes(forbidden),
-      `registration script unexpectedly contains ${forbidden}`,
-    );
+    assert.ok(!script.includes(forbidden), "retired script must not mutate installation");
   }
 }
-
-console.log("Validated least-privilege Firefox native-host manifest and registration scripts.");
+console.log(
+  "Validated native manifest/constants and retired-script guards; lifecycle qualification is separate.",
+);

@@ -61,31 +61,63 @@ jobs:
       - name: Build Rust
         run: cargo build --workspace --all-features --locked
 
-      - name: Test current-user Native Messaging installation
+      - name: Test package allowlist and deterministic archives
+        run: python -m unittest discover -s scripts -p "test_build_package.py"
+
+      - name: Build checksummed Windows x64 candidate
+        shell: pwsh
+        run: ./scripts/build-package.ps1 -TestRust -Rebuild
+
+      - name: Repeat clean-target build and compare bytes
         shell: pwsh
         run: |
-          $installRoot = Join-Path $env:RUNNER_TEMP "Download Manager Native Host With Spaces"
-          $profileRoot = Join-Path $env:RUNNER_TEMP "Download Manager Test Profile With Spaces"
-          try {
-            ./scripts/install-native-host.ps1 `
-              -ExecutablePath ./target/debug/download-manager-native-host.exe `
-              -InstallRoot $installRoot
-            ./scripts/test-native-host-install.ps1 `
-              -InstallRoot $installRoot `
-              -TestProfileRoot $profileRoot
-          }
-          finally {
-            ./scripts/uninstall-native-host.ps1 -InstallRoot $installRoot
-            if (Test-Path -LiteralPath $profileRoot) {
-              Remove-Item -LiteralPath $profileRoot -Recurse -Force
-            }
-          }
+          ./scripts/build-package.ps1 -Output artifacts/repeated-package -Rebuild
+          python scripts/compare-packages.py artifacts/package artifacts/repeated-package artifacts/reproducibility.json
+          if ($LASTEXITCODE) { throw "Repeated candidate bytes differ" }
+
+      - name: Test actual isolated package installation
+        run: python scripts/test-package-install.py --package artifacts/package --report artifacts/install-evidence.json
+
+      - name: Upload checksummed candidate and bounded evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-x64-candidate
+          path: |
+            artifacts/package
+            artifacts/install-evidence.json
+            artifacts/reproducibility.json
+          if-no-files-found: error
 
       - name: Upload extension build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: extension-dist
           path: extension/dist
+          if-no-files-found: error
+
+  windows11-emulation:
+    name: Windows 11 x64-emulation package lifecycle
+    needs: quality
+    runs-on: windows-11-arm
+    timeout-minutes: 15
+    steps:
+      - name: Check out lifecycle harness
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download same checksummed candidate
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: windows-x64-candidate
+          path: artifacts
+
+      - name: Exercise x64 package on disposable Windows 11 ARM64
+        run: python scripts/test-package-install.py --package artifacts/package --report artifacts/windows11-emulation-evidence.json
+
+      - name: Upload bounded emulation evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows11-emulation-evidence
+          path: artifacts/windows11-emulation-evidence.json
           if-no-files-found: error
 
   rust-dependencies:

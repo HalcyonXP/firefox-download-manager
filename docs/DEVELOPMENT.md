@@ -1,14 +1,15 @@
 # Development and bootstrap
 
-The supported development host is a clean 64-bit Windows 11 checkout. CI uses the same Windows-first commands. Build tools and generated output stay local; no globally installed formatter, linter, or test runner is required.
+The supported development host is a clean 64-bit Windows 11 checkout. CI uses the same Windows-first commands; Windows server CI is not itself Windows 11 browser qualification. Build tools and generated output stay local; no globally installed formatter, linter, or test runner is required.
 
 ## Prerequisites
 
 1. [Git for Windows](https://git-scm.com/download/win)
 2. [Rustup](https://rustup.rs/) using the MSVC host toolchain
-3. Visual Studio 2022 Build Tools with **Desktop development with C++** and a Windows SDK
+3. Visual Studio 2022 or 2026 C++ Build Tools with **Desktop development with C++** and a Windows SDK
 4. Node.js 24 and npm 11
-5. Firefox Developer Edition 156 or later for manual extension testing (156 is the exercised API baseline; final-artifact qualification is separate)
+5. Python 3.11+ for allowlist packaging and isolated lifecycle tests
+6. Firefox Developer Edition 156 or later for manual extension testing (156 is the exercised API baseline; final-artifact qualification is separate)
 
 The repository pins Rust in `rust-toolchain.toml`, records the npm version in `package.json`, and commits `Cargo.lock` and `package-lock.json`. Node 24 is the CI baseline; Node versions accepted by `package.json` may be used locally.
 
@@ -43,12 +44,13 @@ crates/
   protocol/             Rust Native Messaging types and framing boundary
   engine/               Networking, scheduling, task control, progress, persistence, and storage
   native-host/          Native Messaging executable
+  setup/                Local Windows setup, ownership and journal recovery
   test-server/          Local deterministic adversarial HTTP fixtures
 protocol/
   schema/v2/            Current JSON Schema and conformance examples
   schema/v1/            Archived v1 contract
 native-host/            Auditable Firefox host-manifest template
-scripts/                Cross-platform checks plus Windows registration scripts
+scripts/                Cross-platform checks, package generation and isolated lifecycle tests
 docs/                   Architecture, security, protocol, and plans
 ```
 
@@ -63,7 +65,7 @@ The browser extension build never contains the Rust helper. The native helper ne
 | `npm run typecheck` | Strict TypeScript check without output |
 | `npm test` | Run extension unit tests |
 | `npm run protocol:check` | Validate v2 schema, examples, and hostile cases |
-| `npm run native-host:check` | Cross-check the extension ID, permission, host manifest, Rust constants, and HKCU scripts |
+| `npm run native-host:check` | Cross-check the extension ID, permission, host manifest, Rust constants, and fixed HKCU setup adapter |
 | `npm run build` | Recreate `extension/dist` |
 | `npm run extension:check` | Validate the built manifest and referenced assets |
 | `npm run check` | Run JavaScript/protocol/extension, privacy, and repository-reference gates |
@@ -79,40 +81,31 @@ The browser extension build never contains the Rust helper. The native helper ne
 
 The task-lifecycle integration suite uses only loopback deterministic fixtures. It covers durable pause/reopen/resume over missing ranges, periodic bytes-first checkpoints, keep/delete cancellation and terminal removal, cancellation-aware probe and retry sleeps, cooperative process shutdown, a shared probe/transfer retry budget, retry exhaustion and `Retry-After`, fatal no-retry errors, changed resource identity, known/unknown progress, event cadence/overflow, final publication, and runtime-ownership failures. Timing assertions use generous bounds around monotonic behavior; repeat this test target when changing cancellation or event races.
 
-## Native host installation and manual extension loading
+## Candidate package build and isolated installation tests
 
-Build and register the helper under the current user, then build the extension:
-
-```powershell
-./scripts/install-native-host.ps1
-npm run build
-```
-
-The installer performs a locked release build by default, copies the executable beneath `%LOCALAPPDATA%\HalcyonXP\FirefoxDownloadManager\host`, generates a JSON-escaped absolute manifest path, and writes only the default value of:
-
-```text
-HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager
-```
-
-**Development-only until #27 resolves the installer findings in [SECURITY_REVIEW.md](SECURITY_REVIEW.md).** Use isolated test roots and refuse existing registrations; do not use or terminate an unowned Firefox instance. No elevation is required. The registration permits only `download-manager@halcyonxp.local`. Open `about:debugging#/runtime/this-firefox` in Firefox Developer Edition, choose **Load Temporary Add-on**, and select `extension/dist/manifest.json`. The background connection object remains on demand: later UI work calls it when a manager surface is opened; every fresh port negotiates v2 and waits for a complete helper snapshot before replacing retained display state.
-
-To exercise the same registration, path-with-spaces, process-launch, hello, initial-snapshot, add-command, and live schema check used by Windows CI:
+Read [INSTALLATION.md](INSTALLATION.md) for user-facing commands. Old `install-native-host.ps1`, `uninstall-native-host.ps1` and `test-native-host-install.ps1` are retired refusal-only stubs: no unsafe convenience fallback remains.
 
 ```powershell
-cargo build -p download-manager-native-host --locked
-$installRoot = Join-Path $env:TEMP "Download Manager Native Host With Spaces"
-./scripts/install-native-host.ps1 -ExecutablePath ./target/debug/download-manager-native-host.exe -InstallRoot $installRoot
-./scripts/test-native-host-install.ps1 -InstallRoot $installRoot
-./scripts/uninstall-native-host.ps1 -InstallRoot $installRoot
+./scripts/build-package.ps1 -Output artifacts/package
+# For local uncommitted work only (explicitly unqualified):
+./scripts/build-package.ps1 -Output artifacts/development-package -Development
+.\artifacts\package\download-manager-setup.exe verify
+.\artifacts\package\download-manager-setup.exe probe
 ```
 
-For the normal install, remove only the HKCU registration and generated host files with:
+Production candidates require a clean canonical checkout. Each output directory must be new, beneath `artifacts`. The reviewed SHA-256-pinned LLVM/MinGW build toolchain is fetched beneath ignored `target` (no system installation). Rust target `x86_64-pc-windows-gnullvm`, static compiler/MinGW support with system UCRT, path remapping and disabled linker timestamps are used; deterministic ZIP order/timestamps are tested. Build provenance records actual compiler/runtime imports. Repeat measurements determine binary reproducibility—flags alone do not prove it.
+
+The package builder copies only fixed payload leaves and the exact extension build allowlist, not checkout history, profiles, test-server executables, private audit inputs or arbitrary directories. Notices include the locked runtime/build dependency closure, Rust library attribution, vendored native notices, LLVM/MinGW runtime notices and esbuild attribution. No first-party license is selected.
+
+**Only on a disposable current-user environment with no Firefox/helper process or existing registration:**
 
 ```powershell
-./scripts/uninstall-native-host.ps1
+python scripts/test-package-install.py --package artifacts/package --report artifacts/install-evidence.json
 ```
 
-Uninstallation deliberately does not recurse into `%LOCALAPPDATA%\HalcyonXP\FirefoxDownloadManager\state`, alter destination files, or remove completed downloads. Stop any live Native Messaging connection before replacing or removing a Windows executable. Mozilla's `web-ext` can be reconsidered after its dependency tree has no known high-severity advisory; it remains outside the locked toolchain.
+This exercises actual fixed-HKCU install, invalid-executable launch rollback, same-version upgrade, cleanup, uninstall and opaque state/download preservation through paths containing spaces. It is not Firefox UI testing or itself a legacy decoder test. Existing Rust persistence/recovery suites cover real old-format migration; #28 covers final-browser/restart behavior. The test also refuses empty/malformed/named registration entries, strips the child PATH to System32, and refuses unowned processes/registrations, captures no raw output into the report, and only cleans its own temporary registration/root.
+
+Temporary XPI loading is explicit and must be repeated after Firefox restarts. Do not inspect, modify or stop an unowned live Firefox profile/instance to make a test pass. Mozilla `web-ext` remains outside the locked toolchain pending its separate dependency review.
 
 ## Privacy checks before publication
 
@@ -153,3 +146,5 @@ The helper must reserve standard output for Native Messaging frames. Local diagn
 ## CI
 
 `.github/workflows/ci.yml` runs extension/protocol/manifest checks and the full Rust format/lint/test/build sequence. The `windows-latest` job installs the built helper into a temporary path containing spaces, verifies its HKCU registration and live framed hello/snapshot exchange, and removes it in a `finally` block. Dependency policy runs on Linux because `cargo-deny` is platform-independent. CI uploads the generated extension directory for inspection but does not publish a release.
+
+For repeatability measurements, `build-package.ps1 -Rebuild` explicitly cleans only its dedicated `target/package-build` Cargo cache before compilation. Compare new output directories with `scripts/compare-packages.py`; do not treat a cached no-op build or a same-environment match as cross-machine proof. Final-artifact qualification uses exact candidate/release checksums, not an assumed rebuild identity.

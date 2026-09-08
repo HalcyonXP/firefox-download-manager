@@ -43,24 +43,13 @@ The initial product targets direct HTTP(S) downloads selected explicitly by the 
 
 The native helper uses the operating system's normal network route, whether a VPN is connected or not.
 
-## Native Messaging development install
+## Installation and candidate packaging
 
-**Not a qualified release installer.** The [security review](docs/SECURITY_REVIEW.md) identifies development-script ownership/path/upgrade gaps that #27 must fix. Use only an isolated test root with no existing registration, not a live installation. The manifest targets Firefox 156+; final-artifact qualification remains pending.
+The current implementation is **not yet a qualified release**. Follow [installation instructions](docs/INSTALLATION.md) only with the checksummed artifact identified by release notes. Packaging/recovery design and evidence are in [PACKAGING_PLAN.md](docs/PACKAGING_PLAN.md); final qualification remains #28.
 
-Build and register the on-demand helper for the current Windows user, then build and temporarily load the extension:
+The Rust setup executable uses current-user registration, verified immutable generations, ownership receipts and conservative journal recovery. It requires closed Firefox/helpers and does not modify a browser profile or security policy. The old development PowerShell registration scripts are retired and deliberately refuse all operations. Developer build/testing instructions are in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
-```powershell
-./scripts/install-native-host.ps1
-npm run build
-```
-
-The installer copies the release helper to the per-user application-data tree and writes only `HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager`. The generated manifest permits only `download-manager@halcyonxp.local`; the extension requires `nativeMessaging` and `menus`; cookies/selected-site authority is optional and per-Add handoff remains unchecked by default. Paths containing spaces are supported. Remove the registration and installed helper files without touching download state or completed files with:
-
-```powershell
-./scripts/uninstall-native-host.ps1
-```
-
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for verification and manual Firefox steps. The registered transport and reconnect snapshot layer are implemented; explicit link capture and the creation form are implemented; the snapshot-driven dashboard supports pause, resume/start/retry, cancel, remove, and task-destination folder opening. Both components must be rebuilt together for protocol v2. These scripts do not create a service, listener, firewall rule, VPN configuration, or network-route change.
+Firefox Developer Edition 156+ loads the unsigned XPI through `about:debugging` as a temporary add-on; it must be reloaded after browser restarts. The extension requires `nativeMessaging` and `menus`; cookies/selected-site authority is optional and per-Add handoff remains unchecked by default. Wire v2 components must be paired.
 
 ## Settings and local diagnostics
 
