@@ -46,3 +46,9 @@ On Windows 11 Pro 10.0.26200, installed Firefox Developer Edition 156.0 (aurora)
 Mozilla Marionette drove the installed Developer Edition binary because this machine's Playwright CLI drives Edge, not that unpatched Firefox binary. Earlier mocked transport evidence is not substituted for this result. The first harness ledger assertion accidentally included browser favicon requests; the successful rerun used a fresh profile and selected download requests explicitly. Raw profiles/logs remain ignored/private, not release artifacts. A later preflight refused a now-running, unowned Firefox instance; it was not stopped or inspected for browsing data. A reusable release harness still belongs to #28, including registration/launch-failure cleanup and restart/install/upgrade checks.
 
 PR #34's CI run `34238854137` passed actual Windows quality and Rust dependency-policy checks. This session slice does not close security review, packaging, multi-gigabyte performance, or clean installation/release qualification.
+
+## Security-review restrictions (#26)
+
+The manifest now requires Firefox 156 and disallows private-window operation globally, not merely private cookie handoff. Optional site patterns reject canonical hostnames containing `*` (including encoded/IDNA-normalized forms) before any permission prompt/check or cookie read. IPv6 session permissions remain unsupported. Earlier prerelease site grants are not automatically removed: use **Revoke optional permissions**, and cancel already-submitted session tasks separately.
+
+Memory-only describes supplied context; exact signed URLs and remote validators are protected recovery data and remote content may itself reflect sensitive information. Do not call arbitrary state/downloads secret-free. See [SECURITY_REVIEW.md](SECURITY_REVIEW.md) for evidence and residual boundaries.

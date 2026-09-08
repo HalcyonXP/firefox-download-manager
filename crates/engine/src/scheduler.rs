@@ -21,7 +21,7 @@ use thiserror::Error;
 use tokio::sync::watch;
 
 use crate::network::{
-    ProbeMode, RangeAssignment, RangeValidationError, ResourceProbe, if_range_value,
+    ProbeMode, RangeAssignment, RangeValidationError, ResourceProbe, if_range_header,
     optional_u64_header, parse_validators, reject_unexpected_encoding, retry_after_seconds,
     validate_expected_validators, validate_range_response,
 };
@@ -823,7 +823,7 @@ impl DownloadScheduler {
                 format!("bytes={}-{}", assignment.start(), assignment.end()),
             )
             .header(ACCEPT_ENCODING, "identity");
-        if let Some(value) = if_range_value(validators) {
+        if let Some(value) = if_range_header(validators)? {
             request = request.header(IF_RANGE, value);
         }
         let Some(mut response) = send_or_cancel(request, coordinator, work.id).await? else {

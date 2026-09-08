@@ -216,3 +216,7 @@ Probe bytes, redirected probe hops, and transfer workers share one admission dom
 ### Integrity completion (#25)
 
 [INTEGRITY.md](INTEGRITY.md) describes always-on exact size/coverage checks and optional SHA-256. Hashing streams the owned file through a 256 KiB buffer on a joined blocking task; a non-cloneable validation lease freezes helper writes through create-new promotion. Mismatch uses the explicit failure-retention setting and never emits success. Expected digests survive retry/recovery in internal format v4; the wire stays v2. Validation Cancel is cooperative, and last download throughput is not projected as hashing ETA.
+
+### Pre-packaging security checkpoint (#26)
+
+[SECURITY_REVIEW.md](SECURITY_REVIEW.md) inventories every permission and trust boundary. Selected-site permission construction now rejects wildcard hosts; remote ETags/If-Range are debug-sensitive; explicit CSP, no-private-window behavior and minimum Firefox 156 are guarded. No broader API compatibility or final-browser qualification is inferred from the earlier authentication slice. Development-installer root/ownership/upgrade findings explicitly block #27 delivery until fixed; #28 still qualifies final artifacts.

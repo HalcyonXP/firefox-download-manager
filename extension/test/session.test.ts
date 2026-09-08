@@ -145,3 +145,20 @@ describe("opt-in minimal session boundary", () => {
     expect(getAll).not.toHaveBeenCalled();
   });
 });
+
+describe("selected-site permission wildcard confinement", () => {
+  it.each([
+    "https://*.example.test/file",
+    "https://%2a.example.test/file",
+    "https://*/file",
+    "https://＊.example.test/file",
+  ])("rejects %s before even checking permissions", async (url) => {
+    const contains = vi.fn();
+    const getAll = vi.fn();
+    vi.stubGlobal("browser", { permissions: { contains }, cookies: { getAll } });
+    expect(() => sessionPermission(url)).toThrow();
+    await expect(collectSession(url, enabled, 1)).rejects.toThrow();
+    expect(contains).not.toHaveBeenCalled();
+    expect(getAll).not.toHaveBeenCalled();
+  });
+});

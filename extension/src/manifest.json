@@ -6,7 +6,7 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "download-manager@halcyonxp.local",
-      "strict_min_version": "128.0"
+      "strict_min_version": "156.0"
     }
   },
   "permissions": ["nativeMessaging", "menus"],
@@ -18,5 +18,9 @@
   },
   "action": {
     "default_title": "Download Manager"
+  },
+  "incognito": "not_allowed",
+  "content_security_policy": {
+    "extension_pages": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
   }
 }

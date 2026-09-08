@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime};
 
 use reqwest::header::{
     ACCEPT_ENCODING, CONTENT_DISPOSITION, CONTENT_ENCODING, CONTENT_LENGTH, CONTENT_RANGE, ETAG,
-    HeaderMap, HeaderName, LAST_MODIFIED, RANGE, RETRY_AFTER,
+    HeaderMap, HeaderName, HeaderValue, LAST_MODIFIED, RANGE, RETRY_AFTER,
 };
 use reqwest::redirect::Policy;
 use reqwest::{Client, StatusCode, Url};
@@ -75,10 +75,20 @@ impl RangeAssignment {
 }
 
 /// Parsed strong or weak HTTP entity tag.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct EntityTag {
     weak: bool,
     opaque: String,
+}
+
+impl fmt::Debug for EntityTag {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EntityTag")
+            .field("weak", &self.weak)
+            .field("opaque", &"<redacted>")
+            .finish()
+    }
 }
 
 impl EntityTag {
@@ -721,13 +731,27 @@ fn parse_etag(value: &str) -> Result<EntityTag, RangeValidationError> {
     })
 }
 
-pub(crate) fn if_range_value(validators: &Validators) -> Option<String> {
+fn if_range_value(validators: &Validators) -> Option<String> {
     validators
         .etag
         .as_ref()
         .filter(|etag| !etag.weak)
         .map(|etag| format!("\"{}\"", etag.opaque))
         .or_else(|| validators.last_modified.clone())
+}
+
+// Remote validators can be sensitive or reflect request data. Never Debug raw values.
+pub(crate) fn if_range_header(
+    validators: &Validators,
+) -> Result<Option<HeaderValue>, RangeValidationError> {
+    if_range_value(validators)
+        .map(|value| {
+            let mut header =
+                HeaderValue::from_str(&value).map_err(|_| RangeValidationError::InvalidHeader)?;
+            header.set_sensitive(true);
+            Ok(header)
+        })
+        .transpose()
 }
 
 pub(crate) fn validate_expected_validators(
@@ -920,6 +944,20 @@ mod tests {
         ContentRange, EntityTag, Validators, filename_from_content_disposition, if_range_value,
         parse_content_range, parse_etag, percent_decode,
     };
+
+    #[test]
+    fn remote_validator_debug_and_outgoing_header_are_redacted() {
+        let validators = Validators {
+            etag: Some(EntityTag::parse("\"synthetic-reflected-secret\"").expect("ETag")),
+            last_modified: None,
+        };
+        let header = super::if_range_header(&validators)
+            .expect("header")
+            .expect("value");
+        assert_eq!(header, "\"synthetic-reflected-secret\"");
+        assert!(header.is_sensitive());
+        assert!(!format!("{validators:?} {header:?}").contains("synthetic-reflected-secret"));
+    }
 
     #[test]
     fn parses_strict_content_range() {

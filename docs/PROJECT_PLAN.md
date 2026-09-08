@@ -14,7 +14,7 @@ The user explicitly authorized public visibility and requested that all document
 
 Twenty-two regular issues were transferred with their states and comment history. Current documentation uses their new numbers; [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) records the mapping and links historical implementations to cleaned public commits. The owner-private planning board retains the corresponding work statuses. The predecessor stays private solely as an archive, not an alternative source of truth.
 
-Implementation includes #23 authenticated handoff, #24 shared polite request admission, and #25 integrity/SHA-256. #32/#33 resolved the cancellation-observation baseline and actual public CI passed; that temporary gate is no longer active. Security review #26, packaging #27, and qualification/release #28 remain required. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
+Implementation includes #23 authenticated handoff, #24 shared polite request admission, and #25 integrity/SHA-256. #32/#33 resolved the cancellation-observation baseline and actual public CI passed; that temporary gate is no longer active. The #26 security review is recorded with explicit packaging blockers; packaging #27 and qualification/release #28 remain required. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
 
 ## Product goal
 
@@ -204,3 +204,7 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 ### Integrity checkpoint (#25)
 
 [INTEGRITY.md](INTEGRITY.md) records completion ordering, streamed SHA-256, immutable recovery expectations, explicit mismatch retention, and cancellation/file-lock limits. Unit/native integration and actual helper kill/restart cover checksum behavior; they do not extend the earlier real-Firefox evidence or waive large-file/clean-install qualification. Documentation audit also removed stale front-matter claims that #32 still blocked features and that authentication was still unadvertised; merged code, board state, and later plan notes already agreed those were resolved.
+
+### Pre-packaging security checkpoint (#26)
+
+[SECURITY_REVIEW.md](SECURITY_REVIEW.md) records the scoped review, fixed wildcard-permission and validator-redaction findings, explicit Firefox 156/CSP/private-window policy, actual native log/state inspection, and dependency audits. Review completion is not release approval. #27 must resolve development-installer reparse/ownership/transactional-upgrade findings and re-run the affected security checks. #28 must qualify the final policy/artifacts in Firefox and the target installation environment, without touching an unowned live profile.
