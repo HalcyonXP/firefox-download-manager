@@ -123,7 +123,7 @@ Schema fields marked `x-sensitive` require special handling. These include URL, 
 - Redaction occurs before structured data reaches a log formatter.
 - Cross-origin redirects strip credentials unless an explicit authenticated-download policy permits transfer.
 
-The credential shape reserves the reviewed boundary for issue #15; implementations must reject it until the `authenticated_requests` capability is advertised.
+The credential shape reserves the reviewed boundary for issue #23; implementations must reject it until the `authenticated_requests` capability is advertised.
 
 ## Compatibility rules
 
@@ -137,6 +137,6 @@ Application versions and persisted-state schema versions are independent of the 
 
 Non-sensitive examples are under [`protocol/schema/v2/examples`](../protocol/schema/v2/examples). They are normative test vectors for shape, not promises that every represented capability is already implemented. The schema declares JSON Schema Draft 2020-12 and validates each complete framed-body object independently.
 
-## V2 decision (#12)
+## V2 decision (#20)
 
-V1 cannot express open-folder without violating its strict unknown-command policy. V2 adds an explicit task-ID-only command; no arbitrary executable or path crosses this boundary. The helper invokes the absolute Windows Explorer executable with one canonical directory argument and detached null standard streams. The reserved get_settings command and verbose_logging setting allow #13 to implement settings without another shape change. Settings are implemented in #13 (see [SETTINGS.md](SETTINGS.md)); credential/checksum fields remain reserved. Queued resume means Start; failed resume means Retry.
+V1 cannot express open-folder without violating its strict unknown-command policy. V2 adds an explicit task-ID-only command; no arbitrary executable or path crosses this boundary. The helper invokes the absolute Windows Explorer executable with one canonical directory argument and detached null standard streams. The reserved get_settings command and verbose_logging setting allow #21 to implement settings without another shape change. Settings are implemented in #21 (see [SETTINGS.md](SETTINGS.md)); credential/checksum fields remain reserved. Queued resume means Start; failed resume means Retry.

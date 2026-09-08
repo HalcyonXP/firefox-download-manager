@@ -1,6 +1,6 @@
 # Partial-file storage policy
 
-Status: implemented for issues #6 through #9
+Status: implemented for issues #14 through #17
 
 Last updated: 2026-09-04
 
@@ -102,4 +102,4 @@ The [persistent task-state policy](STATE.md) records only completed ranges retur
 
 The fixed-concurrency scheduler uses these APIs for both ranged and sequential transfers. A ranged response is fully bounded and validated before it acquires the assignment writer; a sequential response owns the one streaming writer and becomes complete only at EOF. The task controller's cooperative stop waits for scheduler workers before requesting `durable_completed_ranges`, so pause/cancel cannot checkpoint a range whose writer is still active. Cancellation `keep` retains that safe coverage; `delete` removes the validated managed partial before forgetting its path/ranges and never targets a final file.
 
-Issue #17 will extend final integrity validation, and issue #18 will review the complete path trust boundary. Later changes may strengthen checks but may not weaken assignment bounds, bytes-first checkpoint ordering, exact coverage, unknown-stream restart, or create-new final publication.
+Issue #25 will extend final integrity validation, and issue #26 will review the complete path trust boundary. Later changes may strengthen checks but may not weaken assignment bounds, bytes-first checkpoint ordering, exact coverage, unknown-stream restart, or create-new final publication.

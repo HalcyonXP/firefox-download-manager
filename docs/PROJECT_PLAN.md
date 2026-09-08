@@ -4,15 +4,17 @@ GitHub execution board: [Firefox Download Manager](https://github.com/users/Halc
 
 Current state is maintained on the project board. Planning is complete; implementation proceeds through the lowest-numbered issue in **Ready** status, with dependent work retained in **Backlog** until it is unblocked.
 
-Current protocol: v2 (paired helper/extension upgrade, #12); v1 remains archived.
+Current protocol: v2 (paired helper/extension upgrade, #20); v1 remains archived.
 
 Project vocabulary and autonomous handoff decisions: [GLOSSARY.md](GLOSSARY.md).
 
-## Publication preparation priority (2026-09-08)
+## Public, authoritative repository (2026-09-08)
 
-The user requested privacy cleanup after #14 and then asked to finish it. #40 cleaned writable surfaces; #41 selected and verified an independent non-fork publication target, `HalcyonXP/firefox-download-manager`, because GitHub's retained original PR refs are read-only. The original `HalcyonXP/download-manager` remains private and authoritative for this board, issue numbering, acceptance criteria, and history. No work history was deleted or silently renumbered.
+The user explicitly authorized public visibility and requested that all documentation refer to **[HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager)**. #8 supersedes the temporary two-repository arrangement. This public repository now owns code, work issues, milestones, CI, and future releases. `origin` points here; there is no publication-remote synchronization step.
 
-**Only the independent target is cleared as a candidate for future public visibility; both repositories remain private.** No billing or public switch is part of cleanup. Further implementation resumes at #15 after #41. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md), [ADR 0008](decisions/0008-isolated-publication.md), and the synchronization rules in [DEVELOPMENT.md](DEVELOPMENT.md). This privacy result does not satisfy the outstanding hosted-CI or release-qualification gates.
+Twenty-two regular issues were transferred with their states and comment history. Current documentation uses their new numbers; [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) records the mapping and links historical implementations to cleaned public commits. The owner-private planning board retains the corresponding work statuses. The predecessor stays private solely as an archive, not an alternative source of truth.
+
+Implementation is complete through #22; #23, #24, and #25 are Ready after #8. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
 
 ## Product goal
 
@@ -73,72 +75,71 @@ The accepted component boundaries and decisions are recorded in [ARCHITECTURE.md
 
 ## Delivery milestones
 
-### [M0 — Foundation](https://github.com/HalcyonXP/download-manager/milestone/2)
+### [M0 — Foundation](https://github.com/HalcyonXP/firefox-download-manager/milestone/1)
 
 Establish decisions, project boundaries, protocol design, CI, and deterministic test infrastructure.
 
-- [#1 Record architecture, scope, and security decisions](https://github.com/HalcyonXP/download-manager/issues/1)
-- [#2 Define the versioned extension/native-helper protocol](https://github.com/HalcyonXP/download-manager/issues/2)
-- [#3 Scaffold the WebExtension, Rust workspace, and CI](https://github.com/HalcyonXP/download-manager/issues/3)
-- [#4 Build a deterministic adversarial HTTP test server](https://github.com/HalcyonXP/download-manager/issues/4)
+- [#9 Record architecture, scope, and security decisions](https://github.com/HalcyonXP/firefox-download-manager/issues/9)
+- [#10 Define the versioned extension/native-helper protocol](https://github.com/HalcyonXP/firefox-download-manager/issues/10)
+- [#11 Scaffold the WebExtension, Rust workspace, and CI](https://github.com/HalcyonXP/firefox-download-manager/issues/11)
+- [#12 Build a deterministic adversarial HTTP test server](https://github.com/HalcyonXP/firefox-download-manager/issues/12)
 
 **Exit condition:** both components build in CI, the protocol boundary is documented, and local HTTP fixtures can reproduce correct and incorrect range behavior.
 
-### [M1 — Native download MVP](https://github.com/HalcyonXP/download-manager/milestone/3)
+### [M1 — Native download MVP](https://github.com/HalcyonXP/firefox-download-manager/milestone/2)
 
 Build the download engine before attaching a browser interface.
 
-- [#5 HTTP probing and strict range-response validation](https://github.com/HalcyonXP/download-manager/issues/5)
-- [#6 Safe random-access partial-file storage](https://github.com/HalcyonXP/download-manager/issues/6)
-- [#7 Persistent task and segment state](https://github.com/HalcyonXP/download-manager/issues/7)
-- [#8 Fixed-concurrency segment scheduler](https://github.com/HalcyonXP/download-manager/issues/8)
-- [#9 Pause, resume, cancellation, retries, and progress](https://github.com/HalcyonXP/download-manager/issues/9)
+- [#13 HTTP probing and strict range-response validation](https://github.com/HalcyonXP/firefox-download-manager/issues/13)
+- [#14 Safe random-access partial-file storage](https://github.com/HalcyonXP/firefox-download-manager/issues/14)
+- [#15 Persistent task and segment state](https://github.com/HalcyonXP/firefox-download-manager/issues/15)
+- [#16 Fixed-concurrency segment scheduler](https://github.com/HalcyonXP/firefox-download-manager/issues/16)
+- [#17 Pause, resume, cancellation, retries, and progress](https://github.com/HalcyonXP/firefox-download-manager/issues/17)
 
 **Exit condition:** the native helper can safely download deterministic fixtures with 1/2/4/8 workers, pause and resume them, and produce byte-identical output.
 
-### [M2 — Firefox integration](https://github.com/HalcyonXP/download-manager/milestone/4)
+### [M2 — Firefox integration](https://github.com/HalcyonXP/firefox-download-manager/milestone/3)
 
 Connect the engine to an explicit, accessible Firefox workflow.
 
-- [#10 Windows Native Messaging host](https://github.com/HalcyonXP/download-manager/issues/10)
-- [#11 Context-menu and creation dialog](https://github.com/HalcyonXP/download-manager/issues/11)
-- [#12 Queue and progress dashboard](https://github.com/HalcyonXP/download-manager/issues/12)
-- [#13 Local settings and diagnostic logging](https://github.com/HalcyonXP/download-manager/issues/13)
+- [#18 Windows Native Messaging host](https://github.com/HalcyonXP/firefox-download-manager/issues/18)
+- [#19 Context-menu and creation dialog](https://github.com/HalcyonXP/firefox-download-manager/issues/19)
+- [#20 Queue and progress dashboard](https://github.com/HalcyonXP/firefox-download-manager/issues/20)
+- [#21 Local settings and diagnostic logging](https://github.com/HalcyonXP/firefox-download-manager/issues/21)
 
 **Exit condition:** Firefox can create and control direct downloads while reconstructing accurate state after its UI closes and reopens.
 
-### [M3 — Reliability and authenticated downloads](https://github.com/HalcyonXP/download-manager/milestone/5)
+### [M3 — Reliability and authenticated downloads](https://github.com/HalcyonXP/firefox-download-manager/milestone/4)
 
 Protect correctness across restarts, changing resources, authentication, and hostile server behavior.
 
-- [#14 Resource identity and crash recovery](https://github.com/HalcyonXP/download-manager/issues/14)
-- [#15 Minimal authenticated-session handoff](https://github.com/HalcyonXP/download-manager/issues/15)
-- [#16 Fallback, retry, and throttling hardening](https://github.com/HalcyonXP/download-manager/issues/16)
-- [#17 Integrity validation and optional checksums](https://github.com/HalcyonXP/download-manager/issues/17)
+- [#22 Resource identity and crash recovery](https://github.com/HalcyonXP/firefox-download-manager/issues/22)
+- [#23 Minimal authenticated-session handoff](https://github.com/HalcyonXP/firefox-download-manager/issues/23)
+- [#24 Fallback, retry, and throttling hardening](https://github.com/HalcyonXP/firefox-download-manager/issues/24)
+- [#25 Integrity validation and optional checksums](https://github.com/HalcyonXP/firefox-download-manager/issues/25)
 
 **Exit condition:** interruption, resource mutation, malformed range responses, and expired authentication cannot result in a falsely successful or silently corrupted file.
 
-### [M4 — Local release](https://github.com/HalcyonXP/download-manager/milestone/6)
+### [M4 — Local release](https://github.com/HalcyonXP/firefox-download-manager/milestone/5)
 
 Review, package, document, and qualify the first local release.
 
-- [#18 Permission and native-helper security review](https://github.com/HalcyonXP/download-manager/issues/18)
-- [#19 Windows installation and removal](https://github.com/HalcyonXP/download-manager/issues/19)
-- [#20 End-to-end qualification and first release](https://github.com/HalcyonXP/download-manager/issues/20)
+- [#26 Permission and native-helper security review](https://github.com/HalcyonXP/firefox-download-manager/issues/26)
+- [#27 Windows installation and removal](https://github.com/HalcyonXP/firefox-download-manager/issues/27)
+- [#28 End-to-end qualification and first release](https://github.com/HalcyonXP/firefox-download-manager/issues/28)
 
 **Exit condition:** a clean Windows 11 environment can install, use, upgrade, and remove the extension/helper through documented steps, and GitHub provides checksummed release artifacts.
 
 ## Critical path
 
 ```text
-#1 ──► #2 ──► #3
-              ├──► #5 ─┐
-#4 ───────────┘         │
-#3 ──► #6 ──► #7 ──────┼──► #8 ──► #9 ──► #10 ──► #11/#12 ──► #13
-                        │
-                        └────────────────────► #14/#16/#17
-#10 + #11 + #14 ─────────────────────────────► #15
-M2 + M3 ──► #18 ──► #19 ──► #20
+#9 -> #10 -> #11 -> #12
+#11 + #12 -> #13
+#11 -> #14 -> #15
+#13 + #14 + #15 -> #16 -> #17 -> #18 -> #19/#20 -> #21
+#13 + #15 + #17 -> #22/#24/#25
+#18 + #19 + #22 -> #23
+M2 + M3 -> #26 -> #27 -> #28
 ```
 
 Some work may proceed in parallel, but issue acceptance criteria define completion—not code presence alone.
@@ -152,7 +153,7 @@ A release must preserve these invariants:
 3. A ranged response is accepted only when its status and `Content-Range` match the request.
 4. Resource size and validators remain consistent throughout a segmented download.
 5. Resume never combines bytes from resources known to be different.
-6. Segmentation and reuse of nonempty completed coverage require a strong ETag; weak/absent identity uses a fresh single stream or fails (decision #14).
+6. Segmentation and reuse of nonempty completed coverage require a strong ETag; weak/absent identity uses a fresh single stream or fails (decision #22).
 7. A final file is exposed only after size/integrity checks and successful promotion from partial state.
 8. Existing files are never silently overwritten.
 9. Credentials never appear in routine logs or persistent state by default.
@@ -162,7 +163,7 @@ A release must preserve these invariants:
 ## Release quality gates
 
 - Formatting, linting, unit tests, and integration tests pass in GitHub Actions.
-- Publication privacy checks pass for the independent target (#40/#41) before public visibility; the original repository remains private unless its GitHub-retained metadata is separately removed.
+- Publication privacy checks pass for the independent target (#29/#41) before public visibility; the original repository remains private unless its GitHub-retained metadata is separately removed.
 - Adversarial HTTP fixtures cover malformed and changing responses.
 - The final output is byte-identical for all supported worker counts.
 - Firefox and helper restart paths are tested.
@@ -176,13 +177,13 @@ A release must preserve these invariants:
 Saved views provide:
 
 - A Kanban board grouped by status
-- The current `M0 — Foundation` milestone
+- The current `M2 — Firefox integration` milestone
 - Native-helper work
 - Firefox-extension work
 - Security-sensitive work
 - An unfiltered all-work table
 
-Enabled workflows automatically add open issues and pull requests from this repository, initialize added items as **Backlog**, move linked pull-request work to **In Review**, move changes-requested work to **In Progress**, move closed or merged work to **Done**, and return reopened work to **Ready**. Existing sub-issues are also added automatically.
+Transferred issues retained their board statuses. Stale predecessor PR cards were removed; current dependency PRs are tracked here. Existing added-item/linked-PR/closure workflows still require verification. The inherited repository auto-add rule has not been reconfigured for the new repository; explicitly add new issues and PRs to the project rather than claiming that automation has run. The board is an owner-private planning view; public issue/milestone links above remain usable without it.
 
 ## Planning conventions
 

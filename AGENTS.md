@@ -4,11 +4,12 @@ This repository contains a local download manager for Firefox Developer Edition 
 
 ## Source of truth
 
-- Project board: https://github.com/users/HalcyonXP/projects/1
+- Canonical public repository: https://github.com/HalcyonXP/firefox-download-manager
+- Project board (owner-private planning view): https://github.com/users/HalcyonXP/projects/1
 - Project plan: `docs/PROJECT_PLAN.md`
-- Work items and acceptance criteria: GitHub Issues in **HalcyonXP/download-manager** (private development/history repository).
-- **HalcyonXP/firefox-download-manager** is the separate, non-fork publication/CI target, not a replacement issue board. Keep the original private. Synchronize only checked, reviewed `main`; never mirror refs or push old history. See `docs/PUBLICATION_PRIVACY.md` and `docs/DEVELOPMENT.md`.
-- Start with the lowest-numbered issue in **Ready** status. At the initial implementation handoff, this was issue #1; use the board for current status.
+- Work items and acceptance criteria: this repository's GitHub Issues.
+- `origin` must refer to the canonical repository for maintainer work. There is no publication mirror or synchronization workflow. The private predecessor is an archive, not a development target; never push its old history.
+- Start with the lowest-numbered issue in **Ready** status. Existing work was transferred, not restarted; see `docs/ISSUE_MIGRATION.md` for historical numbering. The next feature issue after public transition #8 is #23.
 
 If code, documentation, and an issue disagree, stop and resolve the contradiction explicitly. Update the plan when scope changes.
 
@@ -40,26 +41,26 @@ Saved project views are available for the status board, current milestone, nativ
 
 For each issue:
 
-1. Confirm its dependencies and acceptance criteria.
+1. Confirm its dependencies and acceptance criteria. Add the issue to the project explicitly if absent (`gh project item-add 1 --owner HalcyonXP --url <issue-url>`); do not assume auto-add targets this repository.
 2. Move it from **Ready** to **In Progress** on the project board.
 3. Create a focused branch named `issue-<number>-<short-name>`.
 4. Implement tests with the behavior whenever practical.
 5. Run formatting, linting, unit tests, integration tests, and builds relevant to the change.
 6. Commit and push the branch; open a pull request containing `Closes #<number>`.
-7. Confirm the linked pull request moves the item to **In Review**.
+7. Add the pull request to the project if absent and confirm the linked work moves to **In Review**.
 8. Merge only when acceptance criteria are satisfied; closing or merging should move the item to **Done**.
 9. Promote newly unblocked issue(s) from **Backlog** to **Ready**.
 
-Project automations add new open repository issues and pull requests, place added items in **Backlog**, move linked pull-request work to **In Review**, move changes-requested work to **In Progress**, move closed/merged work to **Done**, and move reopened work to **Ready**. Verify automation outcomes rather than assuming they ran.
+The existing status workflows cover added items, linked PRs, changes requested, closure/merge, and reopening. Their outcomes must be verified. The inherited auto-add workflow targeted the predecessor; this session has not reconfigured it through the unavailable browser settings UI. Explicitly add new issues/PRs and verify status. Stale predecessor PR cards have been removed from the active board without deleting their private records.
 
 Keep commits and pull requests scoped to one issue unless two work items are inseparable and that decision is documented.
 
-## Immediate implementation sequence
+## Foundation sequence (completed; current issue numbers)
 
-- #1 Architecture, scope, and security decisions
-- #2 Versioned extension/helper protocol
-- #3 Repository and CI scaffolding
-- #4 Deterministic adversarial HTTP server
-- #5 and #6 may then proceed in parallel
+- #9 Architecture, scope, and security decisions
+- #10 Versioned extension/helper protocol
+- #11 Repository and CI scaffolding
+- #12 Deterministic adversarial HTTP server
+- #13 and #14 may then proceed in parallel
 
 The detailed dependency graph and milestone exit criteria are in `docs/PROJECT_PLAN.md`.

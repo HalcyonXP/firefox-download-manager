@@ -1,27 +1,21 @@
 # ADR 0008 — Isolate publication from retained private history
 
-- Status: accepted
+- Status: superseded by [ADR 0009](0009-public-authority.md)
 - Date: 2026-09-08
-- Work item: HalcyonXP/download-manager#41
+- Work item: [#30](https://github.com/HalcyonXP/firefox-download-manager/issues/30), transferred with its history
 
-## Context and intent
+## Historical context and decision
 
-The user explicitly asked to finish privacy cleanup. GitHub rejected deletion of retained PR refs with HTTP 422 (`refs/pull/* is read-only`). Support requires a browser sign-in not available to this session; no request has been submitted. Rewriting writable history did not erase the original private email from GitHub-owned history.
+The user asked to finish privacy cleanup. GitHub rejected deletion of retained PR refs with HTTP 422 (`refs/pull/* is read-only`). Support required a browser sign-in unavailable to the session; no request was submitted. Writable-history rewriting had not erased the private email from GitHub-owned originals.
 
-The intended outcome is a safe publication target. Choosing the already documented separate-repository alternative is an implementation decision under delegated project authority, not a separately confirmed preference for two repositories. Deleting/recreating the original would lose important issue, review, and decision context and was rejected.
+Under delegated project authority, an independently created non-fork repository, `HalcyonXP/firefox-download-manager`, was selected instead of deleting/recreating the predecessor. The temporary decision kept development/issues in the private predecessor and synchronized only cleaned `main` to the independent target. At that time both were private. This was an implementation choice, not a separately confirmed preference for two repositories.
 
-## Decision
+## Evidence retained
 
-- `HalcyonXP/download-manager` remains **private**, with the existing project board, issue numbering, work acceptance criteria, and complete decision history. The checkout's `origin` points here.
-- `HalcyonXP/firefox-download-manager` is an independently created **non-fork** publication/CI target. The checkout's `publication` remote points here. It is still private pending an explicit visibility decision.
-- Synchronize only reviewed, privacy-checked `main`, using a normal fast-forward push. Never mirror refs, force over divergent publication work, push old bundles, or copy retained original PR metadata.
-- New Dependabot proposals in the target are new records, not imported historical PRs. Audit their refs/content too. Resolve code/dependency changes in the authoritative development repository before synchronizing `main`.
-- Publication privacy clearance is repository-specific. Clearing the independent target does not erase or clear the original. The original must remain private unless GitHub separately removes its retained data.
+The baseline target audit checked all 22 advertised branch/PR refs, 34 reachable commits, and 292 historical blobs. All 26 known original sensitive commit lookups returned the exact missing-commit response while a known-good current commit remained readable. Seven fresh Dependabot PRs were included; three initial update log archives were inspected and their run records removed. The synchronized-head audit subsequently covered 35 commits and 306 blobs. See [PUBLICATION_PRIVACY.md](../PUBLICATION_PRIVACY.md).
 
-## Evidence and consequences
+GitHub attribution, technical identifiers, and reviewed third-party notices remained. The result established isolation, not erasure or account anonymity. It did not qualify a release or establish successful application CI.
 
-The baseline target audit checked all 22 advertised branch/PR refs, 34 reachable commits, and 292 historical blobs. All 26 known original sensitive commit lookups returned the precise missing-commit response, while a known-good current commit remained readable. Seven fresh Dependabot PRs were included; three initial Dependabot update log archives were inspected and their run records removed. See [PUBLICATION_PRIVACY.md](../PUBLICATION_PRIVACY.md) for the repeatable verifier and later synchronized-head evidence.
+## Supersession
 
-GitHub attribution, public technical identifiers, and reviewed third-party attribution remain; this is not account anonymization. The public source tree retains links to the private planning record so history is not fabricated or silently renumbered. Ordinary readers can build the publication source without access to that private board.
-
-No visibility, billing, protection, browser-profile, application behavior, or runtime networking setting changes are part of this decision. Privacy clearance is not hosted-CI success or installable-release qualification.
+The user then explicitly requested public visibility and consistent documentation referring to the new repository. #8 and ADR 0009 replace the temporary two-repository workflow with a **single public authority**. Regular work issues were transferred with their history; the predecessor remains private only as an archive. Do not follow the former synchronization procedure. The prohibition on importing sensitive original Git refs remains in force.

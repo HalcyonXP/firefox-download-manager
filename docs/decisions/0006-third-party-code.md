@@ -25,4 +25,4 @@ Design inspiration may be documented with links, but does not authorize copying.
 
 ## Consequences
 
-Issue #3 must establish lockfiles and dependency-license/audit commands. Pull requests introducing dependencies must explain necessity and license impact. A project license should be selected explicitly before external distribution; repository privacy is not a substitute for provenance records.
+Issue #11 must establish lockfiles and dependency-license/audit commands. Pull requests introducing dependencies must explain necessity and license impact. A project license should be selected explicitly before external distribution; repository privacy is not a substitute for provenance records.

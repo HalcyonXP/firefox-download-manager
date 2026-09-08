@@ -1,6 +1,6 @@
 # Persistent task-state and recovery policy
 
-Status: implemented for issues #7 through #9 and #14
+Status: implemented for issues #15 through #17 and #22
 
 Internal format version: `2`
 
@@ -90,7 +90,7 @@ Version 2 has no fields for:
 - live speed samples, active-worker counters, retry budgets, or event queues; or
 - detailed terminal failure data (the `failed` lifecycle state persists, but restart uses a bounded generic recovery error).
 
-These values cannot enter serialization accidentally through a generic header map because no such map exists in the persisted type. Authentication remains deferred to issue #15 and credentials stay memory-only by default. Exact URLs and local paths are persisted only because recovery needs them, and custom `Debug` implementations redact URLs, destinations, partial paths, final paths, and filenames.
+These values cannot enter serialization accidentally through a generic header map because no such map exists in the persisted type. Authentication remains deferred to issue #23 and credentials stay memory-only by default. Exact URLs and local paths are persisted only because recovery needs them, and custom `Debug` implementations redact URLs, destinations, partial paths, final paths, and filenames.
 
 ## Bytes-first crash-safe checkpoints
 
@@ -141,7 +141,7 @@ Unknown future versions and corrupt records remain untouched for diagnosis or de
 
 A missing, truncated, linked, or wrong-length partial excludes active prepublication work from recovery; a `promoting` or `completed` task may instead prove its recorded final file. At task-engine startup, a valid interrupted `downloading` record becomes `paused`; interrupted `probing` or `validating` becomes `failed`; `promoting` becomes `completed` only when its recorded final path already passed recovery validation, otherwise it becomes `failed`. A failed/cancelled record whose partial deletion completed before its metadata checkpoint durably forgets the now-missing path and coverage. Each normalization is a critical checkpoint before the snapshot is exposed.
 
-Before reuse, #14 additionally requires a fresh equal resource identity and a strong ETag for any nonempty completed coverage. Old weak/absent-validator records remain readable but cannot optimistically resume.
+Before reuse, #22 additionally requires a fresh equal resource identity and a strong ETag for any nonempty completed coverage. Old weak/absent-validator records remain readable but cannot optimistically resume.
 
 A validated known-size task can reopen its partial file with only the durable completed ranges. Active assignments never survive restart. Reopened storage rejects assignments over completed coverage and permits only missing ranges, so uncheckpointed bytes are safely overwritten rather than trusted. An unknown-length single stream reopens with no coverage regardless of the partial's current length; its next bounded streaming writer truncates to zero before receiving a fresh response.
 
@@ -160,7 +160,7 @@ If interruption occurs between cancellation's partial deletion and metadata repl
 
 ## Task-controller integration
 
-The issue-#9 task controller persists the resolved worker count, serializes control per task, and drives probe, scheduler, checkpoint, validation, promotion, and terminal transitions. Pause and cancellation first signal all asynchronous network waits, then wait for worker joins, then take a critical bytes-first completed-range checkpoint before changing state. Resume reprobes and opens only validated retained storage; an explicit retry of `failed` moves through `queued` and `probing` and cannot reuse a partial after identity change. Unknown-length interruption still restarts from zero.
+The issue-#17 task controller persists the resolved worker count, serializes control per task, and drives probe, scheduler, checkpoint, validation, promotion, and terminal transitions. Pause and cancellation first signal all asynchronous network waits, then wait for worker joins, then take a critical bytes-first completed-range checkpoint before changing state. Resume reprobes and opens only validated retained storage; an explicit retry of `failed` moves through `queued` and `probing` and cannot reuse a partial after identity change. Unknown-length interruption still restarts from zero.
 
 Routine progress checkpoint requests remain subject to the store's cadence, while pause, cancel, failure, retry, promotion, and completion boundaries are critical. Native Messaging stdin EOF invokes the same cooperative stop path across every managed active run: transfer cancellation/backoff wakes, workers join, eligible partial bytes/ranges receive a critical boundary checkpoint, `downloading` becomes `paused`, and incomplete probe/validation becomes durably `failed`. Promotion is synchronous and is allowed to finish its collision-safe publication. The host exits only after these active ownership boundaries complete; the next process exclusively locks the state root, performs normal recovery, and sends snapshots after protocol negotiation.
 

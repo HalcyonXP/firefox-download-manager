@@ -14,7 +14,7 @@ Firefox does not currently support `background.service_worker`; for Manifest V3 
 
 Use Manifest V3 and a Firefox `background.scripts` event page with `persistent: false`. Register event listeners synchronously, keep no authoritative task state in the background page, reconnect Native Messaging when needed, and recover from a helper snapshot.
 
-Declare a stable Gecko extension ID because the native-host manifest must allow exactly that ID. Request only permissions justified by implemented behavior. As implemented for issue #10, the sole permission is `nativeMessaging`; there are no host permissions. The native connection remains dormant until a manager surface asks for it, and each new port is usable only after hello plus an atomically assembled complete snapshot. Broad host or cookie access is deferred until the authenticated-download issue can justify and minimize it.
+Declare a stable Gecko extension ID because the native-host manifest must allow exactly that ID. Request only permissions justified by implemented behavior. At the native-host stage (#18), the sole permission was `nativeMessaging`. Explicit capture (#19) added `menus`; the current manifest requests `nativeMessaging` and `menus` with no host permissions. The native connection remains dormant until a manager surface asks for it, and each new port is usable only after hello plus an atomically assembled complete snapshot. Broad host or cookie access is deferred until the authenticated-download issue can justify and minimize it.
 
 Reference: [MDN `background` manifest key](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/manifest.json/background).
 

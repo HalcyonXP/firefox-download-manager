@@ -17,8 +17,8 @@ The repository pins Rust in `rust-toolchain.toml`, records the npm version in `p
 Run these commands in PowerShell:
 
 ```powershell
-git clone https://github.com/HalcyonXP/download-manager.git
-Set-Location download-manager
+git clone https://github.com/HalcyonXP/firefox-download-manager.git
+Set-Location firefox-download-manager
 
 rustup show
 npm ci
@@ -30,7 +30,7 @@ cargo test --workspace --all-features --locked
 cargo build --workspace --all-features --locked
 ```
 
-This is the authoritative private development checkout and requires an authenticated Git credential. A build-only checkout can instead use `https://github.com/HalcyonXP/firefox-download-manager.git` and its matching directory; that independent publication target is initially private too. `npm ci` installs all project-local JavaScript tools.
+This is the public, authoritative development checkout. Reading/cloning it does not require GitHub authentication; contributing/pushing still requires appropriate authorization. `npm ci` installs all project-local JavaScript tools. Use the same repository for builds, issues, PRs, CI, and releases.
 
 ## Project layout
 
@@ -66,7 +66,8 @@ The browser extension build never contains the Rust helper. The native helper ne
 | `npm run native-host:check` | Cross-check the extension ID, permission, host manifest, Rust constants, and HKCU scripts |
 | `npm run build` | Recreate `extension/dist` |
 | `npm run extension:check` | Validate the built manifest and referenced assets |
-| `npm run check` | Run all JavaScript/protocol/extension quality gates |
+| `npm run check` | Run JavaScript/protocol/extension, privacy, and repository-reference gates |
+| `npm run repository:check` | Reject retired repository references in current tracked files |
 | `cargo fmt --all` | Format all Rust crates |
 | `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings` | Treat Rust lint warnings as failures |
 | `cargo test --workspace --all-features --locked` | Run all Rust tests |
@@ -117,23 +118,13 @@ Uninstallation deliberately does not recurse into `%LOCALAPPDATA%\HalcyonXP\Fire
 
 Run `npm run privacy:test`, `npm run privacy:check`, and `npm run privacy:history` (full history required). The normal `npm run check` includes the policy tests and HEAD-history guard. Never paste matched private values into issues or commit messages. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) for target-specific clearance and `privacy:publication`; local HEAD pattern checks alone do not clear GitHub-retained original history.
 
-## Synchronize the independent publication target
+## Maintainer remotes and issue history
 
-Keep `origin` on `HalcyonXP/download-manager`; its board/issues remain the work source of truth. Add this separate remote once:
+`origin` is `https://github.com/HalcyonXP/firefox-download-manager.git`. A checkout from the temporary two-remote arrangement should preserve local changes, then switch its authoritative remote to this URL (or use a fresh clone). This working checkout already uses the new `origin`; its optional `private-archive` remote has pushing disabled.
 
-```powershell
-git remote add publication https://github.com/HalcyonXP/firefox-download-manager.git
-```
+There is no mirror-publishing step. Create branches and PRs directly in this repository, referencing its current issue numbers. See [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) before interpreting old commit-message numbers. Never merge or push original private bundles, old PR refs, or pre-scrub branches. Private audit inputs and recovery material stay outside the checkout.
 
-After an issue PR is accepted/merged in the development repository, fast-forward local `main` from `origin/main`, ensure the checkout is clean, and pass the local quality/privacy gates. Then synchronize **only** that reviewed branch:
-
-```powershell
-git push publication refs/heads/main:refs/heads/main
-```
-
-Use normal fast-forward pushes only; never `--mirror`, `--all`, old bundles, audit refs, or force-pushes to bypass divergence. Do not merge publication-only Dependabot proposals directly: review/apply accepted changes in the development repository first. Before the initial visibility decision, rerun the authenticated `privacy:publication` audit described in [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md). Once public, inspect new CI/log/artifact evidence separately; the initial verifier deliberately refuses to silently approve started jobs or artifacts.
-
-Public-target CI evidence must name its repository and exact tested commit. Blocked private jobs and mock Firefox transport are not successful release qualification. This Git synchronization is development tooling, not runtime cloud sync or a remote updater.
+Public CI results must name the exact tested commit. Historical blocked jobs, dependency-update jobs, and mocked Firefox transport are not successful end-to-end release qualification. If a new issue/PR is not on the owner planning board, add it explicitly; repository auto-add has not been verified for this repository.
 
 ## Dependency and license review
 

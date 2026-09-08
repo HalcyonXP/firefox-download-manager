@@ -1,37 +1,35 @@
 # Shared project vocabulary
 
+## Current meaning
+
+- **Canonical repository / `origin`**: [HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager), public and authoritative for code, issues, CI, and future releases. There is no publication-mirror workflow.
+- **Private predecessor / archive**: retained original review/Git records, not an alternative development repository. It must remain private; its sensitive original refs must never be imported.
+- **Current issue number**: an issue in the canonical repository. [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) maps historical numbers and implementation commits; old commit messages retain their historical namespace.
 - **Manager**: the Firefox UI plus its on-demand Rust native helper, not Firefox's built-in downloads.
 - **Explicit capture**: a link context-menu action or pasted direct HTTP(S) URL; never automatic interception.
-- **Proposed filename**: a Windows-safe name derived from the URL or entered by the user. Issue #11 resolves this before submission; server metadata cannot choose a path. Collision suffixes are selected safely at final promotion.
+- **Proposed filename**: a Windows-safe name derived from the URL or entered by the user. #19 resolves this before submission; server metadata cannot choose a path. Collision suffixes are selected safely at final promotion.
 - **Worker**: one transfer lane (1/2/4/8), not permission to exceed the separate global/per-host request caps.
 - **Partial**: helper-managed, unvalidated download storage; not final output.
 - **Checkpoint**: flushed completed ranges followed by durable metadata, in that order.
 - **Snapshot**: the helper's authoritative task projection; cached UI state is explicitly stale when disconnected.
 - **Promotion**: no-overwrite publication only after complete coverage and validation.
+- **Strong resource identity** (#22): equal final URL, size, mode and validators, including a strong ETag; weak tags and dates alone never justify combining persisted/request byte ranges.
 - **Ready to install**: versioned, checksummed artifacts and documented setup with release gates passed. It does not imply installation into the user's existing Firefox profile.
 - **Qualification gap**: a release criterion for which evidence is missing. Code presence or a mock test is not end-to-end evidence.
 
-## Execution record — 2026-09-08
+## Privacy meanings
 
-The user explicitly authorized autonomous development within scope. Installation readiness is the intended outcome; changing their live browser profile is not required to achieve it. Baseline `bdab5bc` is clean, GitHub authentication has repository/project/workflow access, and Windows/MSVC Rust plus Node tools are present. Issues #1–#10 are Done; #11, #14, #16 are Ready. Proceed in numeric Ready order.
+- **Writable-history cleanup** (#29): removal from editable branches/tags and tracked content; it does not imply erasure from GitHub caches or closed-PR refs.
+- **Isolation, not erasure** (#30): the independent repository does not contain the known original sensitive commits. GitHub retains originals in the private archive.
+- **Publication privacy clearance**: a repository-specific, time-scoped audit, not anonymity or a guarantee about future uploads. Git/platform-metadata checks alone do not inspect workflow log/archive content.
+- **Public attribution**: GitHub handles, noreply identities, reviewed technical principals, and third-party notices. GitHub's SSH routing principal and Dependabot's published support sign-offs are not private owner contact data; commit author/committer emails remain noreply-only.
 
-Issue #11 acceptance uses “resolved filename”; protocol v1 has no preview command. The implemented interpretation is a visible, editable, Windows-safe **proposed filename** and explicit existing destination, with collision-safe final naming by the helper. This is an implementation decision under the user's delegated authority, not a separately confirmed user preference. Referrers remain absent until the opt-in session policy in #15; no broad host permission is needed for creation.
+## Decision and learning history — 2026-09-08
 
-- **Strong resource identity** (#14): equal final URL, size, mode and validators, including a strong ETag; weak tags and dates alone never justify combining persisted/request byte ranges.
+The user authorized autonomous development toward an installable release, without changing their live browser profile. Initial work through the native host was followed by explicit capture, dashboard/protocol v2, settings, and strong resource identity. Current implementation is through #22; #23/#24/#25 are the next Ready feature work.
 
-## Publication terms (#40/#41)
+#19 interpreted “resolved filename” as a visible, editable, Windows-safe proposed name, because the then-current v1 contract had no preview command. That is an implementation decision, not a separately confirmed user preference. Referrers and cookie access remain deferred to #23. Mocked Firefox transport was useful rendered-UI evidence, not real Firefox Native Messaging qualification.
 
-- **Writable-history cleanup**: removal from editable branches/tags and tracked content; it does not imply erasure from GitHub caches or closed-PR refs.
-- **Publication privacy-cleared**: a repository-specific result after content/history and platform-surface inspection. #41 clears the independent target, not GitHub-retained originals in the private development repository.
-- **Public attribution**: GitHub account handles, noreply identities, and reviewed project/third-party identifiers. These remain attributable and are not an anonymity promise.
+Privacy cleanup first rewrote contact metadata without changing writable branch tip trees. GitHub rejected removal of retained PR refs; Support browser sign-in was unavailable and no request was submitted. #30 selected an independent target while preserving private records. Fresh Dependabot refs/logs were audited rather than assuming the new repository remained empty. Pattern false positives for project-board URLs, GitHub SSH routing, and public bot sign-offs were narrowly reviewed and regression-tested.
 
-The user explicitly requested privacy preparation after #14 because private Actions budget is exhausted. They have not requested a visibility change in this task. #14 is complete; #40 takes precedence over further feature work, with unresolved platform-owned findings preserved in #41. Metadata-only rewriting preserved every writable branch tip tree; prior commit hashes/CI run links may no longer identify current records.
-
-
-### Completion follow-up (#41)
-
-- **Development/history repository** (`origin`): `HalcyonXP/download-manager`, always private unless retained originals are separately removed. Existing numbered work references and the project board remain authoritative here.
-- **Publication/CI target** (`publication`): `HalcyonXP/firefox-download-manager`, independently created rather than forked. Only reviewed, checked `main` is synchronized; do not mirror refs or merge publication-only dependency proposals directly.
-- **Isolation, not erasure**: original private GitHub records remain inaccessible to public readers because the original stays private; they were not removed by creating the clean target.
-
-The user explicitly requested finishing cleanup. Choosing the documented independent-target alternative under delegated authority is an implementation decision, not a separately confirmed repository-layout preference. GitHub rejected PR-ref deletion; Support sign-in was unavailable and no request was submitted. Fresh Dependabot records were audited rather than assuming a new repository stayed empty. Public GitHub support sign-offs are retained third-party attribution, while commit author/committer emails remain noreply-only.
+The user's subsequent request **explicitly authorized public visibility and documentation referring to the new repository**. #8 supersedes the temporary mirror arrangement: regular issues were transferred, numbering was mapped, and the new repository became the single authority. Transfer changed issue IDs and automatically rewrote references; state, authorship, timestamps, comments, and acceptance meaning were verified rather than assuming identity numbers remained stable. No new license preference or installable-release qualification was inferred from permission to make the repository public.
