@@ -60,13 +60,19 @@ Unknown totals, malformed numbers, duplicate singleton headers, missing known va
 
 ## Fixed-concurrency transfer
 
-For a proven known-size resource, the scheduler subtracts durable completed coverage and lazily divides only the missing gaps into large requests. Ordinary assignments are between 1 MiB and 8 MiB, subject to a smaller final fragment. This limits request overhead while bounding each response buffer. The request plan is rejected if it would exceed 1,000,000 assignments.
+For a proven known-size resource with a strong ETag, the scheduler subtracts durable completed coverage and lazily divides only the missing gaps into large requests. Ordinary assignments are between 1 MiB and 8 MiB, subject to a smaller final fragment. This limits request overhead while bounding each response buffer. The request plan is rejected if it would exceed 1,000,000 assignments.
 
 Supported task worker counts are exactly 1, 2, 4, and 8. Four is the default and eight is the initial cap. Workers pull from one synchronized gap queue, so faster workers continue with unassigned bytes without creating overlap. After all other work is complete, one idle worker may duplicate the sole stalled tail request after a bounded delay. Both responses are validated and buffered independently, but only the first complete response can claim the storage assignment; the loser is cancelled and can never write.
 
-Every worker sends `Accept-Encoding: identity`. It also sends `If-Range` with a probed strong ETag, or with Last-Modified when no strong ETag is available. Redirect following is disabled for transfer requests: the response URL must remain the exact probed final URL. Status, range, total, declared length, encoding, validators, and exact EOF are revalidated before the buffered assignment is passed to storage.
+Every worker sends `Accept-Encoding: identity`. It also sends `If-Range` with the probed strong ETag. Last-Modified is still compared when present, but no longer substitutes for strong byte identity. Redirect following is disabled for transfer requests: the response URL must remain the exact probed final URL. Status, range, total, declared length, encoding, validators, and exact EOF are revalidated before the buffered assignment is passed to storage.
 
 A shared global semaphore and one semaphore per URL origin independently limit concurrent requests across tasks. The defaults are 16 globally and 8 per origin; validated configuration caps them at 32 and 8 respectively. Per-task workers remain capped at eight regardless of those aggregate limits.
+
+## Strong resource identity and recovery (#14)
+
+Weak or absent ETags (even with Last-Modified and a matching length) do not prove byte identity across requests. Such probes choose a fresh single stream. Nonempty completed coverage is never reused without a strong ETag, in both the task controller and scheduler boundary. Resume/retry compares final URL, size, transfer mode, ETag, and Last-Modified exactly. Known conflict or insufficient identity returns an explicit failure; remove the retained task/partial deliberately and create a new download rather than mixing generations. Empty interrupted single streams may restart from byte zero.
+
+This is deliberately stricter than the original #5 policy. A strong ETag is an HTTP server promise, not a cryptographic checksum; a server lying consistently about its validator is outside what HTTP identity checks alone can detect. Optional user-supplied checksums remain #17.
 
 ## Safe fallback
 

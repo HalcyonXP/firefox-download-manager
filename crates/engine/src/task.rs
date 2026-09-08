@@ -1711,7 +1711,11 @@ async fn prepare_initial(
         }
         let timestamp = next_timestamp(&state.metadata).map_err(run_state_error)?;
         let identity = ResourceIdentity::from_probe(&probe).map_err(run_probe_identity_error)?;
-        if state.metadata.partial_path().is_some() && state.metadata.resource() != Some(&identity) {
+        if state.metadata.partial_path().is_some()
+            && (state.metadata.resource() != Some(&identity)
+                || state.metadata.bytes_completed() > 0
+                    && !identity.validators().has_strong_identity())
+        {
             return Err(RunError::Failed(TaskFailure::new(
                 TaskFailureKind::ResourceChanged,
             )));
@@ -1790,6 +1794,7 @@ async fn prepare_resume(
         ensure_generation(&state, generation)?;
         if state.metadata.state() != TaskState::Paused
             || state.metadata.resource() != Some(&identity)
+            || state.metadata.bytes_completed() > 0 && !identity.validators().has_strong_identity()
         {
             return Err(RunError::Failed(TaskFailure::new(
                 TaskFailureKind::ResourceChanged,

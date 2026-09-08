@@ -125,6 +125,8 @@ pub enum Fault {
     BadContentRange(BadRange),
     /// Omit `ETag` and `Last-Modified`.
     OmitValidators,
+    /// Return only a weak `ETag` plus Last-Modified.
+    WeakValidators,
     /// Serve a selected deterministic resource generation and validators.
     Generation(u64),
     /// Change validators while retaining generation-zero body bytes.
@@ -511,6 +513,7 @@ fn built_in_fault(request: &ObservedRequest) -> Option<Fault> {
         "/bad-range/end" => Some(Fault::BadContentRange(BadRange::End)),
         "/bad-range/total" => Some(Fault::BadContentRange(BadRange::Total)),
         "/validators/missing" => Some(Fault::OmitValidators),
+        "/validators/weak" => Some(Fault::WeakValidators),
         "/validators/changing" => Some(Fault::ValidatorGeneration(
             request.request_number.saturating_sub(1),
         )),
@@ -614,7 +617,15 @@ fn serve_fixture(
     ];
 
     if !matches!(fault, Some(Fault::OmitValidators)) {
-        headers.push(("ETag", config.fixture.etag(validator_generation)));
+        let etag = config.fixture.etag(validator_generation);
+        headers.push((
+            "ETag",
+            if matches!(fault, Some(Fault::WeakValidators)) {
+                format!("W/{etag}")
+            } else {
+                etag
+            },
+        ));
         headers.push((
             "Last-Modified",
             Fixture::last_modified(validator_generation),

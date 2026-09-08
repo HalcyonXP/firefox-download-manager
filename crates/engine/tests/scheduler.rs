@@ -681,3 +681,46 @@ impl Drop for TestDirectory {
         let _ = fs::remove_dir_all(&self.path);
     }
 }
+
+#[tokio::test]
+async fn unproven_identity_uses_one_stream_and_never_reuses_completed_storage() {
+    for path in ["/validators/missing", "/validators/weak"] {
+        let fixture = Fixture {
+            len: 8192,
+            seed: 77,
+        };
+        let server = TestServer::start(ServerConfig {
+            fixture: fixture.clone(),
+            rules: Vec::new(),
+        })
+        .expect("server");
+        let probe = ProbeClient::new()
+            .expect("client")
+            .probe(&server.url(path))
+            .await
+            .expect("probe");
+        let directory = TestDirectory::new("weak-stream");
+        let partial =
+            PartialFile::create(directory.path(), "single.bin", fixture.len).expect("partial");
+        let scheduler = DownloadScheduler::new().expect("scheduler");
+        let result = scheduler
+            .transfer(&probe, &partial, WorkerCount::Eight)
+            .await
+            .expect("one stream");
+        assert_eq!(result.kind(), TransferKind::Single);
+        assert_eq!(result.workers_used(), 1);
+        assert!(server.requests().last().expect("GET").range.is_none());
+        assert_eq!(
+            fs::read(partial.partial_path()).expect("read"),
+            fixture.bytes(0, 8192, 0)
+        );
+        let requests = server.requests().len();
+        assert_eq!(
+            scheduler
+                .transfer(&probe, &partial, WorkerCount::Eight)
+                .await,
+            Err(SchedulerError::InvalidCompletedCoverage)
+        );
+        assert_eq!(server.requests().len(), requests);
+    }
+}

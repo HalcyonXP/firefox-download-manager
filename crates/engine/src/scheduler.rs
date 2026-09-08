@@ -597,6 +597,9 @@ impl DownloadScheduler {
             .iter()
             .try_fold(0_u64, |total, range| total.checked_add(range.len()))
             .ok_or(SchedulerError::InvalidCompletedCoverage)?;
+        if baseline > 0 && !probe.validators().has_strong_identity() {
+            return Err(SchedulerError::InvalidCompletedCoverage);
+        }
         let metrics = Arc::new(TransferMetrics::new(baseline, probe.size(), progress));
 
         let result = match probe.mode() {

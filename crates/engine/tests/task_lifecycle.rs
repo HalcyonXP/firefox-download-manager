@@ -1508,3 +1508,76 @@ async fn settings_reconfiguration_rejects_running_work_and_failure_policy_delete
     );
     assert!(!directories.destination().join("failure.bin").exists());
 }
+
+#[tokio::test]
+async fn recovered_weak_identity_completed_bytes_cannot_resume_or_retry() {
+    for path in ["/validators/missing", "/validators/weak"] {
+        let directories = TestDirectories::new("weak-resume");
+        let fixture = Fixture {
+            len: 4096,
+            seed: 59,
+        };
+        let server = TestServer::start(ServerConfig {
+            fixture: fixture.clone(),
+            rules: Vec::new(),
+        })
+        .expect("server");
+        let probe = ProbeClient::new()
+            .expect("client")
+            .probe(&server.url(path))
+            .await
+            .expect("probe");
+        let mut metadata =
+            TaskMetadata::new(&server.url(path), directories.destination(), "weak.bin")
+                .expect("metadata");
+        let timestamp = TimestampMillis::now().expect("time");
+        metadata
+            .transition(TaskState::Probing, timestamp)
+            .expect("probing");
+        metadata
+            .apply_resource(
+                ResourceIdentity::from_probe(&probe).expect("identity"),
+                timestamp,
+            )
+            .expect("resource");
+        let partial = PartialFile::create(directories.destination(), "weak.bin", fixture.len)
+            .expect("partial");
+        metadata
+            .attach_partial(&partial, timestamp)
+            .expect("attach");
+        metadata
+            .transition(TaskState::Downloading, timestamp)
+            .expect("downloading");
+        let mut writer = partial
+            .assign(FileRange::new(0, fixture.len).expect("range"))
+            .expect("writer");
+        writer.write(&fixture.bytes(0, 4096, 0)).expect("write");
+        writer.finish().expect("finish");
+        metadata
+            .refresh_completed(&partial, timestamp)
+            .expect("flush");
+        let id = metadata.task_id();
+        let store = TaskStore::open(directories.state()).expect("store");
+        store
+            .checkpoint(&metadata, CheckpointUrgency::Critical)
+            .expect("checkpoint");
+        drop(store);
+        drop(partial);
+        let engine =
+            TaskEngine::open(directories.state(), TaskEngineOptions::default()).expect("recovery");
+        let result = engine.resume(id).await.expect("resume response");
+        assert_eq!(result.state(), TaskState::Failed);
+        assert_eq!(
+            result.failure().expect("failure").kind(),
+            TaskFailureKind::ResourceChanged
+        );
+        engine.retry(id).expect("retry");
+        let result = engine.wait_until_inactive(id).await.expect("retry result");
+        assert_eq!(result.state(), TaskState::Failed);
+        assert_eq!(
+            result.failure().expect("failure").kind(),
+            TaskFailureKind::ResourceChanged
+        );
+        assert!(!directories.destination().join("weak.bin").exists());
+    }
+}

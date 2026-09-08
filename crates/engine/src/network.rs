@@ -111,6 +111,14 @@ pub struct Validators {
     pub last_modified: Option<String>,
 }
 
+impl Validators {
+    /// Only a strong `ETag` establishes byte identity for segmentation/reuse.
+    #[must_use]
+    pub fn has_strong_identity(&self) -> bool {
+        self.etag.as_ref().is_some_and(|tag| !tag.is_weak())
+    }
+}
+
 /// Why the helper selected a safe single stream.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FallbackReason {
@@ -118,6 +126,8 @@ pub enum FallbackReason {
     RangeIgnored,
     /// The ignored-range response did not declare a resource length.
     UnknownLength,
+    /// No strong `ETag` proves byte identity across independent requests.
+    InsufficientIdentity,
 }
 
 /// Transfer mode established by a probe.
@@ -381,12 +391,17 @@ impl ProbeClient {
                 read_exact_body(verification, verification_assignment.len()).await?;
             }
 
+            let mode = if validators.has_strong_identity() {
+                ProbeMode::Segmented
+            } else {
+                ProbeMode::SingleStream(FallbackReason::InsufficientIdentity)
+            };
             return Ok(ResourceProbe {
                 final_url,
                 size: Some(parsed.total),
                 filename,
                 validators,
-                mode: ProbeMode::Segmented,
+                mode,
             });
         }
 

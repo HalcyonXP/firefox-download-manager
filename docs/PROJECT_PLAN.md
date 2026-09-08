@@ -146,11 +146,12 @@ A release must preserve these invariants:
 3. A ranged response is accepted only when its status and `Content-Range` match the request.
 4. Resource size and validators remain consistent throughout a segmented download.
 5. Resume never combines bytes from resources known to be different.
-6. A final file is exposed only after size/integrity checks and successful promotion from partial state.
-7. Existing files are never silently overwritten.
-8. Credentials never appear in routine logs or persistent state by default.
-9. Pause/cancel acknowledgement follows worker stop and a bytes-first critical checkpoint.
-10. Automatic retries and progress/event memory are explicitly bounded.
+6. Segmentation and reuse of nonempty completed coverage require a strong ETag; weak/absent identity uses a fresh single stream or fails (decision #14).
+7. A final file is exposed only after size/integrity checks and successful promotion from partial state.
+8. Existing files are never silently overwritten.
+9. Credentials never appear in routine logs or persistent state by default.
+10. Pause/cancel acknowledgement follows worker stop and a bytes-first critical checkpoint.
+11. Automatic retries and progress/event memory are explicitly bounded.
 
 ## Release quality gates
 

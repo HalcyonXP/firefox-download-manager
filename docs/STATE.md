@@ -1,10 +1,10 @@
 # Persistent task-state and recovery policy
 
-Status: implemented for issues #7 through #9
+Status: implemented for issues #7 through #9 and #14
 
 Internal format version: `2`
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 
 ## Authority and ownership
 
@@ -22,7 +22,7 @@ Task IDs are opaque non-secret identifiers. A persisted task also has a monotoni
 
 ## Explicit lifecycle
 
-The persisted state names match protocol v1:
+The persisted state names match protocol v2:
 
 | Current state | Allowed next states |
 | --- | --- |
@@ -70,7 +70,7 @@ Every file is one strict UTF-8 JSON object with this conceptual shape:
 }
 ```
 
-The concrete serializer emits compact JSON. All fields shown are required; absent optional data is `null`. Unknown or duplicate fields, unknown enum values, malformed types, noncanonical UUIDs/URLs/paths/ranges, unsupported worker counts, and inconsistent state are rejected. `workers` is exactly 1, 2, 4, or 8. The persisted format version is independent of Native Messaging protocol version 1.
+The concrete serializer emits compact JSON. All fields shown are required; absent optional data is `null`. Unknown or duplicate fields, unknown enum values, malformed types, noncanonical UUIDs/URLs/paths/ranges, unsupported worker counts, and inconsistent state are rejected. `workers` is exactly 1, 2, 4, or 8. The persisted format version is independent of Native Messaging protocol version 2.
 
 Completed ranges are half-open, ordered, merged, non-overlapping, bounded by the known resource size, and capped at 8,192 entries. Adjacent ranges are noncanonical because storage merges them. Byte totals use checked arithmetic, and resource sizes exposed through protocol-facing snapshots cannot exceed JavaScript's exact-integer bound (`9,007,199,254,740,991`).
 
@@ -141,6 +141,8 @@ Unknown future versions and corrupt records remain untouched for diagnosis or de
 
 A missing, truncated, linked, or wrong-length partial excludes active prepublication work from recovery; a `promoting` or `completed` task may instead prove its recorded final file. At task-engine startup, a valid interrupted `downloading` record becomes `paused`; interrupted `probing` or `validating` becomes `failed`; `promoting` becomes `completed` only when its recorded final path already passed recovery validation, otherwise it becomes `failed`. A failed/cancelled record whose partial deletion completed before its metadata checkpoint durably forgets the now-missing path and coverage. Each normalization is a critical checkpoint before the snapshot is exposed.
 
+Before reuse, #14 additionally requires a fresh equal resource identity and a strong ETag for any nonempty completed coverage. Old weak/absent-validator records remain readable but cannot optimistically resume.
+
 A validated known-size task can reopen its partial file with only the durable completed ranges. Active assignments never survive restart. Reopened storage rejects assignments over completed coverage and permits only missing ranges, so uncheckpointed bytes are safely overwritten rather than trusted. An unknown-length single stream reopens with no coverage regardless of the partial's current length; its next bounded streaming writer truncates to zero before receiving a fresh response.
 
 ## Completed and abandoned cleanup
@@ -165,3 +167,7 @@ Routine progress checkpoint requests remain subject to the store's cadence, whil
 Terminal protocol `remove` now calls transactional store cleanup. Keeping a retained partial rejects removal explicitly; `delete_partial: true` validates and removes only that managed partial before deleting history. Completed final output is never removed. Pending in-memory events for successfully removed history are purged, while a later reconnect remains authoritative through its snapshot.
 
 Later work may tune timing within validated bounds, but it may not reverse bytes-first ordering, weaken state/range validation, persist credentials by default, permit stale revisions to overwrite newer state, or treat interrupted unknown-length bytes as resumable.
+
+## Process-kill evidence
+
+`crates/native-host/tests/crash_recovery.rs` launches the actual native-host binary against a loopback 8 MiB fixture in isolated paths containing spaces, waits for persisted completed ranges while a tail is stalled, forcibly kills the process (not cooperative EOF), launches a second helper, asserts paused recovery with retained bytes, resumes, and byte-compares final output. This does not claim a real power-loss or filesystem hardware-fault test.

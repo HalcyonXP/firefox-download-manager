@@ -309,3 +309,20 @@ fn worker_validation_rejects_missing_changed_and_duplicate_validators() {
         Err(RangeValidationError::DuplicateHeader)
     );
 }
+
+#[tokio::test]
+async fn weak_or_missing_etag_requires_one_fresh_stream_even_with_last_modified() {
+    let server = server();
+    let client = ProbeClient::new().expect("client");
+    for path in ["/validators/missing", "/validators/weak"] {
+        let probe = client
+            .probe(&server.url(path))
+            .await
+            .expect("fallback probe");
+        assert_eq!(
+            probe.mode(),
+            ProbeMode::SingleStream(FallbackReason::InsufficientIdentity)
+        );
+        assert!(!probe.validators().has_strong_identity());
+    }
+}
