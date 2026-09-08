@@ -709,16 +709,21 @@ async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
     };
     let server = TestServer::start(ServerConfig {
         fixture: fixture.clone(),
-        rules: vec![FaultRule {
-            selector: RequestSelector {
-                path: Some("/fixture".to_owned()),
-                request_number: None,
-                range: None,
-            },
-            fault: Fault::Stall(Duration::from_millis(130)),
-        }],
+        rules: Vec::new(),
     })
     .expect("start progress server");
+    // Withhold the second assignment, not an assumed number of wall-clock ticks.
+    // The first assignment still exercises real networking, disk and snapshots.
+    let pause = server
+        .pause_responses(RequestSelector {
+            path: Some("/fixture".to_owned()),
+            request_number: None,
+            range: Some(ByteRange {
+                start: 2 * MIB,
+                end: 4 * MIB - 1,
+            }),
+        })
+        .expect("pause second response");
     let directories = TestDirectories::new("progress-events");
     let progress = ProgressPolicy::new(Duration::from_millis(100), Duration::from_secs(1))
         .expect("progress policy");
@@ -736,6 +741,8 @@ async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
     let started = std::time::Instant::now();
     engine.start(task.task_id()).expect("start task");
 
+    let mut pause = Some(pause);
+    let mut held_samples = 0;
     let mut progress_events = Vec::new();
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -743,6 +750,19 @@ async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
             match event.kind() {
                 TaskEventKind::Progress(progress) => {
                     progress_events.push((event.emitted_at(), *progress));
+                    if pause.is_some() && progress.bytes_completed() == 2 * MIB {
+                        held_samples += 1;
+                        // Observe an actual estimator window too; do not assume the
+                        // fixture takes long enough to produce a speed estimate.
+                        if held_samples >= 4
+                            && progress.speed_bytes_per_second().is_some()
+                            && pause
+                                .as_ref()
+                                .is_some_and(|guard| guard.wait_for_pending(1, Duration::ZERO))
+                        {
+                            drop(pause.take());
+                        }
+                    }
                 }
                 TaskEventKind::Completed(_) => break,
                 _ => {}
@@ -752,7 +772,11 @@ async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
     .await
     .expect("event completion timeout");
 
-    assert!(progress_events.len() >= 4);
+    assert!(
+        pause.is_none(),
+        "completion must follow explicit response release"
+    );
+    assert!(held_samples >= 4);
     assert!(
         progress_events
             .windows(2)
@@ -777,6 +801,79 @@ async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
     assert_eq!(snapshot.expected_size(), Some(fixture.len));
     assert!(snapshot.speed_bytes_per_second().is_some());
     assert_eq!(snapshot.eta_seconds(), Some(0));
+    assert_eq!(
+        fs::read(directories.destination().join("progress.bin")).expect("read published bytes"),
+        fixture.bytes(0, usize::try_from(fixture.len).expect("fixture fits"), 0)
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn progress_events_coalesce_for_a_late_consumer_without_losing_final_state() {
+    let fixture = Fixture {
+        len: 8 * MIB,
+        seed: 139,
+    };
+    let server = TestServer::start(ServerConfig {
+        fixture: fixture.clone(),
+        rules: Vec::new(),
+    })
+    .expect("start coalescing server");
+    let directories = TestDirectories::new("late-progress-consumer");
+    let engine = TaskEngine::open(directories.state(), TaskEngineOptions::default())
+        .expect("open task engine");
+    let task = engine
+        .create_task_default(
+            &server.url("/fixture"),
+            directories.destination(),
+            "coalesced.bin",
+        )
+        .expect("create task");
+    engine.start(task.task_id()).expect("start task");
+    // Deliberately consume no events until the task completes. Snapshot watching
+    // is a separate channel, so this deterministically exercises a late consumer.
+    let completed = tokio::time::timeout(
+        Duration::from_secs(10),
+        engine.wait_until_inactive(task.task_id()),
+    )
+    .await
+    .expect("task timeout")
+    .expect("wait for task");
+    assert_eq!(completed.state(), TaskState::Completed);
+    assert_eq!(completed.bytes_completed(), fixture.len);
+    let mut samples = Vec::new();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let event = engine.next_event().await.expect("next event");
+            match event.kind() {
+                TaskEventKind::Progress(progress) => samples.push(*progress),
+                TaskEventKind::Completed(snapshot) => {
+                    assert_eq!(snapshot.bytes_completed(), fixture.len);
+                    break;
+                }
+                TaskEventKind::Failed { .. } => panic!("fixture unexpectedly failed"),
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("completion event timeout");
+    // A minimum of four observed events is not the coalescing contract.
+    assert!(samples.len() <= 1);
+    for sample in samples {
+        // Ordinary progress can predate completion (even show zero on a fast
+        // transfer). The terminal snapshot, not this event, seals final metrics.
+        assert!(sample.bytes_completed() <= fixture.len);
+        assert_eq!(sample.expected_size(), Some(fixture.len));
+        assert!(sample.active_workers() <= 4);
+    }
+    assert_eq!(completed.expected_size(), Some(fixture.len));
+    assert_eq!(completed.active_workers(), 0);
+    assert_eq!(completed.eta_seconds(), Some(0));
+    assert!(!engine.events_require_snapshot());
+    assert_eq!(
+        fs::read(directories.destination().join("coalesced.bin")).expect("read published bytes"),
+        fixture.bytes(0, usize::try_from(fixture.len).expect("fixture fits"), 0)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

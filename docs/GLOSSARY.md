@@ -93,3 +93,7 @@ The review found a real wildcard-pattern construction edge case, not an observed
 
 - **Descriptor digest versus ZIP digest**: `descriptor_sha256` identifies `package.json`; `PACKAGE-SHA256SUMS.txt` identifies the distributable ZIP. Initial #27 evidence used the ambiguous `package_sha256` key for the descriptor, corrected before release.
 - **Same-environment reproducibility**: independent clean Cargo target builds match all package bytes on one environment. Both local and CI comparisons passed; local-versus-CI binaries differed, so cross-environment bit reproducibility is not claimed.
+
+- **Ordinary progress cadence**: minimum spacing between replaceable progress events, not a guaranteed consumer delivery frequency. Missed ticks and unread same-task samples may be coalesced.
+- **Terminal snapshot versus ordinary progress**: the terminal snapshot carries final joined metrics; the last ordinary progress event can be older and is not itself a completion barrier.
+- **Selected response pause**: test-only gate after a matching request enters the server ledger, before its response starts. Distinct from the pre-ledger observation pause used for cancellation tests; neither is a sleep-based readiness guess.

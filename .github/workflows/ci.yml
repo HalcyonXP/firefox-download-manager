@@ -68,6 +68,16 @@ jobs:
         shell: pwsh
         run: ./scripts/build-package.ps1 -TestRust -Rebuild
 
+      - name: Repeat release-target progress boundary regressions
+        shell: pwsh
+        run: |
+          $tests = @(Get-ChildItem target/package-build/x86_64-pc-windows-gnullvm/release/deps/task_lifecycle-*.exe -File)
+          if ($tests.Count -ne 1) { throw "Expected exactly one built lifecycle test executable" }
+          1..10 | ForEach-Object {
+            & $tests[0].FullName progress_events_
+            if ($LASTEXITCODE) { throw "Release-target progress regression failed" }
+          }
+
       - name: Repeat clean-target build and compare bytes
         shell: pwsh
         run: |
