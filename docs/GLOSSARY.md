@@ -83,3 +83,10 @@ The review found a real wildcard-pattern construction edge case, not an observed
 - **Installation receipt**: versioned ownership/recovery metadata for generated installation files; not task state, a signature or a compromised-account defense.
 - **Candidate artifact**: CI-produced versioned/checksummed output awaiting #28 qualification, not an approved release.
 - **Directory lease**: ordinary Windows ancestor handles held without delete sharing while their paths are used. It narrows ordinary rename/reparse races; it does not confer authority over arbitrary other account actors.
+
+- **Generation**: immutable UUID-named helper/XPI/manifest directory. Registration selects the complete current generation; setup does not silently replace its bytes or load its XPI into Firefox.
+- **Setup lock domain**: one canonical local-application-data root, normally the current user’s standard environment. Isolated environment overrides are separate domains; this is cooperative file exclusion, not a cross-environment kernel mutex.
+- **Recover versus repair**: `recover` replays a bounded known journal conservatively; `repair` has no journal and only rebinds verified current content from absent/stale same-receipt registration. Neither adopts foreign authority.
+- **Candidate versus qualified release**: a checksummed builder/CI artifact has consistency/provenance metadata, not #28 browser/installation/resource approval.
+- **Static support with system UCRT**: LLVM/MinGW runtime support is linked into the x64 executable; Microsoft UCRT/API DLLs are supplied by Windows. This is not the superseded static MSVC CRT proposal.
+- **Windows 11 x64 emulation evidence**: running the x64 artifact on a fresh ARM64 Windows 11 runner; distinct from native x64 coverage and from a factory-clean image without development tools.

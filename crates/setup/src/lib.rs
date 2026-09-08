@@ -1,12 +1,18 @@
 //! Local setup boundaries. No networking, elevation or browser-profile API.
 use thiserror::Error;
 
+#[cfg(windows)]
+mod files;
 pub mod package;
 #[cfg(windows)]
 pub mod paths;
+#[cfg(windows)]
+pub mod process;
 pub mod receipt;
 #[cfg(windows)]
 pub mod registry;
+#[cfg(windows)]
+pub mod transaction;
 
 /// Stable package and registration identity.
 pub const HOST_NAME: &str = "com.halcyonxp.firefox_download_manager";
@@ -32,7 +38,9 @@ pub enum SetupError {
     Path,
     #[error("an entry is not owned by this installation; no replacement is authorized")]
     Ownership,
-    #[error("setup is already running, or an installation file is in use")]
+    #[error(
+        "close Firefox and native helpers; another setup or an installation file lock may also be in use"
+    )]
     Busy,
     #[error("current-user registration belongs to another installation or is unavailable")]
     Registration,
@@ -40,6 +48,8 @@ pub enum SetupError {
     Launch,
     #[error("installation needs explicit recovery; unknown content was preserved")]
     Recovery,
+    #[error("generation history is full; run cleanup before upgrading")]
+    HistoryFull,
     #[error("setup filesystem operation failed")]
     Io,
 }

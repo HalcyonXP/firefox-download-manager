@@ -13,7 +13,7 @@ await build({
   outdir: "extension/dist",
   platform: "browser",
   sourcemap: true,
-  target: "firefox128",
+  target: "firefox156",
 });
 
 await copyFile("extension/src/manifest.json", "extension/dist/manifest.json");

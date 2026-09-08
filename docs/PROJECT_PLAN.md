@@ -211,4 +211,4 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 
 ### Packaging work in progress (#27)
 
-[PACKAGING_PLAN.md](PACKAGING_PLAN.md) records the local Rust setup/candidate-artifact design, ownership and recovery requirements, and remaining evidence. The initial library boundaries are not an installer or qualified release. Existing development scripts remain blocked until replaced or safely superseded.
+[PACKAGING_PLAN.md](PACKAGING_PLAN.md) records the local Rust setup/candidate-artifact design, ownership and recovery requirements, and remaining evidence. The Rust setup coordinator/CLI, bounded helper probe, candidate builder and preservation/fault tests now exist; old development scripts are refusal-only stubs. The initial static MSVC proposal was replaced by a reviewed pinned LLVM/MinGW/UCRT release target after distribution-term review. Actual public package CI/reproducibility evidence and #28 qualification remain pending; neither local prototypes nor configured jobs are completed evidence.

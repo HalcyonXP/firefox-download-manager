@@ -52,7 +52,7 @@ impl Descriptor {
             && self.version == 1
             && self.package_version == env!("CARGO_PKG_VERSION")
             && self.repository == "HalcyonXP/firefox-download-manager"
-            && self.target == "x86_64-pc-windows-msvc"
+            && self.target == "x86_64-pc-windows-gnullvm"
             && self.commit.len() == 40
             && self.commit.bytes().all(|byte| byte.is_ascii_hexdigit())
             && self.files.len() == PACKAGE_FILES.len()
@@ -175,7 +175,7 @@ pub fn file_hash(path: &Path) -> Result<String, SetupError> {
         .collect())
 }
 
-fn ordinary_read(path: &Path) -> Result<File, SetupError> {
+pub(crate) fn ordinary_read(path: &Path) -> Result<File, SetupError> {
     let metadata = fs::symlink_metadata(path).map_err(|_| SetupError::Package)?;
     if !metadata.is_file() || metadata.file_type().is_symlink() {
         return Err(SetupError::Package);
@@ -240,6 +240,20 @@ fn unique_files<'de, D: serde::Deserializer<'de>>(
     deserializer.deserialize_map(UniqueFiles)
 }
 
+/// SHA-256 of bounded generated metadata, not a signature.
+#[must_use]
+pub fn hash_bytes(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .flat_map(|byte| {
+            [
+                char::from(HEX[usize::from(byte >> 4)]),
+                char::from(HEX[usize::from(byte & 15)]),
+            ]
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,7 +264,7 @@ mod tests {
             package_version: env!("CARGO_PKG_VERSION").into(),
             repository: "HalcyonXP/firefox-download-manager".into(),
             commit: "a".repeat(40),
-            target: "x86_64-pc-windows-msvc".into(),
+            target: "x86_64-pc-windows-gnullvm".into(),
             files: PACKAGE_FILES
                 .iter()
                 .map(|name| ((*name).into(), "a".repeat(64)))

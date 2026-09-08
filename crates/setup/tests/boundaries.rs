@@ -107,7 +107,7 @@ fn package_reads_are_bounded_verified_and_fixed_leaf_only() {
         package_version: env!("CARGO_PKG_VERSION").into(),
         repository: "HalcyonXP/firefox-download-manager".into(),
         commit: "a".repeat(40),
-        target: "x86_64-pc-windows-msvc".into(),
+        target: "x86_64-pc-windows-gnullvm".into(),
         files,
     };
     fs::write(

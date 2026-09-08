@@ -109,10 +109,11 @@ impl Receipt {
 pub enum Action {
     Install,
     Uninstall,
+    Cleanup,
 }
 
 /// Write before mutation. Recovery must also verify actual files and registration.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Journal {
     /// Fixed transaction record identity.
@@ -153,6 +154,17 @@ impl Journal {
         }
         match self.action {
             Action::Uninstall => self.previous.is_some() && self.next.is_none(),
+            Action::Cleanup => {
+                self.previous
+                    .as_ref()
+                    .zip(self.next.as_ref())
+                    .is_some_and(|(old, new)| {
+                        old.installation_id == new.installation_id
+                            && old.current == new.current
+                            && new.generations.len() == 1
+                            && old.generations.contains(&new.generations[0])
+                    })
+            }
             Action::Install => self.next.as_ref().is_some_and(|next| {
                 if let Some(previous) = &self.previous {
                     previous.installation_id == next.installation_id

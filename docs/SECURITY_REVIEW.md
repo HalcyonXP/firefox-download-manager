@@ -66,3 +66,9 @@ The first fixture attempt added a query to a referrer whose server contract requ
 4. Signed URLs/remote metadata persist where recovery needs them; per-user state and backups must remain private. Revocation cannot retract bytes/context already submitted to the helper.
 
 #26 can complete as a reviewed and regression-tested implementation with these named packaging/qualification blockers. It must not be read as “ready to install.”
+
+## #27 follow-up (implementation exists; remote qualification pending)
+
+The S26-4 row above records the inspected #26 baseline, not continuing approval of those scripts. They are now refusal-only retirement stubs. Rust setup implements confined ancestor leases, receipt ownership, bounded copy/hash/probe staging, cooperative domain locking, exact fixed-HKCU transitions, journal rollback/recovery and preservation-safe cleanup/uninstall. Local filesystem/fault tests and actual isolated helper probes are recorded in [PACKAGING_PLAN.md](PACKAGING_PLAN.md); actual disposable-registry CI and #28 remain required before release approval.
+
+The initial static MSVC release proposal was not adopted after reviewing its additional distribution terms. The pinned LLVM/MinGW/UCRT recipe, selected runtime-object review and generated nested/vendored notices are documented in [THIRD_PARTY.md](THIRD_PARTY.md). This changes the release compilation target, not the wire/state/security policy or first-party licensing. Full release-target Rust tests passed locally; final-artifact Firefox behavior is not inferred from them.

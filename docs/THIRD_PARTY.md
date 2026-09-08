@@ -40,3 +40,18 @@ cargo deny check
 ```
 
 Any direct dependency addition must update this record with purpose and feature choices. Lockfile-only transitive changes still require CI results and inspection for new licenses, advisories, duplicate versions, sources, native build scripts, and sensitive logging behavior.
+
+## #27 release toolchain and native runtime review
+
+The static MSVC prototype passed local runtime/import checks but was not selected for distribution: actual Visual Studio 2026 Community [terms](https://visualstudio.microsoft.com/license-terms/vs2026-ga-community/) contain distributor/external-end-user requirements beyond including notices. No binary from that prototype was published. Choosing additional end-user/first-party terms was not assumed from public visibility.
+
+The selected build-only archive is `llvm-mingw-20260826-ucrt-x86_64.zip`, SHA-256 **`ae601f4e0f72bbdf441ad2df8bb16f037e2e9251559ea6b37b4057aef39c06c3`**, from [LLVM/MinGW 20260826](https://github.com/mstorsjo/llvm-mingw/releases/tag/20260826). Bootstrap verifies archive size/hash and extracted bytes under ignored `target`; no compiler, SDK or toolchain ZIP is shipped. Rust remains 1.93.1; release target is `x86_64-pc-windows-gnullvm`. CMake/Ninja are development tools, not product prerequisites.
+
+- LLVM/MinGW wrapper ISC license and full LLVM Apache-2.0-with-LLVM-exceptions notice reviewed. LLVM revision `ea7d852a70e8bdfaf601d6626a760f9771b2c4b4` is recorded by the compiler. Static compiler/runtime portions are covered by those notices/exceptions; no GCC profiling or toolchain distribution is selected.
+- MinGW-w64 revision `a3d708261d5ba659205067cb82cae36e7ae8bbb0`: reviewed complete overall ZPL-2.1, runtime, toolchain, winpthreads MIT/BSD and WinStore MIT notices. Runtime notices, overall license, LLVM notice and winpthreads notice are included conservatively. Windows-supplied UCRT/API DLLs are imported, not copied; MinGW startup/UCRT wrappers are not Microsoft MSVC runtime objects.
+- Link maps identified 51 selected MinGW object names in the helper and a 34-name subset in setup, plus startup objects. Reviewed 57 matching source/header notices: public-domain startup/wrappers, ZPL-2.1 general/scan-format code, permissive Keith Marshall formatting and Lucent/David Gay gdtoa notices. The upstream runtime notice's historical Cephes ambiguity is not treated as license clearance: no Cephes math or profiling object is in this selected set. `scripts/runtime-policy.json` gates newly selected objects for further review. `link-self-contained=no` uses the reviewed external runtime rather than an unrecorded bundled CRT.
+- MinGW's toolchain notice distinguishes LGPL DirectX/DDK header types/short macros from linked implementation. This application does not select those implementations. Full recommended runtime attribution is retained rather than deleting notices because some describe unused portions.
+- Cargo notices include the locked non-dev dependency closure and nested/vendored LICENSE/COPYING/NOTICE/COPYRIGHT files (including AWS-LC material), not just top-level Cargo license expressions. Rust library attribution covers multiple platforms and is labeled accordingly. esbuild attribution is retained. No third-party implementation source is copied into this repository.
+- CI `actions/download-artifact` v4 is pinned to `d3f86a106a0bac45b974a628896c90dbdf5c8093`; its full MIT license was read before incorporation. It is build infrastructure, not runtime behavior.
+
+The non-Cargo compiler/runtime review is explicit, not represented as something `cargo deny` alone checks. Package consistency/provenance and these third-party notices do not select a first-party license or constitute a publisher signature.
