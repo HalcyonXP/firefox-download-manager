@@ -76,6 +76,8 @@ export function connectionMessage(error: unknown): string {
     return "The manager could not complete this action. Reconnect and check the queue before trying again.";
   if (error.helperCode === "PROTOCOL_UNSUPPORTED_VERSION" || error.failure === "protocol_error")
     return "Extension and helper are incompatible. Install matching versions, then reconnect.";
+  if (error.helperCode === "INVALID_SETTINGS")
+    return "Settings were not applied. Pause active tasks and check the existing destination, connection caps, and retry limit.";
   if (error.helperCode)
     return `Helper rejected the action (${error.helperCode}). Check the folder and task state before retrying.`;
   return "Native helper unavailable or disconnected. Install the helper, then reconnect. Check the queue before resubmitting: an interrupted command may have succeeded.";

@@ -4,6 +4,9 @@
 //! bounded protocol-v2 frames on standard output. Paths and URLs are accepted
 //! only inside typed commands and never appear in ordinary diagnostics.
 
+mod settings;
+use settings::{Diagnostic, SettingsStore, engine_configuration};
+
 use std::env;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -118,8 +121,13 @@ where
         .build()
         .map_err(|_| HostError::Runtime)?;
     runtime.block_on(async move {
-        let engine = TaskEngine::open(&config.state_root, TaskEngineOptions::default())?;
-        let session_result = run_session(reader, writer, &engine, config.default_destination).await;
+        let mut engine = TaskEngine::open(&config.state_root, TaskEngineOptions::default())?;
+        let settings =
+            SettingsStore::load(&config.state_root, config.default_destination.as_deref())?;
+        let (options, scheduler) = engine_configuration(&settings.current)?;
+        engine.reconfigure(options, scheduler)?;
+        settings.log(Diagnostic::Started);
+        let session_result = run_session(reader, writer, &mut engine, settings).await;
         let shutdown_result = engine.shutdown().await.map(|_| ()).map_err(HostError::from);
         shutdown_result.and(session_result)
     })
@@ -128,8 +136,8 @@ where
 async fn run_session<R, W>(
     reader: R,
     writer: W,
-    engine: &TaskEngine,
-    default_destination: Option<PathBuf>,
+    engine: &mut TaskEngine,
+    settings: SettingsStore,
 ) -> Result<(), HostError>
 where
     R: Read + Send + 'static,
@@ -141,7 +149,8 @@ where
         .spawn(move || read_input(reader, &sender))
         .map_err(|_| HostError::Runtime)?;
 
-    let mut session = Session::new(writer, default_destination);
+    let mut session = Session::new(writer, Some(PathBuf::from(&settings.current.destination)));
+    session.settings = Some(settings);
     if !negotiate(&mut inbound, &mut session, engine).await? {
         return Ok(());
     }
@@ -213,7 +222,7 @@ async fn negotiate<W: Write>(
 async fn run_active_session<W: Write>(
     inbound: &mut mpsc::Receiver<Inbound>,
     session: &mut Session<W>,
-    engine: &TaskEngine,
+    engine: &mut TaskEngine,
 ) -> Result<(), HostError> {
     loop {
         if let Some(snapshots) = engine.take_overflow_snapshot() {
@@ -289,6 +298,7 @@ struct Session<W> {
     sequence: u64,
     token: u64,
     list: Option<ListSession>,
+    settings: Option<SettingsStore>,
 }
 
 impl<W: Write> Session<W> {
@@ -299,6 +309,7 @@ impl<W: Write> Session<W> {
             sequence: 0,
             token: 0,
             list: None,
+            settings: None,
         }
     }
 
@@ -307,10 +318,13 @@ impl<W: Write> Session<W> {
     #[allow(clippy::too_many_lines)]
     async fn dispatch(
         &mut self,
-        engine: &TaskEngine,
+        engine: &mut TaskEngine,
         correlation_id: String,
         command: Command,
     ) -> Result<(), HostError> {
+        if let Some(settings) = &self.settings {
+            settings.log(Diagnostic::CommandAccepted);
+        }
         match command {
             Command::Hello(_) => unreachable!("hello is handled before dispatch"),
             Command::Add(payload) => {
@@ -334,7 +348,16 @@ impl<W: Write> Session<W> {
                 };
                 let workers = payload
                     .workers()
-                    .map_or(Ok(WorkerCount::default()), WorkerCount::try_from)
+                    .map_or_else(
+                        || {
+                            WorkerCount::try_from(
+                                self.settings
+                                    .as_ref()
+                                    .map_or(4, |settings| settings.current.default_workers),
+                            )
+                        },
+                        WorkerCount::try_from,
+                    )
                     .map_err(|_| HostError::Projection)?;
                 let task = match engine.create_task(
                     payload.url(),
@@ -503,17 +526,46 @@ impl<W: Write> Session<W> {
                     },
                 )
             }
-            Command::GetSettings(_) => self.send_failure(
-                correlation_id,
-                ResponseCommand::GetSettings,
-                ErrorCode::InvalidSettings,
-            ),
-            Command::UpdateSettings(_) => self.send_failure(
-                correlation_id,
-                ResponseCommand::UpdateSettings,
-                ErrorCode::InvalidSettings,
-            ),
+            Command::GetSettings(_) => {
+                let settings = self.settings.as_ref().ok_or(HostError::Configuration)?;
+                self.send_success(
+                    correlation_id,
+                    ResponseCommand::GetSettings,
+                    &settings.current,
+                )
+            }
+            Command::UpdateSettings(payload) => {
+                let result = self.apply_settings(engine, payload.settings());
+                match result {
+                    Ok(value) => {
+                        self.send_success(correlation_id, ResponseCommand::UpdateSettings, &value)
+                    }
+                    Err(_) => self.send_failure(
+                        correlation_id,
+                        ResponseCommand::UpdateSettings,
+                        ErrorCode::InvalidSettings,
+                    ),
+                }
+            }
         }
+    }
+
+    fn apply_settings(
+        &mut self,
+        engine: &mut TaskEngine,
+        patch: &download_manager_protocol::SettingsPatchInput,
+    ) -> Result<download_manager_protocol::SettingsDescription, HostError> {
+        let settings = self.settings.as_mut().ok_or(HostError::Configuration)?;
+        let candidate = settings.patched(patch)?;
+        let (options, scheduler) = engine_configuration(&candidate)?;
+        let (old_options, old_scheduler) = engine_configuration(&settings.current)?;
+        engine.reconfigure(options, scheduler)?;
+        if let Err(error) = settings.save(candidate.clone()) {
+            engine.reconfigure(old_options, old_scheduler)?;
+            return Err(error);
+        }
+        self.default_destination = Some(PathBuf::from(&candidate.destination));
+        Ok(candidate)
     }
 
     fn send_list(
@@ -668,6 +720,9 @@ impl<W: Write> Session<W> {
                 &task_description(task)?,
             ),
             TaskEventKind::Failed { task, failure } => {
+                if let Some(settings) = &self.settings {
+                    settings.log(Diagnostic::Failed);
+                }
                 let error = task_failure_error(*failure, Some(task.task_id()));
                 self.send_event(
                     EventName::Failed,
@@ -1168,6 +1223,37 @@ mod tests {
         let file = destination.join("not-a-directory");
         fs::write(&file, b"fixture").expect("fixture file");
         assert!(super::folder_command(&file).is_err());
+    }
+
+    #[test]
+    fn settings_are_effective_persistent_and_strictly_projected() {
+        let directories = Directories::new("settings session");
+        let update = json!({"protocol_version":2,"correlation_id":"settings-update","kind":"command","command":"update_settings","payload":{"settings":{"default_workers":2,"retry_limit":0,"verbose_logging":true}}});
+        let get = json!({"protocol_version":2,"correlation_id":"settings-get","kind":"command","command":"get_settings","payload":{}});
+        for input in [
+            vec![hello("settings-hello"), update, get.clone()],
+            vec![hello("settings-reopen"), get],
+        ] {
+            let writer = SharedWriter::default();
+            run_host(
+                Cursor::new(framed(&input)),
+                writer.clone(),
+                HostConfig::new(
+                    directories.state.clone(),
+                    Some(directories.destination.clone()),
+                ),
+            )
+            .expect("settings session");
+            let output = messages(&writer);
+            let settings = output
+                .iter()
+                .find(|value| value["command"] == "get_settings")
+                .expect("settings response");
+            assert_eq!(settings["ok"], true);
+            assert_eq!(settings["result"]["default_workers"], 2);
+            assert_eq!(settings["result"]["retry_limit"], 0);
+            assert_eq!(settings["result"]["verbose_logging"], true);
+        }
     }
 
     #[test]

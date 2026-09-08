@@ -176,6 +176,7 @@ pub struct TaskEngineOptions {
     retry: RetryPolicy,
     progress: ProgressPolicy,
     event_capacity: usize,
+    keep_partial_on_failure: bool,
 }
 
 impl TaskEngineOptions {
@@ -199,7 +200,15 @@ impl TaskEngineOptions {
             retry,
             progress,
             event_capacity,
+            keep_partial_on_failure: true,
         })
+    }
+
+    /// Selects whether terminal failures retain recoverable partial storage.
+    #[must_use]
+    pub const fn with_failure_retention(mut self, keep: bool) -> Self {
+        self.keep_partial_on_failure = keep;
+        self
     }
 
     /// Default per-task worker selection.
@@ -234,6 +243,7 @@ impl Default for TaskEngineOptions {
             retry: RetryPolicy::default(),
             progress: ProgressPolicy::default(),
             event_capacity: DEFAULT_EVENT_CAPACITY,
+            keep_partial_on_failure: true,
         }
     }
 }
@@ -985,6 +995,32 @@ impl TaskEngine {
                 jitter_counter: AtomicU64::new(1),
             }),
         })
+    }
+
+    /// Reconfigures an exclusively owned, inactive engine without changing task state.
+    ///
+    /// # Errors
+    /// Rejects active runs or another owner; callers must pause work first.
+    pub fn reconfigure(
+        &mut self,
+        options: TaskEngineOptions,
+        scheduler: DownloadScheduler,
+    ) -> Result<(), TaskEngineError> {
+        let inner = Arc::get_mut(&mut self.inner).ok_or(TaskEngineError::InvalidTaskState)?;
+        if lock(&inner.tasks)
+            .values()
+            .any(|task| lock(&task.state).running)
+        {
+            return Err(TaskEngineError::InvalidTaskState);
+        }
+        if options.event_capacity != inner.options.event_capacity
+            || options.progress != inner.options.progress
+        {
+            return Err(TaskEngineError::InvalidTaskState);
+        }
+        inner.options = options;
+        inner.scheduler = scheduler;
+        Ok(())
     }
 
     /// Conservative startup report.
@@ -2367,6 +2403,19 @@ fn fail_run(
                     }
                 }
                 Err(error) => terminal_failure = failure_from_state(error),
+            }
+        }
+        if !inner.options.keep_partial_on_failure && state.metadata.state() == TaskState::Failed {
+            let timestamp = wall_timestamp(&state.metadata);
+            if let Err(error) = inner
+                .store
+                .discard_terminal_partial(&mut state.metadata, timestamp)
+            {
+                terminal_failure = failure_from_persistence(&error);
+            }
+            if state.metadata.partial_path().is_none() {
+                state.partial = None;
+                state.progress.bytes_completed = 0;
             }
         }
         state.failure = Some(terminal_failure);

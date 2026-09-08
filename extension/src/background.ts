@@ -67,12 +67,27 @@ browser.runtime.onConnect.addListener((port) => {
       });
       return;
     }
-    if (busy) return;
+    if (busy) {
+      send({
+        kind: "error",
+        message:
+          "Another action is still pending. This new action was not submitted; wait for completion before retrying.",
+      });
+      return;
+    }
     busy = true;
     void (async () => {
       try {
-        if (message.action === "connect") await nativeConnection.connect();
-        else if (
+        if (message.action === "connect") {
+          await nativeConnection.connect();
+          await nativeConnection.command("get_settings", {});
+        } else if (message.action === "settings" && "patch" in message) {
+          await nativeConnection.command("update_settings", { settings: message.patch });
+          send({
+            kind: "notice",
+            message: "Settings saved and applied. Existing tasks keep their worker selection.",
+          });
+        } else if (
           message.action === "control" &&
           "command" in message &&
           "taskId" in message &&
@@ -85,7 +100,13 @@ browser.runtime.onConnect.addListener((port) => {
               await nativeConnection.command(message.command, payload);
               break;
             case "cancel":
-              await nativeConnection.command("cancel", { ...payload, partial_policy: "keep" });
+              await nativeConnection.command("cancel", {
+                ...payload,
+                partial_policy:
+                  nativeConnection.state().settings?.keep_partial_on_cancel === false
+                    ? "delete"
+                    : "keep",
+              });
               break;
             case "remove":
               await nativeConnection.command("remove", { ...payload, delete_partial: true });

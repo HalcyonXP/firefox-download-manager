@@ -108,9 +108,21 @@ export interface NativeTask {
   readonly error: NativeTaskError | null;
 }
 
+export interface NativeSettings {
+  readonly destination: string;
+  readonly default_workers: 1 | 2 | 4 | 8;
+  readonly global_concurrency: number;
+  readonly per_host_concurrency: number;
+  readonly retry_limit: number;
+  readonly keep_partial_on_cancel: boolean;
+  readonly keep_partial_on_failure: boolean;
+  readonly verbose_logging: boolean;
+}
+
 export interface NativeState {
   readonly connected: boolean;
   readonly tasks: readonly NativeTask[];
+  readonly settings?: NativeSettings;
 }
 
 type StateListener = (state: NativeState) => void;
@@ -147,6 +159,7 @@ export class NativeConnection {
       timeout: ReturnType<typeof setTimeout>;
     }
   >();
+  #settings: NativeSettings | undefined;
   #port: NativePort | undefined;
   #pending: PendingConnection | undefined;
   #helloCorrelation: string | undefined;
@@ -226,8 +239,18 @@ export class NativeConnection {
     payload: unknown,
   ): Promise<NativeTask>;
   command(command: "remove" | "open_folder", payload: unknown): Promise<unknown>;
+  command(command: "get_settings" | "update_settings", payload: unknown): Promise<NativeSettings>;
   async command(
-    command: "add" | "pause" | "resume" | "cancel" | "get" | "remove" | "open_folder",
+    command:
+      | "add"
+      | "pause"
+      | "resume"
+      | "cancel"
+      | "get"
+      | "remove"
+      | "open_folder"
+      | "get_settings"
+      | "update_settings",
     payload: unknown,
   ): Promise<unknown> {
     await this.connect();
@@ -270,6 +293,7 @@ export class NativeConnection {
     return Object.freeze({
       connected: this.#port !== undefined && this.#helloAccepted && this.#pending === undefined,
       tasks: Object.freeze([...this.#tasks.values()]),
+      ...(this.#settings ? { settings: this.#settings } : {}),
     });
   }
 
@@ -307,6 +331,18 @@ export class NativeConnection {
       this.#commands.delete(String(message.correlation_id));
       if (message.ok === false && isTaskError(message.error)) {
         pending.reject(new NativeConnectionError("helper_error", message.error.code));
+        return;
+      }
+      if (pending.command === "get_settings" || pending.command === "update_settings") {
+        const settings = nativeSettings(message.result);
+        if (!settings) {
+          pending.reject(new NativeConnectionError("protocol_error"));
+          this.#reject(new NativeConnectionError("protocol_error"));
+          return;
+        }
+        this.#settings = settings;
+        pending.resolve(settings);
+        this.#notify();
         return;
       }
       if (pending.command === "remove" || pending.command === "open_folder") {
@@ -891,4 +927,37 @@ function isDateTime(value: unknown): value is string {
     /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/u.test(value) &&
     Number.isFinite(Date.parse(value))
   );
+}
+
+export function nativeSettings(value: unknown): NativeSettings | undefined {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      "destination",
+      "default_workers",
+      "global_concurrency",
+      "per_host_concurrency",
+      "retry_limit",
+      "keep_partial_on_cancel",
+      "keep_partial_on_failure",
+      "verbose_logging",
+    ]) ||
+    typeof value.destination !== "string" ||
+    !value.destination ||
+    value.destination.length > 32767 ||
+    !isWorkerCount(value.default_workers) ||
+    !isSafeInteger(value.global_concurrency) ||
+    value.global_concurrency < 1 ||
+    value.global_concurrency > 32 ||
+    !isSafeInteger(value.per_host_concurrency) ||
+    value.per_host_concurrency < 1 ||
+    value.per_host_concurrency > 8 ||
+    !isSafeInteger(value.retry_limit) ||
+    value.retry_limit > 20 ||
+    typeof value.keep_partial_on_cancel !== "boolean" ||
+    typeof value.keep_partial_on_failure !== "boolean" ||
+    typeof value.verbose_logging !== "boolean"
+  )
+    return undefined;
+  return Object.freeze(value) as unknown as NativeSettings;
 }

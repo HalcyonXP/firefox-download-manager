@@ -1434,3 +1434,77 @@ impl Drop for TestDirectories {
         let _ = fs::remove_dir_all(&self.root);
     }
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn settings_reconfiguration_rejects_running_work_and_failure_policy_deletes_only_partial() {
+    let directories = TestDirectories::new("settings-retention");
+    let server = TestServer::start(ServerConfig {
+        fixture: Fixture {
+            len: 2 * MIB,
+            seed: 71,
+        },
+        rules: vec![FaultRule {
+            selector: RequestSelector {
+                path: Some("/retention".to_owned()),
+                request_number: Some(3),
+                range: None,
+            },
+            fault: Fault::BadContentRange(BadRange::Start),
+        }],
+    })
+    .expect("server");
+    let mut engine =
+        TaskEngine::open(directories.state(), TaskEngineOptions::default()).expect("engine");
+    let task = engine
+        .create_task_default(
+            &server.url("/stall"),
+            directories.destination(),
+            "retain.bin",
+        )
+        .expect("task");
+    engine.start(task.task_id()).expect("start");
+    assert!(
+        engine
+            .reconfigure(
+                TaskEngineOptions::default(),
+                DownloadScheduler::new().expect("scheduler")
+            )
+            .is_err()
+    );
+    engine
+        .cancel(task.task_id(), CancelPartialPolicy::Delete)
+        .await
+        .expect("stop");
+    // Run futures may still be returning; reconfigure fails rather than racing them.
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    engine
+        .reconfigure(
+            TaskEngineOptions::default().with_failure_retention(false),
+            DownloadScheduler::new().expect("scheduler"),
+        )
+        .expect("inactive reconfiguration");
+    let task = engine
+        .create_task_default(
+            &server.url("/retention"),
+            directories.destination(),
+            "failure.bin",
+        )
+        .expect("failed task");
+    engine.start(task.task_id()).expect("start failure");
+    let done = tokio::time::timeout(
+        Duration::from_secs(10),
+        engine.wait_until_inactive(task.task_id()),
+    )
+    .await
+    .expect("timeout")
+    .expect("done");
+    assert_eq!(done.state(), TaskState::Failed);
+    assert!(
+        engine
+            .metadata(task.task_id())
+            .expect("metadata")
+            .partial_path()
+            .is_none()
+    );
+    assert!(!directories.destination().join("failure.bin").exists());
+}

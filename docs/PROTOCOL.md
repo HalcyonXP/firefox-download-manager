@@ -59,7 +59,7 @@ Operational commands are serialized by the helper per task. A command receives e
 | `list` | Return a bounded page from an authoritative snapshot | Snapshot page |
 | `get` | Return one full task | Full task |
 | `open_folder` | Open the existing canonical destination for a task UUID | `opened_task_id` |
-| `get_settings` | Reserved settings read, rejects until #13 | Complete effective settings |
+| `get_settings` | Read persisted effective settings | Complete effective settings |
 | `update_settings` | Validate and atomically apply a non-empty patch | Complete effective settings |
 
 `add.url` must be an absolute HTTP(S) URL without URL user-info. Schema pattern checks are only preliminary; the helper performs semantic URL parsing. Destination, suggested filename, request context, checksum, and worker count are likewise revalidated by their consuming subsystem.
@@ -139,4 +139,4 @@ Non-sensitive examples are under [`protocol/schema/v2/examples`](../protocol/sch
 
 ## V2 decision (#12)
 
-V1 cannot express open-folder without violating its strict unknown-command policy. V2 adds an explicit task-ID-only command; no arbitrary executable or path crosses this boundary. The helper invokes the absolute Windows Explorer executable with one canonical directory argument and detached null standard streams. The reserved get_settings command and verbose_logging setting allow #13 to implement settings without another shape change. Credential/checksum fields remain reserved. Queued resume means Start; failed resume means Retry.
+V1 cannot express open-folder without violating its strict unknown-command policy. V2 adds an explicit task-ID-only command; no arbitrary executable or path crosses this boundary. The helper invokes the absolute Windows Explorer executable with one canonical directory argument and detached null standard streams. The reserved get_settings command and verbose_logging setting allow #13 to implement settings without another shape change. Settings are implemented in #13 (see [SETTINGS.md](SETTINGS.md)); credential/checksum fields remain reserved. Queued resume means Start; failed resume means Retry.

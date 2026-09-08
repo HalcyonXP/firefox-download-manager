@@ -54,6 +54,10 @@ The installer copies the release helper to the per-user application-data tree an
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for verification and manual Firefox steps. The registered transport and reconnect snapshot layer are implemented; explicit link capture and the creation form are implemented; the snapshot-driven dashboard supports pause, resume/start/retry, cancel, remove, and task-destination folder opening. Both components must be rebuilt together for protocol v2. These scripts do not create a service, listener, firewall rule, VPN configuration, or network-route change.
 
+## Settings and local diagnostics
+
+The manager page includes helper-owned destination, worker/request caps, retry, retention, and verbose-log settings. Pause active work before saving. See [docs/SETTINGS.md](docs/SETTINGS.md) for defaults, migration, bounded enum-only diagnostics, and recovery.
+
 ## Guiding principles
 
 - Correct bytes are more important than optimistic speed.

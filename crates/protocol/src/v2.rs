@@ -636,13 +636,14 @@ impl Validate for UpdateSettingsPayload {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SettingsPatchInput {
-    destination: Option<String>,
-    default_workers: Option<u8>,
-    global_concurrency: Option<u8>,
-    per_host_concurrency: Option<u8>,
-    retry_limit: Option<u8>,
-    keep_partial_on_cancel: Option<bool>,
-    keep_partial_on_failure: Option<bool>,
+    pub destination: Option<String>,
+    pub default_workers: Option<u8>,
+    pub global_concurrency: Option<u8>,
+    pub per_host_concurrency: Option<u8>,
+    pub retry_limit: Option<u8>,
+    pub keep_partial_on_cancel: Option<bool>,
+    pub keep_partial_on_failure: Option<bool>,
+    pub verbose_logging: Option<bool>,
 }
 
 impl Validate for SettingsPatchInput {
@@ -653,7 +654,8 @@ impl Validate for SettingsPatchInput {
             || self.per_host_concurrency.is_some()
             || self.retry_limit.is_some()
             || self.keep_partial_on_cancel.is_some()
-            || self.keep_partial_on_failure.is_some();
+            || self.keep_partial_on_failure.is_some()
+            || self.verbose_logging.is_some();
         populated
             && self
                 .destination
@@ -1041,8 +1043,9 @@ pub struct SnapshotPage {
     pub complete: bool,
 }
 
-/// Protocol-v1 settings projection.
-#[derive(Clone, Serialize)]
+/// Protocol-v2 settings projection.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct SettingsDescription {
     pub destination: String,
     pub default_workers: u8,
@@ -1051,6 +1054,8 @@ pub struct SettingsDescription {
     pub retry_limit: u8,
     pub keep_partial_on_cancel: bool,
     pub keep_partial_on_failure: bool,
+    #[serde(default)]
+    pub verbose_logging: bool,
 }
 
 /// Complete protocol-v2 task projection.

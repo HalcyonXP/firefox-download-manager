@@ -1,5 +1,5 @@
 import { creationPayload, suggestedFilename } from "./creation";
-import type { NativeState, NativeTask } from "./native-connection";
+import type { NativeState, NativeTask, NativeSettings } from "./native-connection";
 import { Dashboard } from "./dashboard";
 
 function element<T extends HTMLElement>(id: string): T {
@@ -13,6 +13,8 @@ const workers = element<HTMLSelectElement>("workers");
 const feedback = element("feedback");
 const submit = element<HTMLButtonElement>("submit");
 let port: browser.runtime.Port;
+let effectiveSettings: NativeSettings | undefined;
+let settingsKey = "";
 const dashboard = new Dashboard(element("tasks"), (action, task) => {
   if (
     action === "remove" &&
@@ -23,7 +25,11 @@ const dashboard = new Dashboard(element("tasks"), (action, task) => {
     return;
   if (
     action === "cancel" &&
-    !confirm("Cancel this download? Partial bytes will be retained until you remove the task.")
+    !confirm(
+      effectiveSettings?.keep_partial_on_cancel === false
+        ? "Cancel and delete this partial?"
+        : "Cancel this download? Partial bytes will be retained until you remove the task.",
+    )
   )
     return;
   dashboard.busy(true);
@@ -50,8 +56,14 @@ function attach(): void {
         : "Helper disconnected · showing last snapshot";
       element("queue-summary").textContent = `${message.state.tasks.length} download(s)`;
       dashboard.update(message.state);
+      if (message.state.settings && JSON.stringify(message.state.settings) !== settingsKey) {
+        effectiveSettings = message.state.settings;
+        settingsKey = JSON.stringify(effectiveSettings);
+        renderSettings(effectiveSettings);
+      }
     }
-    if (message.kind === "error") feedback.textContent = message.message ?? "Action failed.";
+    if (message.kind === "error" || message.kind === "notice")
+      feedback.textContent = message.message ?? "Action failed.";
     if (message.kind === "added" && message.task) {
       feedback.textContent = `Added ${message.task.display_name}. The helper now owns this download.`;
       url.value = "";
@@ -59,6 +71,7 @@ function attach(): void {
     if (message.kind === "idle") {
       submit.disabled = false;
       dashboard.busy(false);
+      element<HTMLButtonElement>("save-settings").disabled = false;
     }
   });
   port.onDisconnect.addListener(() => {
@@ -97,3 +110,33 @@ element("reconnect").addEventListener("click", () => {
   attach();
 });
 attach();
+
+function renderSettings(settings: NativeSettings): void {
+  element<HTMLInputElement>("setting-destination").value = settings.destination;
+  element<HTMLSelectElement>("setting-workers").value = String(settings.default_workers);
+  element<HTMLInputElement>("setting-global").value = String(settings.global_concurrency);
+  element<HTMLInputElement>("setting-host").value = String(settings.per_host_concurrency);
+  element<HTMLInputElement>("setting-retry").value = String(settings.retry_limit);
+  element<HTMLInputElement>("setting-cancel").checked = settings.keep_partial_on_cancel;
+  element<HTMLInputElement>("setting-failure").checked = settings.keep_partial_on_failure;
+  element<HTMLInputElement>("setting-verbose").checked = settings.verbose_logging;
+  if (!destination.value) destination.value = settings.destination;
+  workers.value = String(settings.default_workers);
+}
+element<HTMLFormElement>("settings-form").addEventListener("submit", (event) => {
+  event.preventDefault();
+  element<HTMLButtonElement>("save-settings").disabled = true;
+  port.postMessage({
+    action: "settings",
+    patch: {
+      destination: element<HTMLInputElement>("setting-destination").value,
+      default_workers: Number(element<HTMLSelectElement>("setting-workers").value),
+      global_concurrency: Number(element<HTMLInputElement>("setting-global").value),
+      per_host_concurrency: Number(element<HTMLInputElement>("setting-host").value),
+      retry_limit: Number(element<HTMLInputElement>("setting-retry").value),
+      keep_partial_on_cancel: element<HTMLInputElement>("setting-cancel").checked,
+      keep_partial_on_failure: element<HTMLInputElement>("setting-failure").checked,
+      verbose_logging: element<HTMLInputElement>("setting-verbose").checked,
+    },
+  });
+});
