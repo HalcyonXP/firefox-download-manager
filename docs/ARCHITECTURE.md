@@ -166,7 +166,7 @@ Scheduler updates use latest-value channels. The task controller emits absolute 
 
 - Supported per-task worker counts are 1, 2, 4, and 8.
 - Four is the default; eight is the initial per-task cap; the resolved per-task choice is persisted for restart.
-- Per-host and global limits independently bound aggregate transfer-request pressure; broader adaptive throttling remains issue #16.
+- Per-host and global limits independently bound aggregate transfer-request pressure; broader adaptive throttling remains issue #24.
 - Each active byte belongs to one assignment and one writer.
 - Tail assistance may duplicate only the sole remaining bounded request; first validated completion wins one storage assignment and the loser cannot write.
 - An exclusive state-store ownership lock prevents two helper instances from managing the same task set and partial files.

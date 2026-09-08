@@ -1,7 +1,7 @@
 //! Persistent task lifecycle, cooperative controls, bounded retries, and events.
 //!
 //! This module is the native engine boundary consumed by the Native Messaging
-//! host in issue #10. It serializes commands per task, keeps persisted metadata
+//! host in issue #18. It serializes commands per task, keeps persisted metadata
 //! authoritative, and exposes full latest-value snapshots independently from a
 //! bounded coalescing event queue.
 

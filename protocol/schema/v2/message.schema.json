@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/HalcyonXP/download-manager/protocol/schema/v2/message.schema.json",
+  "$id": "https://github.com/HalcyonXP/firefox-download-manager/protocol/schema/v2/message.schema.json",
   "title": "Firefox Download Manager Native Messaging protocol v2",
   "description": "A single framed command, response, or event. The four-byte Native Messaging length prefix is outside this schema.",
   "oneOf": [

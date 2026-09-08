@@ -68,11 +68,11 @@ Every worker sends `Accept-Encoding: identity`. It also sends `If-Range` with th
 
 A shared global semaphore and one semaphore per URL origin independently limit concurrent requests across tasks. The defaults are 16 globally and 8 per origin; validated configuration caps them at 32 and 8 respectively. Per-task workers remain capped at eight regardless of those aggregate limits.
 
-## Strong resource identity and recovery (#14)
+## Strong resource identity and recovery (#22)
 
 Weak or absent ETags (even with Last-Modified and a matching length) do not prove byte identity across requests. Such probes choose a fresh single stream. Nonempty completed coverage is never reused without a strong ETag, in both the task controller and scheduler boundary. Resume/retry compares final URL, size, transfer mode, ETag, and Last-Modified exactly. Known conflict or insufficient identity returns an explicit failure; remove the retained task/partial deliberately and create a new download rather than mixing generations. Empty interrupted single streams may restart from byte zero.
 
-This is deliberately stricter than the original #5 policy. A strong ETag is an HTTP server promise, not a cryptographic checksum; a server lying consistently about its validator is outside what HTTP identity checks alone can detect. Optional user-supplied checksums remain #17.
+This is deliberately stricter than the original #13 policy. A strong ETag is an HTTP server promise, not a cryptographic checksum; a server lying consistently about its validator is outside what HTTP identity checks alone can detect. Optional user-supplied checksums remain #25.
 
 ## Safe fallback
 

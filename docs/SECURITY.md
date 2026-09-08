@@ -77,7 +77,7 @@ Metadata is versioned but untrusted. Recovery validates identifiers, enum values
 
 URL user-info (`https://user:pass@host/`) is rejected rather than normalized. Logs must use structured redaction before formatting; redaction after a string has entered a log pipeline is insufficient. Panic/error chains and HTTP-client tracing must be reviewed so they cannot bypass redaction. Verbose diagnostics are opt-in, local, bounded, and still exclude credentials.
 
-Authenticated downloads are intentionally deferred until issue #15. Only cookies applicable to the exact target URL may be transferred, honoring domain, path, expiry, `Secure`, and `HttpOnly` semantics. Authorization data remains memory-only. Redirects to unrelated origins strip credentials and require explicit reauthorization.
+Authenticated downloads are intentionally deferred until issue #23. Only cookies applicable to the exact target URL may be transferred, honoring domain, path, expiry, `Secure`, and `HttpOnly` semantics. Authorization data remains memory-only. Redirects to unrelated origins strip credentials and require explicit reauthorization.
 
 ## Resource identity and corruption resistance
 
@@ -88,7 +88,7 @@ Completed coverage is represented canonically as ordered, non-overlapping, in-bo
 ## Availability and server-impact controls
 
 - Per-task worker count is restricted to 1, 2, 4, or 8, with four default and eight maximum.
-- Transfer-request per-host and global concurrency semaphores are independent and shared across tasks; broader adaptive throttling remains issue #16.
+- Transfer-request per-host and global concurrency semaphores are independent and shared across tasks; broader adaptive throttling remains issue #24.
 - Ranged bodies are limited to 8 MiB per assignment and plans to 1,000,000 requests.
 - Only the sole remaining tail can be hedged, at most once; only one response can own its range.
 - Undeclared-length streams have an explicit byte cap and restart from zero after interruption.

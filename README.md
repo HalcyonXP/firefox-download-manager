@@ -2,21 +2,21 @@
 
 A local download manager for Firefox Developer Edition on Windows 11. It is intended to improve throughput on servers that support HTTP byte ranges by downloading validated file segments concurrently.
 
-## Publication privacy status
+## Repository and privacy status
 
-The independently audited publication/CI target is **[HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager)**. It is prepared for a later public-visibility decision, not yet made public by this task.
+**[HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager)** is the public, authoritative repository for code, issues, CI, and future releases. Use this repository directly; there is no publication mirror to synchronize.
 
-**Keep the original `HalcyonXP/download-manager` private:** it preserves the work board/issues and GitHub-retained original metadata. Only cleaned `main` is synchronized to the independent non-fork target. See [docs/PUBLICATION_PRIVACY.md](docs/PUBLICATION_PRIVACY.md). Privacy clearance is not an installable-release announcement.
+The private predecessor is retained only as an archive. Its sensitive original Git history was not imported. See [publication privacy](docs/PUBLICATION_PRIVACY.md) and the [issue migration map](docs/ISSUE_MIGRATION.md). Public source availability is not an installable-release announcement.
 
 ## Project status
 
-Planning is complete and implementation proceeds through the lowest-numbered **Ready** issue. Current status is tracked on the private [Firefox Download Manager project board](https://github.com/users/HalcyonXP/projects/1), in [GitHub Issues](https://github.com/HalcyonXP/download-manager/issues), and across five milestones:
+Planning is complete and implementation proceeds through the lowest-numbered **Ready** issue. Current status is tracked on the private [Firefox Download Manager project board](https://github.com/users/HalcyonXP/projects/1), in [GitHub Issues](https://github.com/HalcyonXP/firefox-download-manager/issues), and across five milestones:
 
-1. [M0 — Foundation](https://github.com/HalcyonXP/download-manager/milestone/2)
-2. [M1 — Native download MVP](https://github.com/HalcyonXP/download-manager/milestone/3)
-3. [M2 — Firefox integration](https://github.com/HalcyonXP/download-manager/milestone/4)
-4. [M3 — Reliability and authenticated downloads](https://github.com/HalcyonXP/download-manager/milestone/5)
-5. [M4 — Local release](https://github.com/HalcyonXP/download-manager/milestone/6)
+1. [M0 — Foundation](https://github.com/HalcyonXP/firefox-download-manager/milestone/1)
+2. [M1 — Native download MVP](https://github.com/HalcyonXP/firefox-download-manager/milestone/2)
+3. [M2 — Firefox integration](https://github.com/HalcyonXP/firefox-download-manager/milestone/3)
+4. [M3 — Reliability and authenticated downloads](https://github.com/HalcyonXP/firefox-download-manager/milestone/4)
+5. [M4 — Local release](https://github.com/HalcyonXP/firefox-download-manager/milestone/5)
 
 See [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) for scope, execution order, and release criteria; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component boundaries and accepted decisions; [docs/SECURITY.md](docs/SECURITY.md) for the threat model and sensitive-data policy; [docs/PROTOCOL.md](docs/PROTOCOL.md) for the versioned extension/helper contract; [docs/HTTP.md](docs/HTTP.md), [docs/STORAGE.md](docs/STORAGE.md), [docs/STATE.md](docs/STATE.md), and [docs/TEST_SERVER.md](docs/TEST_SERVER.md) for strict HTTP, partial-file, recovery, and fixture behavior; and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Windows bootstrap and quality commands. See [AGENTS.md](AGENTS.md) for the implementation workflow and non-negotiable constraints used across development sessions.
 
@@ -74,3 +74,7 @@ The manager page includes helper-owned destination, worker/request caps, retry, 
 - Transient retries are bounded and delayed; fatal protocol/storage failures stop.
 - Credentials and sensitive URLs are not written to ordinary logs.
 - Everything remains local; no analytics, telemetry, or remote updater.
+
+## License status
+
+This transition did not select a first-party project license. Public visibility is not a new license grant; reviewed third-party attribution remains in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).

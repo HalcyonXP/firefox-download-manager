@@ -10,7 +10,7 @@
   "packageManager": "npm@11.18.0",
   "scripts": {
     "build": "npm run clean && node scripts/build-extension.mjs",
-    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run privacy:test && npm run privacy:history && npm run protocol:check && npm run native-host:check && npm run build && npm run extension:check",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run privacy:test && npm run privacy:history && npm run repository:test && npm run repository:check && npm run protocol:check && npm run native-host:check && npm run build && npm run extension:check",
     "clean": "node scripts/clean.mjs",
     "extension:check": "node scripts/validate-extension.mjs",
     "format": "prettier --write \"extension/**/*.{ts,json}\" \"native-host/**/*.json\" \"scripts/**/*.mjs\" \"*.{json,mjs}\" \".github/**/*.{yml,yaml}\" \"protocol/schema/**/*.json\"",
@@ -24,7 +24,9 @@
     "privacy:check": "node scripts/check-privacy.mjs",
     "privacy:history": "node scripts/check-privacy.mjs --history",
     "privacy:test": "node --test scripts/privacy-policy.test.mjs scripts/publication-policy.test.mjs",
-    "privacy:publication": "node scripts/verify-publication.mjs"
+    "privacy:publication": "node scripts/verify-publication.mjs",
+    "repository:check": "node scripts/check-repository.mjs",
+    "repository:test": "node --test scripts/repository-policy.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -1,13 +1,12 @@
-// Initial-publication audit. Private comparison inputs must remain outside the checkout.
+// Remote Git/platform audit. Private comparison inputs must remain outside the checkout.
 import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allowedEmail, inspectText, sensitivePath } from "./privacy-policy.mjs";
 import { originalCommitAbsent, outsideCheckout } from "./publication-policy.mjs";
+import { repository as target } from "./repository-policy.mjs";
 
-const source = "HalcyonXP/download-manager";
-const target = "HalcyonXP/firefox-download-manager";
 const maxBuffer = 64 * 1024 * 1024;
 let stage = "inputs";
 function requireCondition(value) {
@@ -48,10 +47,15 @@ function pages(endpoint, key) {
 
 async function main() {
   const args = process.argv.slice(2);
-  requireCondition(args.length === 2);
+  requireCondition(args.length === 2 || (args.length === 3 && args[2] === "--metadata-only"));
+  const metadataOnly = args[2] === "--metadata-only";
   const checkout = await realpath(command("git", ["rev-parse", "--show-toplevel"]).trim());
-  for (const path of args) requireCondition(outsideCheckout(checkout, await realpath(path)));
-  const { emails } = JSON.parse(await readFile(args[0], "utf8"));
+  for (const path of args.slice(0, 2))
+    requireCondition(outsideCheckout(checkout, await realpath(path)));
+  const { emails, archiveRepository: source } = JSON.parse(await readFile(args[0], "utf8"));
+  requireCondition(
+    typeof source === "string" && /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(source),
+  );
   const originals = JSON.parse(await readFile(args[1], "utf8"));
   requireCondition(Array.isArray(emails) && emails.length > 0);
   requireCondition(emails.every((value) => typeof value === "string" && value.includes("@")));
@@ -66,7 +70,7 @@ async function main() {
   const sourceMetadata = get(`repos/${source}`);
   const targetMetadata = get(`repos/${target}`);
   requireCondition(sourceMetadata.private === true);
-  requireCondition(targetMetadata.private === true && targetMetadata.fork === false);
+  requireCondition(targetMetadata.fork === false);
   requireCondition(!targetMetadata.parent && sourceMetadata.id !== targetMetadata.id);
   requireCondition(targetMetadata.default_branch === "main" && !targetMetadata.has_wiki);
   inspect(JSON.stringify(targetMetadata));
@@ -157,16 +161,18 @@ async function main() {
     surfaces.jobs = surfaces.runs.flatMap((run) =>
       pages(`repos/${target}/actions/runs/${run.id}/jobs?filter=all`, "jobs"),
     );
-    // Started jobs require a separate full log/artifact review; do not silently skip it.
-    requireCondition(
-      surfaces.jobs.every((job) => job.status === "completed" && (job.steps ?? []).length === 0),
-    );
+    // Metadata-only mode is explicit and never reports complete archive/privacy clearance.
+    if (!metadataOnly)
+      requireCondition(
+        surfaces.jobs.every((job) => job.status === "completed" && (job.steps ?? []).length === 0),
+      );
     stage = "platform-content";
     inspect(JSON.stringify(surfaces));
     stage = "empty-initial-surfaces";
-    for (const key of ["releases", "deployments", "forks", "artifacts", "caches"]) {
-      requireCondition(surfaces[key].length === 0);
-    }
+    if (!metadataOnly)
+      for (const key of ["releases", "deployments", "forks", "artifacts", "caches"]) {
+        requireCondition(surfaces[key].length === 0);
+      }
     stage = "final-consistency";
     requireCondition(advertised() === beforeRefs);
     requireCondition(get(`repos/${target}/commits/main`).sha === head);
@@ -175,11 +181,10 @@ async function main() {
       JSON.stringify(
         {
           checkedAt: new Date().toISOString(),
-          source,
-          target,
+          repository: target,
           head,
-          originalRemainsPrivate: true,
-          targetPrivate: true,
+          privateArchiveVerified: true,
+          visibility: targetMetadata.private ? "private" : "public",
           independentNonFork: true,
           refs: refs.length,
           commits: commits.length,
@@ -189,11 +194,13 @@ async function main() {
           originalCommitLookupsRejected: originals.length,
           targetMetadataChecked: true,
           runs: surfaces.runs.length,
-          artifacts: 0,
-          caches: 0,
-          initialPublicationPrivacyCheck: "passed",
-          originalRepositoryPrivacyCleared: false,
-          hostedCIPassed: false,
+          artifacts: surfaces.artifacts.length,
+          caches: surfaces.caches.length,
+          scope: metadataOnly ? "git-and-platform-metadata-only" : "initial-empty-archive-gate",
+          gitAndMetadataCheck: "passed",
+          logArtifactCacheContentsReviewed: false,
+          furtherArchiveReviewRequired: metadataOnly,
+          privateArchivePrivacyCleared: false,
           releaseQualified: false,
         },
         null,
@@ -207,7 +214,7 @@ async function main() {
 main().catch(() => {
   console.error(`Audit stage: ${stage}`);
   console.error(
-    "Publication audit failed or incomplete. Details withheld to avoid exposing private values or paths. Keep both repositories private; inspect locally. Required inputs: external private-identifiers JSON, then original-commits JSON.",
+    "Remote privacy audit failed or incomplete. Inspect locally before publishing additional data; details withheld to avoid exposing private values or paths. Required inputs: external private-identifiers JSON, then original-commits JSON; optional --metadata-only never clears log/artifact contents.",
   );
   process.exitCode = 1;
 });

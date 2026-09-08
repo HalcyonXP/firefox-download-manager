@@ -121,7 +121,7 @@ Schema fields marked `x-sensitive` require special handling. These include URL, 
 - Redaction occurs before structured data reaches a log formatter.
 - Cross-origin redirects strip credentials unless an explicit authenticated-download policy permits transfer.
 
-The credential shape reserves the reviewed boundary for issue #15; implementations must reject it until the `authenticated_requests` capability is advertised.
+The credential shape reserves the reviewed boundary for issue #23; implementations must reject it until the `authenticated_requests` capability is advertised.
 
 ## Compatibility rules
 
