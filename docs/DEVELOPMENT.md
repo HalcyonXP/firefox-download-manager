@@ -112,6 +112,10 @@ For the normal install, remove only the HKCU registration and generated host fil
 
 Uninstallation deliberately does not recurse into `%LOCALAPPDATA%\HalcyonXP\FirefoxDownloadManager\state`, alter destination files, or remove completed downloads. Stop any live Native Messaging connection before replacing or removing a Windows executable. Mozilla's `web-ext` can be reconsidered after its dependency tree has no known high-severity advisory; it remains outside the locked toolchain.
 
+## Privacy checks before publication
+
+Run `npm run privacy:test`, `npm run privacy:check`, and `npm run privacy:history` (full history required). The normal `npm run check` includes the policy tests and HEAD-history guard. Never paste matched private values into issues or commit messages. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) for the unresolved GitHub-retention gate; local pattern checks alone do not clear it.
+
 ## Dependency and license review
 
 JavaScript inventory and licenses:

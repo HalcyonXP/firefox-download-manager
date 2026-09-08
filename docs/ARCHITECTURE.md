@@ -86,7 +86,7 @@ The extension owns:
 
 The extension does not download or assemble file bodies, decide completed byte coverage, write destination files, or treat in-memory UI state as authoritative.
 
-The initial extension uses Manifest V3 with a Firefox event-page background script and only the `nativeMessaging` permission. Its on-demand connection object sends `hello`, validates bounded response/event envelopes, enforces connection-local event sequence continuity, coalesces absolute progress into its latest task map, and atomically replaces that map only after a complete paginated snapshot. A disconnected context retains only a non-authoritative display copy; reconnecting starts a fresh sequence and helper snapshot. See [ADR-0002](decisions/0002-firefox-manifest-v3.md).
+The initial extension uses Manifest V3 with a Firefox event-page background script and `nativeMessaging` and `menus` permissions. Its on-demand connection object sends `hello`, validates bounded response/event envelopes, enforces connection-local event sequence continuity, coalesces absolute progress into its latest task map, and atomically replaces that map only after a complete paginated snapshot. A disconnected context retains only a non-authoritative display copy; reconnecting starts a fresh sequence and helper snapshot. See [ADR-0002](decisions/0002-firefox-manifest-v3.md).
 
 ### Rust native helper
 
@@ -154,7 +154,7 @@ queued → probing → downloading ⇄ paused
                     └→ validating → promoting → completed
 ```
 
-Transitions are explicit and persisted where they affect recovery. `completed` and `cancelled` are terminal; `failed` is inactive until an explicit retry requeues the same task and revalidates any retained resource identity. Protocol v1 uses the `resume` command as that explicit retry action for a failed task. Pause/cancel acknowledgement occurs only after cancellation-aware probes, retry sleeps, requests, and workers stop; the controller then performs a bytes-first critical checkpoint. Cancellation has an explicit keep/delete-partial choice and never deletes final output.
+Transitions are explicit and persisted where they affect recovery. `completed` and `cancelled` are terminal; `failed` is inactive until an explicit retry requeues the same task and revalidates any retained resource identity. Protocol v2 uses the `resume` command as that explicit retry action for a failed task. Pause/cancel acknowledgement occurs only after cancellation-aware probes, retry sleeps, requests, and workers stop; the controller then performs a bytes-first critical checkpoint. Cancellation has an explicit keep/delete-partial choice and never deletes final output.
 
 ## Retry and progress policy
 

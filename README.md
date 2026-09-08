@@ -2,6 +2,10 @@
 
 A local download manager for Firefox Developer Edition on Windows 11. It is intended to improve throughput on servers that support HTTP byte ranges by downloading validated file segments concurrently.
 
+## Publication privacy status
+
+**Keep this repository private until #41 is resolved.** Source and writable branch history have been reviewed/cleaned, but GitHub still retains original private commit metadata through closed PR refs. See [docs/PUBLICATION_PRIVACY.md](docs/PUBLICATION_PRIVACY.md). This is not an installable-release announcement.
+
 ## Project status
 
 Planning is complete and implementation proceeds through the lowest-numbered **Ready** issue. Current status is tracked on the private [Firefox Download Manager project board](https://github.com/users/HalcyonXP/projects/1), in [GitHub Issues](https://github.com/HalcyonXP/download-manager/issues), and across five milestones:

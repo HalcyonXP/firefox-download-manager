@@ -8,6 +8,10 @@ Current protocol: v2 (paired helper/extension upgrade, #12); v1 remains archived
 
 Project vocabulary and autonomous handoff decisions: [GLOSSARY.md](GLOSSARY.md).
 
+## Publication preparation priority (2026-09-08)
+
+The user requested privacy cleanup after #14 before changing repository visibility to address the exhausted private Actions budget. #40 covers writable-history/content cleanup and recurrence prevention; #41 covers GitHub-retained closed-PR ancestry. Further feature work was temporarily deferred while performing #40. **Repository visibility remains private, and public readiness remains blocked by #41.** See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) for evidence, scope, and the distinction between cleaned Git branches and retained platform history. No billing change or public switch is part of this task.
+
 ## Product goal
 
 Create a trustworthy local download manager for Firefox Developer Edition that can improve throughput when an HTTP(S) server limits individual connections and supports byte-range requests.
@@ -156,6 +160,7 @@ A release must preserve these invariants:
 ## Release quality gates
 
 - Formatting, linting, unit tests, and integration tests pass in GitHub Actions.
+- Publication privacy checks pass and GitHub-retained private metadata is cleared (#40/#41) before public visibility.
 - Adversarial HTTP fixtures cover malformed and changing responses.
 - The final output is byte-identical for all supported worker counts.
 - Firefox and helper restart paths are tested.
