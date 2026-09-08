@@ -2,7 +2,7 @@
 
 Status: accepted baseline for the initial local release
 
-Last updated: 2026-09-04
+Last updated: 2026-09-08
 
 ## Security goals
 
@@ -37,7 +37,7 @@ Malformed JSON, truncated framing, unexpected EOF, duplicate correlations, unkno
 
 ### Helper to network
 
-All remote responses are untrusted. The helper uses maintained TLS defaults, does not disable certificate validation, and does not implement custom VPN or route behavior. Redirect count and schemes are bounded. Credentials are not forwarded across an origin change unless a later, explicit policy proves the destination is eligible.
+All remote responses are untrusted. The helper uses maintained TLS defaults, does not disable certificate validation, and does not implement custom VPN or route behavior. Redirect count and schemes are bounded. Context-bearing origin-changing redirects are rejected before contacting the next origin; same-origin hops re-evaluate cookie path and expiry.
 
 A range is writable only when status is `206` and a parsed `Content-Range` exactly matches the assignment and known total. Each response is buffered only to its bounded assignment and revalidates encoding, body length, validators, total size, and exact final URL before acquiring storage ownership. A malformed worker response fails; fallback is selected only by the initial safe probe, never after segmented bytes are accepted. Already mixed output is never reclassified as safe.
 
@@ -59,7 +59,7 @@ Promotion occurs only after validation. If the filesystem cannot provide an atom
 
 ### Persisted state to restarted helper
 
-Metadata is versioned but untrusted. Recovery validates identifiers, enum values, the persisted 1/2/4/8 worker selection, size arithmetic, range ordering and coverage, paths, partial/final file type and length, same-file publication identity, and resource validators. Format v1 is accepted only through its dedicated migration into v2; unknown future formats and corrupt state fail closed. Secret headers and cookies are not persisted by default. Concrete schema, checkpoint ordering, recovery bounds, and cleanup behavior are documented in [STATE.md](STATE.md).
+Metadata is versioned but untrusted. Recovery validates identifiers, enum values, the persisted 1/2/4/8 worker selection, size arithmetic, range ordering and coverage, paths, partial/final file type and length, same-file publication identity, and resource validators. Formats v1/v2 are accepted only through dedicated strict migration into v3; unknown future formats and corrupt state fail closed. Secret headers and cookies are not persisted by default. Concrete schema, checkpoint ordering, recovery bounds, and cleanup behavior are documented in [STATE.md](STATE.md).
 
 ## Sensitive-data policy
 
@@ -77,7 +77,7 @@ Metadata is versioned but untrusted. Recovery validates identifiers, enum values
 
 URL user-info (`https://user:pass@host/`) is rejected rather than normalized. Logs must use structured redaction before formatting; redaction after a string has entered a log pipeline is insufficient. Panic/error chains and HTTP-client tracing must be reviewed so they cannot bypass redaction. Verbose diagnostics are opt-in, local, bounded, and still exclude credentials.
 
-Authenticated downloads are intentionally deferred until issue #23. Only cookies applicable to the exact target URL may be transferred, honoring domain, path, expiry, `Secure`, and `HttpOnly` semantics. Authorization data remains memory-only. Redirects to unrelated origins strip credentials and require explicit reauthorization.
+Authenticated handoff is implemented in #23 with per-download opt-in, optional cookie/site grants, normal default-store scope, memory-only secrets, and explicit fresh-task retry after expiry/restart. Private/container sources and unsupported partitioned/first-party-isolated contexts are not silently borrowed. See [AUTHENTICATION.md](AUTHENTICATION.md) and [ADR 0010](decisions/0010-minimal-session-handoff.md) for supported semantics, permission granularity, recovery marker, and known limits.
 
 ## Resource identity and corruption resistance
 

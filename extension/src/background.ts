@@ -1,11 +1,12 @@
+import { collectSession, SessionError, type SessionInput } from "./session";
 import { NativeConnection } from "./native-connection";
 import { connectionMessage, creationPayload, directUrl, type CreationInput } from "./creation";
 
 export const nativeConnection = new NativeConnection();
-const captures = new Map<string, { url: string; expires: number }>();
+const captures = new Map<string, { url: string; expires: number; tabId: number | undefined }>();
 const menuId = "download-with-manager";
 
-async function openManager(url?: string): Promise<void> {
+async function openManager(url?: string, tabId?: number): Promise<void> {
   const now = Date.now();
   for (const [key, value] of captures) if (value.expires < now) captures.delete(key);
   let fragment = "";
@@ -13,7 +14,7 @@ async function openManager(url?: string): Promise<void> {
     directUrl(url);
     if (captures.size >= 32) captures.delete(captures.keys().next().value!);
     fragment = crypto.randomUUID();
-    captures.set(fragment, { url, expires: now + 60_000 });
+    captures.set(fragment, { url, expires: now + 60_000, tabId });
   }
   await browser.tabs.create({ url: browser.runtime.getURL(`manager.html#${fragment}`) });
 }
@@ -31,10 +32,10 @@ browser.runtime.onInstalled.addListener(() => {
 browser.action.onClicked.addListener(() => {
   void openManager();
 });
-browser.menus.onClicked.addListener((info) => {
+browser.menus.onClicked.addListener((info, tab) => {
   // No page URL/referrer, content scraping, or built-in download cancellation.
   if (info.menuItemId === menuId && info.linkUrl)
-    void openManager(info.linkUrl).catch(() => openManager());
+    void openManager(info.linkUrl, tab?.id).catch(() => openManager());
 });
 
 browser.runtime.onConnect.addListener((port) => {
@@ -56,11 +57,13 @@ browser.runtime.onConnect.addListener((port) => {
   const unsubscribe = nativeConnection.subscribe((state) => send({ kind: "state", state }));
   port.onDisconnect.addListener(unsubscribe);
   let busy = false;
+  let sessionTabId = port.sender.tab?.id;
   port.onMessage.addListener((message: unknown) => {
     if (typeof message !== "object" || message === null || !("action" in message)) return;
     if (message.action === "capture" && "key" in message && typeof message.key === "string") {
       const captured = captures.get(message.key);
       captures.delete(message.key);
+      if (captured && captured.expires >= Date.now()) sessionTabId = captured.tabId;
       send({
         kind: "capture",
         url: captured && captured.expires >= Date.now() ? captured.url : "",
@@ -124,11 +127,34 @@ browser.runtime.onConnect.addListener((port) => {
             typeof input.workers !== "number"
           )
             throw new Error("invalid input");
-          const task = await nativeConnection.command("add", creationPayload(input));
+          const session = "session" in message ? (message.session as SessionInput) : undefined;
+          if (
+            session &&
+            (typeof session.enabled !== "boolean" ||
+              typeof session.referrer !== "string" ||
+              typeof session.authorization !== "string")
+          )
+            throw new SessionError();
+          const currentTabId =
+            "sessionTabId" in message &&
+            typeof message.sessionTabId === "number" &&
+            Number.isSafeInteger(message.sessionTabId)
+              ? message.sessionTabId
+              : undefined;
+          const requestContext = session
+            ? await collectSession(input.url, session, sessionTabId ?? currentTabId)
+            : undefined;
+          const task = await nativeConnection.command("add", {
+            ...creationPayload(input),
+            ...(requestContext ? { request_context: requestContext } : {}),
+          });
           send({ kind: "added", task });
         }
       } catch (error) {
-        send({ kind: "error", message: connectionMessage(error) });
+        send({
+          kind: "error",
+          message: error instanceof SessionError ? error.message : connectionMessage(error),
+        });
       } finally {
         busy = false;
         send({ kind: "idle" });

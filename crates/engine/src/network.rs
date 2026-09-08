@@ -1,6 +1,8 @@
 //! HTTP probing and strict byte-range response validation.
 
+use crate::auth::{ContextError, RequestContext};
 use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use reqwest::header::{
@@ -149,9 +151,25 @@ pub struct ResourceProbe {
     filename: Option<String>,
     validators: Validators,
     mode: ProbeMode,
+    context: Option<Arc<RequestContext>>,
 }
 
 impl ResourceProbe {
+    pub(crate) fn check_session_status(&self, status: u16) -> Result<(), ContextError> {
+        if self.context.is_some() && matches!(status, 401 | 403) {
+            Err(ContextError::Expired)
+        } else {
+            Ok(())
+        }
+    }
+
+    pub(crate) fn request_headers(&self) -> Result<HeaderMap, ContextError> {
+        self.context.as_ref().map_or_else(
+            || Ok(HeaderMap::new()),
+            |context| context.headers(&self.final_url),
+        )
+    }
+
     /// Final URL after the bounded redirect policy.
     #[must_use]
     pub const fn final_url(&self) -> &Url {
@@ -192,6 +210,7 @@ impl fmt::Debug for ResourceProbe {
             .field("has_filename", &self.filename.is_some())
             .field("validators", &self.validators)
             .field("mode", &self.mode)
+            .field("has_context", &self.context.is_some())
             .finish()
     }
 }
@@ -249,6 +268,9 @@ pub enum RangeValidationError {
 /// Probe operation failure with no URL or response text in its display form.
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ProbeError {
+    /// Invalid or expired memory-only session.
+    #[error("request session is unavailable: {0}")]
+    Context(#[from] ContextError),
     /// URL syntax is invalid.
     #[error("URL is invalid")]
     InvalidUrl,
@@ -297,28 +319,9 @@ impl ProbeClient {
     ///
     /// Returns [`ProbeError::ClientSetup`] if the HTTP client cannot be built.
     pub fn new() -> Result<Self, ProbeError> {
-        let redirect = Policy::custom(|attempt| {
-            let next = attempt.url();
-            if !matches!(next.scheme(), "http" | "https")
-                || !next.username().is_empty()
-                || next.password().is_some()
-            {
-                return attempt.stop();
-            }
-            if attempt.previous().len() >= MAX_REDIRECTS {
-                return attempt.stop();
-            }
-            if attempt
-                .previous()
-                .last()
-                .is_some_and(|previous| previous.scheme() == "https" && next.scheme() == "http")
-            {
-                return attempt.stop();
-            }
-            attempt.follow()
-        });
         let client = Client::builder()
-            .redirect(redirect)
+            .redirect(Policy::none())
+            .referer(false)
             .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .user_agent("FirefoxDownloadManager/0.1")
@@ -334,6 +337,17 @@ impl ProbeClient {
     /// Returns a bounded error when URL, redirect, status, metadata, encoding,
     /// or probe body behavior cannot be accepted safely.
     pub async fn probe(&self, input: &str) -> Result<ResourceProbe, ProbeError> {
+        self.probe_with_context(input, None).await
+    }
+
+    /// Probes with a validated, origin-confined memory-only session.
+    /// # Errors
+    /// Returns the same conservative probe failures, plus invalid/expired context.
+    pub async fn probe_with_context(
+        &self,
+        input: &str,
+        context: Option<Arc<RequestContext>>,
+    ) -> Result<ResourceProbe, ProbeError> {
         let mut url = Url::parse(input).map_err(|_| ProbeError::InvalidUrl)?;
         if !matches!(url.scheme(), "http" | "https") {
             return Err(ProbeError::UnsupportedScheme);
@@ -344,13 +358,8 @@ impl ProbeClient {
         url.set_fragment(None);
 
         let response = self
-            .client
-            .get(url)
-            .header(RANGE, "bytes=0-0")
-            .header(ACCEPT_ENCODING, "identity")
-            .send()
-            .await
-            .map_err(|error| classify_request_error(&error))?;
+            .probe_request(url, "bytes=0-0", context.as_deref(), true)
+            .await?;
 
         let status = response.status();
         let final_url = response.url().clone();
@@ -371,13 +380,13 @@ impl ProbeClient {
             if parsed.total > 1 {
                 let last = parsed.total - 1;
                 let verification = self
-                    .client
-                    .get(final_url.clone())
-                    .header(RANGE, format!("bytes={last}-{last}"))
-                    .header(ACCEPT_ENCODING, "identity")
-                    .send()
-                    .await
-                    .map_err(|error| classify_request_error(&error))?;
+                    .probe_request(
+                        final_url.clone(),
+                        &format!("bytes={last}-{last}"),
+                        context.as_deref(),
+                        false,
+                    )
+                    .await?;
                 if verification.url() != &final_url {
                     return Err(ProbeError::RedirectRejected);
                 }
@@ -402,6 +411,7 @@ impl ProbeClient {
                 filename,
                 validators,
                 mode,
+                context,
             });
         }
 
@@ -418,6 +428,7 @@ impl ProbeClient {
                 filename,
                 validators,
                 mode,
+                context,
             });
         }
 
@@ -428,6 +439,7 @@ impl ProbeClient {
                 filename,
                 validators,
                 mode: ProbeMode::Empty,
+                context,
             });
         }
 
@@ -435,6 +447,58 @@ impl ProbeClient {
             status: status.as_u16(),
             retry_after_seconds: retry_after_seconds(&headers),
         })
+    }
+}
+
+impl ProbeClient {
+    async fn probe_request(
+        &self,
+        mut url: Url,
+        range: &str,
+        context: Option<&RequestContext>,
+        follow: bool,
+    ) -> Result<reqwest::Response, ProbeError> {
+        for depth in 0..=MAX_REDIRECTS {
+            let headers =
+                context.map_or_else(|| Ok(HeaderMap::new()), |context| context.headers(&url))?;
+            let response = self
+                .client
+                .get(url.clone())
+                .headers(headers)
+                .header(RANGE, range)
+                .header(ACCEPT_ENCODING, "identity")
+                .send()
+                .await
+                .map_err(|error| classify_request_error(&error))?;
+            if context.is_some() && matches!(response.status().as_u16(), 401 | 403) {
+                return Err(ContextError::Expired.into());
+            }
+            if !response.status().is_redirection() {
+                return Ok(response);
+            }
+            if !follow
+                || depth == MAX_REDIRECTS
+                || !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308)
+            {
+                return Err(ProbeError::RedirectRejected);
+            }
+            let location = single_header(response.headers(), reqwest::header::LOCATION)?
+                .ok_or(ProbeError::RedirectRejected)?;
+            let mut next = url
+                .join(location)
+                .map_err(|_| ProbeError::RedirectRejected)?;
+            if !matches!(next.scheme(), "http" | "https")
+                || !next.username().is_empty()
+                || next.password().is_some()
+                || url.scheme() == "https" && next.scheme() == "http"
+                || context.is_some() && next.origin() != url.origin()
+            {
+                return Err(ProbeError::RedirectRejected);
+            }
+            next.set_fragment(None);
+            url = next;
+        }
+        Err(ProbeError::RedirectRejected)
     }
 }
 

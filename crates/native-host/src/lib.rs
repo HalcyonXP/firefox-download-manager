@@ -198,7 +198,11 @@ async fn negotiate<W: Write>(
                         &HelloResult {
                             selected_version: PROTOCOL_VERSION,
                             helper_version: HELPER_VERSION,
-                            capabilities: vec!["snapshots", "coalesced_progress"],
+                            capabilities: vec![
+                                "snapshots",
+                                "coalesced_progress",
+                                "authenticated_requests",
+                            ],
                             max_message_bytes: MAX_MESSAGE_BYTES,
                         },
                     )?;
@@ -328,7 +332,7 @@ impl<W: Write> Session<W> {
         match command {
             Command::Hello(_) => unreachable!("hello is handled before dispatch"),
             Command::Add(payload) => {
-                if payload.has_checksum() || payload.has_request_context() {
+                if payload.has_checksum() {
                     return self.send_failure(
                         correlation_id,
                         ResponseCommand::Add,
@@ -359,11 +363,35 @@ impl<W: Write> Session<W> {
                         WorkerCount::try_from,
                     )
                     .map_err(|_| HostError::Projection)?;
-                let task = match engine.create_task(
+                let context = match payload
+                    .request_context()
+                    .map(|input| {
+                        download_manager_engine::auth::RequestContext::new(payload.url(), input)
+                    })
+                    .transpose()
+                {
+                    Ok(context) => context,
+                    Err(error) => {
+                        return self.send_failure(
+                            correlation_id,
+                            ResponseCommand::Add,
+                            match error {
+                                download_manager_engine::auth::ContextError::Invalid => {
+                                    ErrorCode::ProtocolInvalidMessage
+                                }
+                                download_manager_engine::auth::ContextError::Expired => {
+                                    ErrorCode::AuthExpired
+                                }
+                            },
+                        );
+                    }
+                };
+                let task = match engine.create_task_with_context(
                     payload.url(),
                     &destination,
                     payload.suggested_filename().unwrap_or(DEFAULT_FILENAME),
                     workers,
+                    context,
                 ) {
                     Ok(task) => task,
                     Err(error) => {
@@ -982,6 +1010,9 @@ fn task_failure_error(failure: TaskFailure, task_id: Option<TaskId>) -> Protocol
 
 const fn failure_code(kind: TaskFailureKind) -> ErrorCode {
     match kind {
+        TaskFailureKind::AuthRequired => ErrorCode::AuthRequired,
+        TaskFailureKind::AuthExpired => ErrorCode::AuthExpired,
+        TaskFailureKind::RedirectRejected => ErrorCode::RedirectRejected,
         TaskFailureKind::Cancelled => ErrorCode::Cancelled,
         TaskFailureKind::ProbeFailed => ErrorCode::ProbeFailed,
         TaskFailureKind::HttpStatus => ErrorCode::HttpStatus,
@@ -1337,8 +1368,67 @@ mod tests {
         }
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn session_dispatch_streams_authenticated_bytes_without_echo_or_persistence() {
+        let directories = Directories::new("session dispatch");
+        let server = TestServer::start(ServerConfig::default()).expect("server");
+        let mut engine =
+            TaskEngine::open(&directories.state, TaskEngineOptions::default()).expect("engine");
+        let writer = SharedWriter::default();
+        let mut session = Session::new(writer.clone(), Some(directories.destination.clone()));
+        let add = json!({"protocol_version":2,"correlation_id":"session-add","kind":"command","command":"add","payload":{
+            "url":server.url("/session/fixture"), "suggested_filename":"session.bin", "workers":4,
+            "request_context":{"referrer":server.url("/session/page"),"credentials":{"cookies":[{
+                "name":"fixture_session","value":"not-a-real-session","domain":"127.0.0.1","path":"/session",
+                "secure":false,"http_only":true,"expires_at":null
+            }]}}
+        }});
+        let (correlation, command) = download_manager_protocol::decode_command(
+            &serde_json::to_vec(&add).expect("command bytes"),
+        )
+        .expect("decode")
+        .into_parts();
+        session
+            .dispatch(&mut engine, correlation, command)
+            .await
+            .expect("dispatch");
+        let task_id = TaskId::parse(
+            messages(&writer)[0]["result"]["task_id"]
+                .as_str()
+                .expect("task ID"),
+        )
+        .expect("ID");
+        let completed = engine
+            .wait_until_inactive(task_id)
+            .await
+            .expect("completion");
+        assert_eq!(completed.state(), TaskState::Completed);
+        assert!(
+            server
+                .requests()
+                .iter()
+                .all(|request| request.session.fixture_valid)
+        );
+        session
+            .send_snapshot_events(&engine.snapshots())
+            .expect("snapshot");
+        let output = serde_json::to_string(&messages(&writer)).expect("output");
+        assert!(!output.contains("not-a-real-session"));
+        assert!(!output.contains("/session/page"));
+        let state = fs::read_to_string(
+            directories
+                .state
+                .join("tasks")
+                .join(format!("{task_id}.task.json")),
+        )
+        .expect("state");
+        assert!(!state.contains("not-a-real-session"));
+        assert!(!state.contains("/session/page"));
+        engine.shutdown().await.expect("shutdown");
+    }
+
     #[test]
-    fn unadvertised_sensitive_fields_are_rejected_without_echo() {
+    fn insecure_authorization_is_rejected_without_echo() {
         let directories = Directories::new("sensitive-rejection");
         let add = json!({
             "protocol_version": 2,
@@ -1346,7 +1436,7 @@ mod tests {
             "kind": "command",
             "command": "add",
             "payload": {
-                "url": "https://example.invalid/private?token=never-echo",
+                "url": "http://example.invalid/private?token=never-echo",
                 "destination": directories.destination.to_string_lossy(),
                 "request_context": {
                     "credentials": {

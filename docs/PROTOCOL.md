@@ -42,7 +42,7 @@ If the envelope version is unsupported, the helper performs only bounded extract
 
 The implemented helper advertises only `snapshots` and `coalesced_progress`. Immediately after a successful hello response it emits all pages of one authoritative engine snapshot before normal event/command multiplexing begins. The extension does not mark the port ready until that snapshot is complete. Authentication and SHA-256 remain unadvertised and their otherwise valid reserved fields are rejected until their implementation issues complete.
 
-A peer must not infer support from application version strings. Optional behavior is enabled only by the negotiated protocol and advertised capability. Authentication and SHA-256 fields exist in v2, but the helper advertises and accepts them only after their implementation issues are complete.
+A peer must not infer support from application version strings. Optional behavior is enabled only by the negotiated protocol and advertised capability. `authenticated_requests` is implemented in #23. SHA-256 remains reserved for #25. The extension checks capability after any reconnect, before sending session fields.
 
 ## Commands
 
@@ -121,9 +121,9 @@ Schema fields marked `x-sensitive` require special handling. These include URL, 
 - Exact URLs are not returned in ordinary task snapshots; `source_origin` contains no user-info, path, query, or fragment.
 - Debug serialization of raw envelopes is prohibited.
 - Redaction occurs before structured data reaches a log formatter.
-- Cross-origin redirects strip credentials unless an explicit authenticated-download policy permits transfer.
+- Context-bearing cross-origin redirects are rejected before contacting the next origin.
 
-The credential shape reserves the reviewed boundary for issue #23; implementations must reject it until the `authenticated_requests` capability is advertised.
+The credential shape is implemented in #23 only with `authenticated_requests`; see [AUTHENTICATION.md](AUTHENTICATION.md) for cookie-domain convention and narrower runtime eligibility rules. Resume remains task-ID-only: session refresh requires a new Add.
 
 ## Compatibility rules
 
@@ -139,4 +139,4 @@ Non-sensitive examples are under [`protocol/schema/v2/examples`](../protocol/sch
 
 ## V2 decision (#20)
 
-V1 cannot express open-folder without violating its strict unknown-command policy. V2 adds an explicit task-ID-only command; no arbitrary executable or path crosses this boundary. The helper invokes the absolute Windows Explorer executable with one canonical directory argument and detached null standard streams. The reserved get_settings command and verbose_logging setting allow #21 to implement settings without another shape change. Settings are implemented in #21 (see [SETTINGS.md](SETTINGS.md)); credential/checksum fields remain reserved. Queued resume means Start; failed resume means Retry.
+V1 cannot express open-folder without violating its strict unknown-command policy. V2 adds an explicit task-ID-only command; no arbitrary executable or path crosses this boundary. The helper invokes the absolute Windows Explorer executable with one canonical directory argument and detached null standard streams. The reserved get_settings command and verbose_logging setting allow #21 to implement settings without another shape change. Settings are implemented in #21 (see [SETTINGS.md](SETTINGS.md)); session handoff is implemented in #23; checksum fields remain reserved. Queued resume means Start; failed resume means Retry.

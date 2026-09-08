@@ -186,9 +186,27 @@ pub struct FaultRule {
     pub fault: Fault,
 }
 
+/// Non-sensitive assertions about session headers; raw values are never retained.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[allow(clippy::struct_excessive_bools)] // Independent header assertions, not lifecycle flags.
+pub struct SessionObservation {
+    /// Cookie header was present.
+    pub cookie_present: bool,
+    /// Referrer header was present.
+    pub referrer_present: bool,
+    /// Authorization header was present.
+    pub authorization_present: bool,
+    /// Both session headers matched fixed synthetic fixture values.
+    pub fixture_valid: bool,
+    /// Signed query retained its exact encoding, order, and duplicated keys.
+    pub signed_target_valid: bool,
+}
+
 /// One request observed by the fixture server.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ObservedRequest {
+    /// Only boolean session assertions are exposed by the test ledger.
+    pub session: SessionObservation,
     /// Request target path without a query.
     pub path: String,
     /// One-based ordinal among requests for the same path.
@@ -376,6 +394,7 @@ fn accept_loop(
 
 #[derive(Debug)]
 struct Request {
+    session: SessionObservation,
     method: String,
     path: String,
     range: Option<ByteRange>,
@@ -420,6 +439,7 @@ fn handle_connection(
         *range_count = range_count.saturating_add(1);
         let range_request_number = *range_count;
         let observed = ObservedRequest {
+            session: request.session.clone(),
             path: request.path.clone(),
             request_number,
             range: request.range,
@@ -432,6 +452,14 @@ fn handle_connection(
     };
     let _activity = ActiveRequestGuard { state };
 
+    if request.path == "/session/fixture" && !request.session.fixture_valid {
+        return write_empty_status(&mut stream, 401, &[]);
+    }
+    if request.path == "/session/signed"
+        && (!request.session.fixture_valid || !request.session.signed_target_valid)
+    {
+        return write_empty_status(&mut stream, 403, &[]);
+    }
     let custom_fault = config
         .rules
         .iter()
@@ -491,6 +519,12 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Option<Request>> {
     let mut range = None;
     let mut if_range = None;
     let mut malformed_range = false;
+    let mut session = SessionObservation {
+        signed_target_valid: target.ends_with("?sig=a%2Fb%2BC&x=2&x=1"),
+        ..SessionObservation::default()
+    };
+    let mut cookie_valid = false;
+    let mut referrer_valid = false;
     for line in lines {
         if line.is_empty() {
             break;
@@ -499,7 +533,17 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Option<Request>> {
             malformed_range = true;
             continue;
         };
-        if name.eq_ignore_ascii_case("range") {
+        if name.eq_ignore_ascii_case("cookie") {
+            cookie_valid =
+                !session.cookie_present && value.trim() == "fixture_session=not-a-real-session";
+            session.cookie_present = true;
+        } else if name.eq_ignore_ascii_case("referer") {
+            referrer_valid = !session.referrer_present
+                && value.trim() == format!("http://{}/session/page", stream.local_addr()?);
+            session.referrer_present = true;
+        } else if name.eq_ignore_ascii_case("authorization") {
+            session.authorization_present = true;
+        } else if name.eq_ignore_ascii_case("range") {
             match parse_range(value.trim()) {
                 Some(parsed) if range.is_none() => range = Some(parsed),
                 _ => malformed_range = true,
@@ -514,7 +558,9 @@ fn read_request(stream: &mut TcpStream) -> io::Result<Option<Request>> {
         }
     }
 
+    session.fixture_valid = cookie_valid && referrer_valid;
     Ok(Some(Request {
+        session,
         method,
         path,
         range,
@@ -537,7 +583,7 @@ fn parse_range(value: &str) -> Option<ByteRange> {
 
 fn built_in_fault(request: &ObservedRequest) -> Option<Fault> {
     match request.path.as_str() {
-        "/fixture" => None,
+        "/fixture" | "/session/fixture" | "/session/signed" => None,
         "/ignore-range" => Some(Fault::IgnoreRange),
         "/empty" => Some(Fault::EmptyResource),
         "/bad-range/start" => Some(Fault::BadContentRange(BadRange::Start)),

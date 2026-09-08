@@ -10,6 +10,8 @@
     }
   },
   "permissions": ["nativeMessaging", "menus"],
+  "optional_permissions": ["cookies"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {
     "scripts": ["background.js"],
     "persistent": false

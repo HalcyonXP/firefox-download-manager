@@ -76,6 +76,8 @@ export function connectionMessage(error: unknown): string {
     return "The manager could not complete this action. Reconnect and check the queue before trying again.";
   if (error.helperCode === "PROTOCOL_UNSUPPORTED_VERSION" || error.failure === "protocol_error")
     return "Extension and helper are incompatible. Install matching versions, then reconnect.";
+  if (["AUTH_REQUIRED", "AUTH_EXPIRED"].includes(error.helperCode ?? ""))
+    return "Sign in, then explicitly add a fresh download with session handoff. Old partials cannot receive refreshed credentials.";
   if (error.helperCode === "INVALID_SETTINGS")
     return "Settings were not applied. Pause active tasks and check the existing destination, connection caps, and retry limit.";
   if (error.helperCode)

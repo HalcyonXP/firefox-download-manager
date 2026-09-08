@@ -10,12 +10,13 @@ mod v2;
 
 pub use framing::{FrameReadError, FrameWriteError, read_frame, write_frame};
 pub use v2::{
-    AddPayload, CancelPartial, CancelPayload, Command, CommandDecodeError, CommandDecodeFailure,
-    CommandMessage, ErrorCode, ErrorContext, EventMessage, EventName, FailedData, HelloPayload,
-    HelloResult, ListPayload, MessageBuildError, ProgressData, ProtocolError, RemovePayload,
-    RemoveResult, ResponseCommand, ResponseMessage, SettingsDescription, SettingsPatchInput,
-    SnapshotPage, StateChangedData, TaskDescription, TaskIdPayload, TaskStateName,
-    TransferModeName, UpdateSettingsPayload, WarningData, decode_command,
+    AddPayload, AuthorizationInput, CancelPartial, CancelPayload, Command, CommandDecodeError,
+    CommandDecodeFailure, CommandMessage, CookieInput, CredentialsInput, ErrorCode, ErrorContext,
+    EventMessage, EventName, FailedData, HelloPayload, HelloResult, ListPayload, MessageBuildError,
+    ProgressData, ProtocolError, RemovePayload, RemoveResult, RequestContextInput, ResponseCommand,
+    ResponseMessage, SettingsDescription, SettingsPatchInput, SnapshotPage, StateChangedData,
+    TaskDescription, TaskIdPayload, TaskStateName, TransferModeName, UpdateSettingsPayload,
+    WarningData, decode_command,
 };
 
 /// Current wire-protocol major version.

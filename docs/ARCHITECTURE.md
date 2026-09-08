@@ -142,7 +142,7 @@ The local fixture is test-only. It generates reproducible bytes and controlled H
 
 ### Recover state
 
-Persisted metadata, not the extension, describes recoverable work. On startup, the helper validates schema version, task transitions, paths, resource identity, partial/final lengths, publication same-file identity, completed ranges, and the fixed worker selection. Format-v1 records have one explicit migration to format v2; unknown future versions are not interpreted. Valid interrupted `downloading` tasks become paused, incomplete probe/validation phases fail safely, and a recorded promoted final link can complete recovery. Corrupt, incompatible, or identity-conflicting state is preserved and diagnosed; it is never resumed optimistically.
+Persisted metadata, not the extension, describes recoverable work. On startup, the helper validates schema version, task transitions, paths, resource identity, partial/final lengths, publication same-file identity, completed ranges, and the fixed worker selection. Formats v1/v2 have explicit strict migrations to format v3 with its required non-secret session marker; unknown future versions are not interpreted. Valid interrupted `downloading` tasks become paused, incomplete probe/validation phases fail safely, and a recorded promoted final link can complete recovery. Corrupt, incompatible, or identity-conflicting state is preserved and diagnosed; it is never resumed optimistically.
 
 ## Task lifecycle
 
@@ -154,7 +154,7 @@ queued → probing → downloading ⇄ paused
                     └→ validating → promoting → completed
 ```
 
-Transitions are explicit and persisted where they affect recovery. `completed` and `cancelled` are terminal; `failed` is inactive until an explicit retry requeues the same task and revalidates any retained resource identity. Protocol v2 uses the `resume` command as that explicit retry action for a failed task. Pause/cancel acknowledgement occurs only after cancellation-aware probes, retry sleeps, requests, and workers stop; the controller then performs a bytes-first critical checkpoint. Cancellation has an explicit keep/delete-partial choice and never deletes final output.
+Transitions are explicit and persisted where they affect recovery. `completed` and `cancelled` are terminal; `failed` is inactive until an explicit retry requeues the same task and revalidates any retained resource identity. Protocol v2 uses the `resume` command as that explicit retry action for a failed task. Authenticated tasks that lost context instead require an explicit fresh Add; new credentials never mutate existing retained bytes (see [AUTHENTICATION.md](AUTHENTICATION.md)). Pause/cancel acknowledgement occurs only after cancellation-aware probes, retry sleeps, requests, and workers stop; the controller then performs a bytes-first critical checkpoint. Cancellation has an explicit keep/delete-partial choice and never deletes final output.
 
 ## Retry and progress policy
 

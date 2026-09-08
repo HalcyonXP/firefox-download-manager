@@ -27,7 +27,7 @@ use crate::storage::{
 };
 
 /// Current internal task-state format version.
-pub const STATE_FORMAT_VERSION: u64 = 2;
+pub const STATE_FORMAT_VERSION: u64 = 3;
 /// Maximum bytes accepted for one task-state file.
 pub const MAX_STATE_BYTES: usize = 256 * 1024;
 /// Maximum canonical completed ranges accepted per task.
@@ -366,6 +366,7 @@ pub struct TaskMetadata {
     revision: u64,
     state: TaskState,
     original_url: String,
+    needs_session: bool,
     resource: Option<ResourceIdentity>,
     destination: PathBuf,
     display_name: String,
@@ -452,6 +453,7 @@ impl TaskMetadata {
             revision: 1,
             state: TaskState::Queued,
             original_url,
+            needs_session: false,
             resource: None,
             destination,
             display_name,
@@ -462,6 +464,16 @@ impl TaskMetadata {
             created_at,
             updated_at: created_at,
         })
+    }
+
+    /// Whether recovery requires a session deliberately excluded from state.
+    #[must_use]
+    pub const fn needs_session(&self) -> bool {
+        self.needs_session
+    }
+
+    pub(crate) fn require_session(&mut self) {
+        self.needs_session = true;
     }
 
     /// Stable task ID.
@@ -1676,6 +1688,36 @@ struct VersionProbe {
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct PersistedTask {
+    needs_session: bool,
+    task_id: String,
+    revision: u64,
+    state: TaskState,
+    original_url: String,
+    final_url: Option<String>,
+    expected_size: Option<u64>,
+    validators: PersistedValidators,
+    transfer_mode: TransferMode,
+    destination: String,
+    display_name: String,
+    workers: u8,
+    partial_path: Option<String>,
+    final_path: Option<String>,
+    completed_ranges: Vec<PersistedRange>,
+    created_at_ms: u64,
+    updated_at_ms: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedEnvelopeV2 {
+    format: String,
+    version: u64,
+    task: PersistedTaskV2,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedTaskV2 {
     task_id: String,
     revision: u64,
     state: TaskState,
@@ -1722,6 +1764,30 @@ struct PersistedTaskV1 {
     updated_at_ms: u64,
 }
 
+impl PersistedTaskV2 {
+    fn migrate(self) -> PersistedTask {
+        PersistedTask {
+            needs_session: false,
+            task_id: self.task_id,
+            revision: self.revision,
+            state: self.state,
+            original_url: self.original_url,
+            final_url: self.final_url,
+            expected_size: self.expected_size,
+            validators: self.validators,
+            transfer_mode: self.transfer_mode,
+            destination: self.destination,
+            display_name: self.display_name,
+            workers: self.workers,
+            partial_path: self.partial_path,
+            final_path: self.final_path,
+            completed_ranges: self.completed_ranges,
+            created_at_ms: self.created_at_ms,
+            updated_at_ms: self.updated_at_ms,
+        }
+    }
+}
+
 impl PersistedTaskV1 {
     fn migrate(self) -> PersistedTask {
         PersistedTask {
@@ -1729,6 +1795,7 @@ impl PersistedTaskV1 {
             revision: self.revision,
             state: self.state,
             original_url: self.original_url,
+            needs_session: false,
             final_url: self.final_url,
             expected_size: self.expected_size,
             validators: self.validators,
@@ -1780,6 +1847,7 @@ impl PersistedTask {
             revision: task.revision,
             state: task.state,
             original_url: task.original_url.clone(),
+            needs_session: task.needs_session,
             final_url: resource.map(|identity| identity.final_url.clone()),
             expected_size: resource.and_then(ResourceIdentity::expected_size),
             validators: PersistedValidators::from_validators(
@@ -1880,6 +1948,11 @@ fn load_task_file(path: &Path, filename_id: TaskId) -> Result<LoadedTaskFile, Lo
                 serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
             (envelope.task, false)
         }
+        2 => {
+            let envelope: PersistedEnvelopeV2 =
+                serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
+            (envelope.task.migrate(), true)
+        }
         1 => {
             let envelope: PersistedEnvelopeV1 =
                 serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
@@ -1957,6 +2030,7 @@ fn task_from_persisted(raw: PersistedTask) -> Result<TaskMetadata, StateValidati
 
     let task = TaskMetadata {
         task_id,
+        needs_session: raw.needs_session,
         revision: raw.revision,
         state: raw.state,
         original_url,

@@ -11,7 +11,7 @@ The Rust engine's `network` module determines whether a direct HTTP(S) resource 
 - Redirect targets must remain HTTP(S).
 - HTTPS-to-HTTP downgrade is rejected.
 - Unauthenticated cross-origin redirects are allowed in the MVP.
-- Credentials are not accepted by this implementation. The later authenticated-download policy must strip them on unrelated origins before enabling its protocol capability.
+- Optional [session handoff](AUTHENTICATION.md) is origin-confined. Context-bearing cross-origin redirects are rejected before contact; same-origin redirects re-evaluate cookie eligibility. Transfer requests never redirect.
 - Redirect loops, excessive depth, unsupported targets, and stopped redirects fail explicitly.
 
 Neither user-provided URLs nor redirect locations are included in ordinary error display text or the custom `Debug` representation of a probe.

@@ -1581,3 +1581,235 @@ async fn recovered_weak_identity_completed_bytes_cannot_resume_or_retry() {
         assert!(!directories.destination().join("weak.bin").exists());
     }
 }
+
+fn fixture_context(
+    server: &TestServer,
+    url: &str,
+) -> std::sync::Arc<download_manager_engine::auth::RequestContext> {
+    let input = serde_json::from_value(serde_json::json!({
+        "referrer":server.url("/session/page"),"credentials":{"cookies":[{
+            "name":"fixture_session","value":"not-a-real-session","domain":"127.0.0.1", "path":"/session",
+            "secure":false,"http_only":true,"expires_at":null
+        }]}
+    })).expect("fixture context");
+    download_manager_engine::auth::RequestContext::new(url, &input)
+        .expect("validated fixture session")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn session_downloads_validate_final_bytes_for_every_worker_count_and_single_fallback() {
+    for (workers, fallback) in [
+        (WorkerCount::One, false),
+        (WorkerCount::Two, false),
+        (WorkerCount::Four, false),
+        (WorkerCount::Eight, false),
+        (WorkerCount::Four, true),
+    ] {
+        let fixture = Fixture {
+            len: 4 * MIB,
+            seed: 42,
+        };
+        let server = TestServer::start(ServerConfig {
+            fixture: fixture.clone(),
+            rules: if fallback {
+                vec![FaultRule {
+                    selector: RequestSelector::default(),
+                    fault: Fault::IgnoreRange,
+                }]
+            } else {
+                vec![]
+            },
+        })
+        .expect("server");
+        let directories = TestDirectories::new("session-transfer");
+        let engine =
+            TaskEngine::open(directories.state(), TaskEngineOptions::default()).expect("engine");
+        let url = server.url("/session/signed?sig=a%2Fb%2BC&x=2&x=1");
+        let task = engine
+            .create_task_with_context(
+                &url,
+                directories.destination(),
+                "session.bin",
+                workers,
+                Some(fixture_context(&server, &url)),
+            )
+            .expect("create session task");
+        engine.start(task.task_id()).expect("start");
+        let final_task = tokio::time::timeout(
+            Duration::from_secs(15),
+            engine.wait_until_inactive(task.task_id()),
+        )
+        .await
+        .expect("bounded completion")
+        .expect("snapshot");
+        assert_eq!(final_task.state(), TaskState::Completed);
+        assert_eq!(
+            fs::read(directories.destination().join("session.bin")).expect("output"),
+            fixture.bytes(0, usize::try_from(fixture.len).expect("length"), 0)
+        );
+        assert!(
+            server
+                .requests()
+                .iter()
+                .all(|r| r.session.fixture_valid && r.session.signed_target_valid)
+        );
+        let metadata = engine.metadata(task.task_id()).expect("metadata");
+        assert!(metadata.needs_session());
+        let bytes = fs::read(
+            directories
+                .state()
+                .join("tasks")
+                .join(format!("{}.task.json", task.task_id())),
+        )
+        .expect("state bytes");
+        let persisted = String::from_utf8(bytes).expect("UTF8");
+        assert!(!persisted.contains("not-a-real-session"));
+        assert!(!persisted.contains("/session/page"));
+        assert!(!persisted.contains("cookies"));
+        assert!(!format!("{engine:?} {final_task:?} {metadata:?}").contains("not-a-real-session"));
+        engine.shutdown().await.expect("shutdown");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn recovered_session_partial_cannot_send_or_resume_without_its_memory_only_context() {
+    let fixture = Fixture {
+        len: 16 * MIB,
+        seed: 43,
+    };
+    let server = TestServer::start(ServerConfig {
+        fixture,
+        rules: vec![FaultRule {
+            selector: RequestSelector::default(),
+            fault: Fault::Stall(Duration::from_millis(80)),
+        }],
+    })
+    .expect("server");
+    let directories = TestDirectories::new("session-recovery");
+    let engine =
+        TaskEngine::open(directories.state(), TaskEngineOptions::default()).expect("engine");
+    let url = server.url("/session/fixture");
+    let task = engine
+        .create_task_with_context(
+            &url,
+            directories.destination(),
+            "session.bin",
+            WorkerCount::Four,
+            Some(fixture_context(&server, &url)),
+        )
+        .expect("create");
+    engine.start(task.task_id()).expect("start");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let snapshot = engine.snapshot(task.task_id()).expect("snapshot");
+        if snapshot.bytes_completed() > 0 {
+            break;
+        }
+        assert!(Instant::now() < deadline);
+        tokio::time::sleep(Duration::from_millis(2)).await;
+    }
+    engine
+        .pause(task.task_id())
+        .await
+        .expect("pause with retained session");
+    let before = engine.metadata(task.task_id()).expect("metadata");
+    assert!(before.bytes_completed() > 0);
+    engine.shutdown().await.expect("shutdown");
+    drop(engine);
+    let recovered = TaskEngine::open(directories.state(), TaskEngineOptions::default())
+        .expect("recovered engine");
+    assert!(
+        recovered
+            .metadata(task.task_id())
+            .expect("recovered marker")
+            .needs_session()
+    );
+    let barrier = server.pause_observation();
+    let failure = recovered
+        .resume(task.task_id())
+        .await
+        .expect("authoritative failed snapshot");
+    assert_eq!(failure.state(), TaskState::Failed);
+    assert_eq!(
+        failure.failure().expect("session required").kind(),
+        TaskFailureKind::AuthRequired
+    );
+    assert!(!barrier.wait_for_pending(1, Duration::from_millis(100)));
+    let after = recovered.metadata(task.task_id()).expect("failed metadata");
+    assert_eq!(before.completed_ranges(), after.completed_ranges());
+    assert!(!directories.destination().join("session.bin").exists());
+    recovered.shutdown().await.expect("shutdown");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejected_session_is_actionable_nonretrying_and_cannot_be_replaced_on_retained_bytes() {
+    let server = TestServer::start(ServerConfig {
+        rules: vec![FaultRule {
+            selector: RequestSelector {
+                path: Some("/session/fixture".into()),
+                request_number: Some(3),
+                range: None,
+            },
+            fault: Fault::Status {
+                code: 403,
+                retry_after_seconds: None,
+            },
+        }],
+        ..ServerConfig::default()
+    })
+    .expect("server");
+    let directories = TestDirectories::new("session-expired");
+    let engine =
+        TaskEngine::open(directories.state(), TaskEngineOptions::default()).expect("engine");
+    let url = server.url("/session/fixture");
+    let task = engine
+        .create_task_with_context(
+            &url,
+            directories.destination(),
+            "session.bin",
+            WorkerCount::One,
+            Some(fixture_context(&server, &url)),
+        )
+        .expect("create");
+    engine.start(task.task_id()).expect("start");
+    let failed = engine
+        .wait_until_inactive(task.task_id())
+        .await
+        .expect("failure");
+    assert_eq!(failed.state(), TaskState::Failed);
+    assert_eq!(
+        failed.failure().expect("reason").kind(),
+        TaskFailureKind::AuthExpired
+    );
+    assert_eq!(server.requests().len(), 3);
+    assert!(!directories.destination().join("session.bin").exists());
+    engine.retry(task.task_id()).expect("explicit retry");
+    let failed = engine
+        .wait_until_inactive(task.task_id())
+        .await
+        .expect("failure");
+    assert_eq!(
+        failed.failure().expect("reason").kind(),
+        TaskFailureKind::AuthRequired
+    );
+    assert_eq!(server.requests().len(), 3);
+    let fresh = engine
+        .create_task_with_context(
+            &url,
+            directories.destination(),
+            "fresh.bin",
+            WorkerCount::One,
+            Some(fixture_context(&server, &url)),
+        )
+        .expect("fresh handoff");
+    engine.start(fresh.task_id()).expect("start fresh");
+    assert_eq!(
+        engine
+            .wait_until_inactive(fresh.task_id())
+            .await
+            .expect("fresh output")
+            .state(),
+        TaskState::Completed
+    );
+    engine.shutdown().await.expect("shutdown");
+}
