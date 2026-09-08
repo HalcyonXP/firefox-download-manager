@@ -30,7 +30,7 @@ cargo test --workspace --all-features --locked
 cargo build --workspace --all-features --locked
 ```
 
-The repository is private, so cloning requires an authenticated Git credential. `npm ci` installs all project-local JavaScript tools.
+This is the authoritative private development checkout and requires an authenticated Git credential. A build-only checkout can instead use `https://github.com/HalcyonXP/firefox-download-manager.git` and its matching directory; that independent publication target is initially private too. `npm ci` installs all project-local JavaScript tools.
 
 ## Project layout
 
@@ -45,7 +45,8 @@ crates/
   native-host/          Native Messaging executable
   test-server/          Local deterministic adversarial HTTP fixtures
 protocol/
-  schema/v1/            Normative JSON Schema and conformance examples
+  schema/v2/            Current JSON Schema and conformance examples
+  schema/v1/            Archived v1 contract
 native-host/            Auditable Firefox host-manifest template
 scripts/                Cross-platform checks plus Windows registration scripts
 docs/                   Architecture, security, protocol, and plans
@@ -61,7 +62,7 @@ The browser extension build never contains the Rust helper. The native helper ne
 | `npm run lint` | Lint JavaScript and TypeScript |
 | `npm run typecheck` | Strict TypeScript check without output |
 | `npm test` | Run extension unit tests |
-| `npm run protocol:check` | Validate v1 schema, examples, and hostile cases |
+| `npm run protocol:check` | Validate v2 schema, examples, and hostile cases |
 | `npm run native-host:check` | Cross-check the extension ID, permission, host manifest, Rust constants, and HKCU scripts |
 | `npm run build` | Recreate `extension/dist` |
 | `npm run extension:check` | Validate the built manifest and referenced assets |
@@ -92,7 +93,7 @@ The installer performs a locked release build by default, copies the executable 
 HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager
 ```
 
-No elevation is required. The registration permits only `download-manager@halcyonxp.local`. Open `about:debugging#/runtime/this-firefox` in Firefox Developer Edition, choose **Load Temporary Add-on**, and select `extension/dist/manifest.json`. The background connection object remains on demand: later UI work calls it when a manager surface is opened; every fresh port negotiates v1 and waits for a complete helper snapshot before replacing retained display state.
+No elevation is required. The registration permits only `download-manager@halcyonxp.local`. Open `about:debugging#/runtime/this-firefox` in Firefox Developer Edition, choose **Load Temporary Add-on**, and select `extension/dist/manifest.json`. The background connection object remains on demand: later UI work calls it when a manager surface is opened; every fresh port negotiates v2 and waits for a complete helper snapshot before replacing retained display state.
 
 To exercise the same registration, path-with-spaces, process-launch, hello, initial-snapshot, add-command, and live schema check used by Windows CI:
 
@@ -114,7 +115,25 @@ Uninstallation deliberately does not recurse into `%LOCALAPPDATA%\HalcyonXP\Fire
 
 ## Privacy checks before publication
 
-Run `npm run privacy:test`, `npm run privacy:check`, and `npm run privacy:history` (full history required). The normal `npm run check` includes the policy tests and HEAD-history guard. Never paste matched private values into issues or commit messages. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) for the unresolved GitHub-retention gate; local pattern checks alone do not clear it.
+Run `npm run privacy:test`, `npm run privacy:check`, and `npm run privacy:history` (full history required). The normal `npm run check` includes the policy tests and HEAD-history guard. Never paste matched private values into issues or commit messages. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) for target-specific clearance and `privacy:publication`; local HEAD pattern checks alone do not clear GitHub-retained original history.
+
+## Synchronize the independent publication target
+
+Keep `origin` on `HalcyonXP/download-manager`; its board/issues remain the work source of truth. Add this separate remote once:
+
+```powershell
+git remote add publication https://github.com/HalcyonXP/firefox-download-manager.git
+```
+
+After an issue PR is accepted/merged in the development repository, fast-forward local `main` from `origin/main`, ensure the checkout is clean, and pass the local quality/privacy gates. Then synchronize **only** that reviewed branch:
+
+```powershell
+git push publication refs/heads/main:refs/heads/main
+```
+
+Use normal fast-forward pushes only; never `--mirror`, `--all`, old bundles, audit refs, or force-pushes to bypass divergence. Do not merge publication-only Dependabot proposals directly: review/apply accepted changes in the development repository first. Before the initial visibility decision, rerun the authenticated `privacy:publication` audit described in [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md). Once public, inspect new CI/log/artifact evidence separately; the initial verifier deliberately refuses to silently approve started jobs or artifacts.
+
+Public-target CI evidence must name its repository and exact tested commit. Blocked private jobs and mock Firefox transport are not successful release qualification. This Git synchronization is development tooling, not runtime cloud sync or a remote updater.
 
 ## Dependency and license review
 

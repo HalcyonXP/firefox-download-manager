@@ -23,7 +23,8 @@
     "typecheck": "tsc -p extension/tsconfig.json",
     "privacy:check": "node scripts/check-privacy.mjs",
     "privacy:history": "node scripts/check-privacy.mjs --history",
-    "privacy:test": "node --test scripts/privacy-policy.test.mjs"
+    "privacy:test": "node --test scripts/privacy-policy.test.mjs scripts/publication-policy.test.mjs",
+    "privacy:publication": "node scripts/verify-publication.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

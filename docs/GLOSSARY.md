@@ -22,7 +22,16 @@ Issue #11 acceptance uses “resolved filename”; protocol v1 has no preview co
 ## Publication terms (#40/#41)
 
 - **Writable-history cleanup**: removal from editable branches/tags and tracked content; it does not imply erasure from GitHub caches or closed-PR refs.
-- **Publication privacy-cleared**: both content/history inspection and platform-retention findings are resolved. This gate is still open (#41).
+- **Publication privacy-cleared**: a repository-specific result after content/history and platform-surface inspection. #41 clears the independent target, not GitHub-retained originals in the private development repository.
 - **Public attribution**: GitHub account handles, noreply identities, and reviewed project/third-party identifiers. These remain attributable and are not an anonymity promise.
 
 The user explicitly requested privacy preparation after #14 because private Actions budget is exhausted. They have not requested a visibility change in this task. #14 is complete; #40 takes precedence over further feature work, with unresolved platform-owned findings preserved in #41. Metadata-only rewriting preserved every writable branch tip tree; prior commit hashes/CI run links may no longer identify current records.
+
+
+### Completion follow-up (#41)
+
+- **Development/history repository** (`origin`): `HalcyonXP/download-manager`, always private unless retained originals are separately removed. Existing numbered work references and the project board remain authoritative here.
+- **Publication/CI target** (`publication`): `HalcyonXP/firefox-download-manager`, independently created rather than forked. Only reviewed, checked `main` is synchronized; do not mirror refs or merge publication-only dependency proposals directly.
+- **Isolation, not erasure**: original private GitHub records remain inaccessible to public readers because the original stays private; they were not removed by creating the clean target.
+
+The user explicitly requested finishing cleanup. Choosing the documented independent-target alternative under delegated authority is an implementation decision, not a separately confirmed repository-layout preference. GitHub rejected PR-ref deletion; Support sign-in was unavailable and no request was submitted. Fresh Dependabot records were audited rather than assuming a new repository stayed empty. Public GitHub support sign-offs are retained third-party attribution, while commit author/committer emails remain noreply-only.

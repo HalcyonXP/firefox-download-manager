@@ -49,3 +49,16 @@ test("project-board URLs are not mistaken for local home directories", () => {
   const unixPath = ["", "home", "SyntheticPerson", "file"].join("/");
   assert.equal(inspectText(unixPath)[0].category, "personal-profile-path");
 });
+
+test("GitHub SSH routing principal is not allowed as a commit contact identity", () => {
+  assert.deepEqual(inspectText("git@github.com:example/project.git"), []);
+  assert.equal(allowedEmail("git@github.com", true), false);
+});
+
+test("public Dependabot sign-off attribution does not allow private commit contacts", () => {
+  assert.deepEqual(
+    inspectText("Signed-off-by: dependabot[bot] <support@github.com>", { history: true }),
+    [],
+  );
+  assert.equal(allowedEmail("support@github.com", true), false);
+});

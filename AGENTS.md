@@ -6,7 +6,8 @@ This repository contains a local download manager for Firefox Developer Edition 
 
 - Project board: https://github.com/users/HalcyonXP/projects/1
 - Project plan: `docs/PROJECT_PLAN.md`
-- Work items and acceptance criteria: GitHub Issues
+- Work items and acceptance criteria: GitHub Issues in **HalcyonXP/download-manager** (private development/history repository).
+- **HalcyonXP/firefox-download-manager** is the separate, non-fork publication/CI target, not a replacement issue board. Keep the original private. Synchronize only checked, reviewed `main`; never mirror refs or push old history. See `docs/PUBLICATION_PRIVACY.md` and `docs/DEVELOPMENT.md`.
 - Start with the lowest-numbered issue in **Ready** status. At the initial implementation handoff, this was issue #1; use the board for current status.
 
 If code, documentation, and an issue disagree, stop and resolve the contradiction explicitly. Update the plan when scope changes.

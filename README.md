@@ -4,7 +4,9 @@ A local download manager for Firefox Developer Edition on Windows 11. It is inte
 
 ## Publication privacy status
 
-**Keep this repository private until #41 is resolved.** Source and writable branch history have been reviewed/cleaned, but GitHub still retains original private commit metadata through closed PR refs. See [docs/PUBLICATION_PRIVACY.md](docs/PUBLICATION_PRIVACY.md). This is not an installable-release announcement.
+The independently audited publication/CI target is **[HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager)**. It is prepared for a later public-visibility decision, not yet made public by this task.
+
+**Keep the original `HalcyonXP/download-manager` private:** it preserves the work board/issues and GitHub-retained original metadata. Only cleaned `main` is synchronized to the independent non-fork target. See [docs/PUBLICATION_PRIVACY.md](docs/PUBLICATION_PRIVACY.md). Privacy clearance is not an installable-release announcement.
 
 ## Project status
 

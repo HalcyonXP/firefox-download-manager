@@ -13,3 +13,5 @@ Accepted ADRs define the baseline for the initial local release. Superseding a d
 | [0007](0007-task-controls-retries-progress.md) | Cooperative task controls, bounded retries, and latest-value progress | Accepted |
 
 Each record states its reversibility. Security and correctness invariants are not made optional merely because an implementation choice is reversible.
+
+- [0008 — Isolate publication from retained private history](0008-isolated-publication.md)

@@ -11,8 +11,13 @@ export function allowedEmail(value, history = false) {
   const domain = value.slice(value.lastIndexOf("@") + 1).toLowerCase();
   if (domain === "users.noreply.github.com" || value === "noreply@github.com") return true;
   if (history) return false;
-  // Fixed native-extension principal, not a personal contact address.
-  if (value === "download-manager@halcyonxp.local") return true;
+  // Fixed technical principals, not personal contact addresses. Never commit identities.
+  if (
+    value === "download-manager@halcyonxp.local" ||
+    value === "git@github.com" ||
+    value === "support@github.com"
+  )
+    return true;
   return (
     /(?:^|\.)(?:test|invalid|example)$/u.test(domain) ||
     /^(?:.*\.)?example\.(?:com|org|net)$/u.test(domain)
@@ -22,7 +27,12 @@ export function allowedEmail(value, history = false) {
 export function inspectText(text, { history = false } = {}) {
   const findings = [];
   for (const [index, line] of text.split(/\r?\n/u).entries()) {
-    if ([...line.matchAll(EMAIL)].some(([value]) => !allowedEmail(value, history)))
+    // Preserve GitHub's published support contact in Dependabot sign-offs, not commit identities.
+    if (
+      [...line.matchAll(EMAIL)].some(
+        ([value]) => !allowedEmail(value, history) && value !== "support@github.com",
+      )
+    )
       findings.push({ line: index + 1, category: "non-public-email" });
     if ([...line.matchAll(PROFILE)].some((match) => !SYNTHETIC_PROFILES.has(match[1])))
       findings.push({ line: index + 1, category: "personal-profile-path" });

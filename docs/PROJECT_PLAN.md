@@ -10,7 +10,9 @@ Project vocabulary and autonomous handoff decisions: [GLOSSARY.md](GLOSSARY.md).
 
 ## Publication preparation priority (2026-09-08)
 
-The user requested privacy cleanup after #14 before changing repository visibility to address the exhausted private Actions budget. #40 covers writable-history/content cleanup and recurrence prevention; #41 covers GitHub-retained closed-PR ancestry. Further feature work was temporarily deferred while performing #40. **Repository visibility remains private, and public readiness remains blocked by #41.** See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) for evidence, scope, and the distinction between cleaned Git branches and retained platform history. No billing change or public switch is part of this task.
+The user requested privacy cleanup after #14 and then asked to finish it. #40 cleaned writable surfaces; #41 selected and verified an independent non-fork publication target, `HalcyonXP/firefox-download-manager`, because GitHub's retained original PR refs are read-only. The original `HalcyonXP/download-manager` remains private and authoritative for this board, issue numbering, acceptance criteria, and history. No work history was deleted or silently renumbered.
+
+**Only the independent target is cleared as a candidate for future public visibility; both repositories remain private.** No billing or public switch is part of cleanup. Further implementation resumes at #15 after #41. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md), [ADR 0008](decisions/0008-isolated-publication.md), and the synchronization rules in [DEVELOPMENT.md](DEVELOPMENT.md). This privacy result does not satisfy the outstanding hosted-CI or release-qualification gates.
 
 ## Product goal
 
@@ -160,7 +162,7 @@ A release must preserve these invariants:
 ## Release quality gates
 
 - Formatting, linting, unit tests, and integration tests pass in GitHub Actions.
-- Publication privacy checks pass and GitHub-retained private metadata is cleared (#40/#41) before public visibility.
+- Publication privacy checks pass for the independent target (#40/#41) before public visibility; the original repository remains private unless its GitHub-retained metadata is separately removed.
 - Adversarial HTTP fixtures cover malformed and changing responses.
 - The final output is byte-identical for all supported worker counts.
 - Firefox and helper restart paths are tested.

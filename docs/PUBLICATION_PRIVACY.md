@@ -2,9 +2,24 @@
 
 Review date: 2026-09-08. Requested after resource-identity issue #14; tracked as writable-surface cleanup #40 and platform-retention blocker #41.
 
-**Keep this repository private. Writable history is cleaned, but publication is NOT yet privacy-cleared.** GitHub retains original ancestry through 14 closed pull-request head refs. A normal force-push cannot remove those read-only refs or guarantee removal of cached commit views. Resolve #41 before changing visibility. No visibility, billing, spending-limit, or account-privacy setting was changed.
+## Current disposition: two distinct repositories
 
-## Scope and evidence
+- **Publication/CI target:** [HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager). Independently created, not a fork. Its initial publication privacy audit passed; this is the only designated candidate for future public visibility. It remains private until the user requests a visibility change.
+- **Private development/history repository:** [HalcyonXP/download-manager](https://github.com/HalcyonXP/download-manager). **Keep it private.** GitHub still retains original private-email ancestry in 14 closed PR refs. Those originals were not erased; isolation avoids publishing them.
+
+The user asked to finish cleanup. #41 therefore selected the previously documented separate-target alternative rather than silently deleting/recreating the original. [ADR 0008](decisions/0008-isolated-publication.md) records the decision and its limits. No visibility, billing, protection, account-privacy, or live Firefox-profile setting was changed.
+
+## Isolated-target evidence (2026-09-08)
+
+- Baseline fresh fetch: 22 branch/PR refs, 34 reachable commits, 292 distinct historical blobs, and 116 historical paths. Checked all commit contacts/messages and file content, not just the working tree.
+- All 26 known original sensitive commit hashes returned GitHub's exact HTTP 422 missing-commit response in the target. A known-good current commit remained readable, so this was not an authentication failure masquerading as absence.
+- Seven new Dependabot PRs appeared automatically after the first push. They were included in the audit; no old PR records were transferred. Their public GitHub support sign-offs and SSH routing principal were reviewed as technical attribution, not private contact data. Author/committer contacts still require noreply identities.
+- Inspected three new Dependabot update log ZIPs (21 files), with no private-address or contact/credential-pattern candidates, then removed those three run records. Remaining application CI jobs had not started; no target artifacts, caches, releases, deployments, or forks existed.
+- Repository metadata, all-state issue/PR records, comments, events, milestones, and remaining Actions metadata were checked. No known private-value or policy-pattern findings remained. Re-run verification after each preparation push; the report records the exact checked target `main` commit.
+
+This establishes scoped publication clearance, not anonymity or proof about arbitrary identifying prose. The original repository remains deliberately outside that clearance.
+
+## Earlier writable-history cleanup (#40)
 
 - Inspected all tracked first-party content and 278 distinct historical blobs across remote branches and PR heads; then additionally fetched all advertised PR merge refs. No private contact address, actual user-profile path, credential token, or private-key pattern was found in those blobs. Path examples are explicitly synthetic; URL user-info fixtures are intentionally adversarial test inputs.
 - Found one private email in historical author/committer metadata and retained Actions run metadata. The address and old/new commit mapping are **not** in this document, issues, committed scripts, or a tracked `.mailmap`.
@@ -30,13 +45,26 @@ npm run privacy:history
 
 The guard scans tracked content for non-allowlisted email addresses, actual profile-path patterns, credential/private-key patterns, and accidental runtime artifacts. The history mode additionally checks **all commits reachable from HEAD** for private author/committer addresses and sensitive messages. It refuses shallow history; CI checks out full history. Output contains only file indexes, line numbers, categories, and counts, never matched private values. The policy has tests using assembled fake data, not real contact information.
 
-This guard is not a secrets scanner for every token type, an arbitrary-real-name detector, or a GitHub-retention audit. It does not scan other remote branches or PR refs automatically. A successful guard must not be interpreted as resolution of #41.
+This guard is not a secrets scanner for every token type, an arbitrary-real-name detector, or a GitHub-retention audit. It does not scan other remote branches or PR refs automatically. A successful HEAD guard alone does not establish platform clearance or authorize publishing the original repository.
 
-## Required GitHub-side action
+## Original-repository retention (still unresolved)
 
-Use [GitHub's sensitive-data removal process](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) to request removal/dereferencing of the original commit views and closed PR refs. GitHub decides whether and how it will process this personal-data request; support eligibility/outcome has not been confirmed. Local-only original commit/ref details are available for an authenticated support request, not public issue text. After support work, re-fetch every PR head/merge ref and inspect old commit API/patch views before clearing #41.
+Use [GitHub's sensitive-data removal process](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository) to request removal/dereferencing of the original commit views and closed PR refs. GitHub decides whether and how it will process this personal-data request; support eligibility/outcome has not been confirmed. Local-only original commit/ref details are available for an authenticated support request, not public issue text. After support work, re-fetch every PR head/merge ref and inspect old commit API/patch views before ever considering public visibility for the original repository.
 
-If GitHub cannot remove the retained data, a separate sanitized publication repository can avoid carrying this repository's PR history, while preserving this original privately for its issues/decisions. That alternative has **not** been created and this repository must not be silently deleted or recreated.
+The separate sanitized target has now been created and audited under #41. The original is preserved privately for its issues/decisions; it was not deleted, renamed, transferred, or recreated. A private Support-request draft and recovery bundle remain outside the checkout, not in either repository's published refs.
+
+## Repeat the initial-target verification
+
+The authenticated CLI verifier needs two local JSON inputs kept **outside** the checkout: `{ "emails": [...] }` containing the private comparison value(s), and an array of known original commit hashes. Do not copy these values into examples, command arguments, tracked files, CI secrets, or public reports. The existing inputs are under the local `DownloadManagerPrivacyAudit` directory.
+
+```powershell
+$audit = Join-Path $env:LOCALAPPDATA "DownloadManagerPrivacyAudit/2026-09-08"
+npm run privacy:publication -- (Join-Path $audit "private-identifiers.json") (Join-Path $audit "original-commits.private.json")
+```
+
+The verifier uses a disposable fresh bare clone, fetches every target branch/tag and PR head/merge ref, scans all reachable historical blobs/paths and commit identities/messages, checks GitHub metadata, and probes every known original hash. It requires both repositories to remain private for this initial check. Authentication errors, generic 404s, partial pagination, missing inputs, unexpected artifacts, or started jobs are not treated as success. Started jobs require a separate full log/artifact review before this initial gate can pass. Its JSON report contains counts and a cleaned target commit, never private comparison values. The original Support/recovery kit must remain private.
+
+This is a pre-publication verifier, not a claim to comprehensively inspect all future workflow logs or detect arbitrary real names/photos. Routine `privacy:history` remains in CI; repeat platform/log review when surfaces change.
 
 ## Collaborator recovery after the rewrite
 
