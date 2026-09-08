@@ -6,6 +6,9 @@
 mod observation;
 use observation::ObservationGate;
 pub use observation::ObservationPause;
+mod response;
+use response::ResponseGate;
+pub use response::ResponsePause;
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -243,6 +246,7 @@ pub struct TestServer {
     state: Arc<Mutex<SharedState>>,
     listener_thread: Option<JoinHandle<()>>,
     observation: Arc<ObservationGate>,
+    response: Arc<ResponseGate>,
 }
 
 impl TestServer {
@@ -269,6 +273,8 @@ impl TestServer {
         let thread_state = Arc::clone(&state);
         let observation = Arc::new(ObservationGate::default());
         let thread_observation = Arc::clone(&observation);
+        let response = Arc::new(ResponseGate::default());
+        let thread_response = Arc::clone(&response);
 
         let listener_thread = thread::Builder::new()
             .name("adversarial-http-listener".to_owned())
@@ -279,6 +285,7 @@ impl TestServer {
                     &thread_stop,
                     &thread_state,
                     &thread_observation,
+                    &thread_response,
                 );
             })?;
 
@@ -288,6 +295,7 @@ impl TestServer {
             state,
             listener_thread: Some(listener_thread),
             observation,
+            response,
         })
     }
 
@@ -322,6 +330,16 @@ impl TestServer {
         self.observation.pause()
     }
 
+    /// Pauses matching responses after ledger insertion, before headers/body.
+    /// Unmatched requests proceed. Drop the guard to release selected responses.
+    ///
+    /// # Errors
+    ///
+    /// Returns `WouldBlock` if an earlier pause or its waiters are still active.
+    pub fn pause_responses(&self, selector: RequestSelector) -> io::Result<ResponsePause> {
+        self.response.pause(selector)
+    }
+
     /// Highest number of response handlers active at the same time.
     #[must_use]
     pub fn max_concurrent_requests(&self) -> usize {
@@ -333,6 +351,7 @@ impl Drop for TestServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
         self.observation.release();
+        self.response.release();
         let _ = TcpStream::connect_timeout(&self.address, Duration::from_millis(100));
         if let Some(handle) = self.listener_thread.take() {
             let _ = handle.join();
@@ -363,6 +382,7 @@ fn accept_loop(
     stop: &AtomicBool,
     state: &Arc<Mutex<SharedState>>,
     observation: &Arc<ObservationGate>,
+    response: &Arc<ResponseGate>,
 ) {
     while !stop.load(Ordering::Acquire) {
         match listener.accept() {
@@ -373,6 +393,7 @@ fn accept_loop(
                 let connection_config = (*config).clone();
                 let connection_state = Arc::clone(state);
                 let connection_observation = Arc::clone(observation);
+                let connection_response = Arc::clone(response);
                 let _ = thread::Builder::new()
                     .name("adversarial-http-connection".to_owned())
                     .spawn(move || {
@@ -381,6 +402,7 @@ fn accept_loop(
                             &connection_config,
                             &connection_state,
                             &connection_observation,
+                            &connection_response,
                         );
                     });
             }
@@ -407,6 +429,7 @@ fn handle_connection(
     config: &ServerConfig,
     state: &Mutex<SharedState>,
     observation: &ObservationGate,
+    response: &ResponseGate,
 ) -> io::Result<()> {
     // Windows can inherit nonblocking mode from the listener. Connection
     // handlers need ordinary blocking semantics so transient WouldBlock errors
@@ -451,6 +474,7 @@ fn handle_connection(
         (observed, range_request_number)
     };
     let _activity = ActiveRequestGuard { state };
+    response.arrive(&observed);
 
     if request.path == "/session/fixture" && !request.session.fixture_valid {
         return write_empty_status(&mut stream, 401, &[]);

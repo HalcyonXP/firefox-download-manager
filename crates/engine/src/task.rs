@@ -3112,7 +3112,7 @@ mod tests {
 
     use super::{
         EventBuffer, MAX_RETRIES, RetryPolicy, RetryScheduled, TaskConfigError, TaskEngineError,
-        TaskEngineOptions, TaskEventKind, TaskFailure, TaskFailureKind, WorkerCount,
+        TaskEngineOptions, TaskEventKind, TaskFailure, TaskFailureKind, TaskProgress, WorkerCount,
     };
     use crate::persistence::{TaskId, TimestampMillis};
     use crate::progress::{MAX_SAFE_INTEGER, ProgressPolicy};
@@ -3207,6 +3207,43 @@ mod tests {
             events.try_next(),
             Err(TaskEngineError::EventSequenceExhausted)
         );
+    }
+
+    #[test]
+    fn progress_buffer_keeps_only_the_latest_sample_for_each_task() {
+        // Queue-only counterexample to minimum consumer-count assumptions;
+        // producer cadence is tested separately with real network/disk activity.
+        let events = EventBuffer::new(64);
+        let tasks = [TaskId::new(), TaskId::new()];
+        for bytes in 1..=4 {
+            for (task_id, bytes_completed) in [(tasks[0], bytes), (tasks[1], bytes + 10)] {
+                events.emit(
+                    TimestampMillis::unix_epoch(),
+                    TaskEventKind::Progress(TaskProgress {
+                        task_id,
+                        bytes_completed,
+                        expected_size: Some(16),
+                        speed_bytes_per_second: None,
+                        eta_seconds: None,
+                        active_workers: 1,
+                        sampled_at: TimestampMillis::unix_epoch(),
+                    }),
+                );
+            }
+        }
+        for (task_id, expected_bytes) in [(tasks[0], 4), (tasks[1], 14)] {
+            let event = events
+                .try_next()
+                .expect("bounded sequence")
+                .expect("latest sample");
+            let TaskEventKind::Progress(sample) = event.kind() else {
+                panic!("progress expected")
+            };
+            assert_eq!(sample.task_id(), task_id);
+            assert_eq!(sample.bytes_completed(), expected_bytes);
+        }
+        assert!(events.try_next().expect("empty queue").is_none());
+        assert!(!events.overflowed.load(std::sync::atomic::Ordering::Acquire));
     }
 
     #[test]
