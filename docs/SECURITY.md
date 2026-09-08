@@ -1,6 +1,6 @@
 # Security and privacy model
 
-Status: accepted baseline for the initial local release
+Status: reviewed implementation; packaging and qualification remain release blockers (see [SECURITY_REVIEW.md](SECURITY_REVIEW.md))
 
 Last updated: 2026-09-08
 
@@ -67,13 +67,13 @@ Metadata is versioned but untrusted. Recovery validates identifiers, enum values
 
 | Data | Persistence | Ordinary logs | Protocol snapshots |
 | --- | --- | --- | --- |
-| Cookies / authorization values | Memory only | Never | Never |
+| Supplied cookies / authorization context | Memory only (not a claim about reflected remote data) | Never | Never |
 | URL user-info | Rejected | Never | Never |
 | Signed or sensitive query values | Only when required to resume the exact task | Redacted | Redacted by default |
 | Original/final URL without sensitive rendering | Required task state | Origin plus opaque task ID at most | Available only where UI function requires it |
 | Referrer | Memory only by default; persistence requires a later explicit decision | Redacted | Omitted by default |
 | Destination path / filename | Required task state | Minimized or redacted in ordinary mode | Included where user control requires it |
-| ETag / Last-Modified / size | Required task state | Safe structured values with bounds | Included in detailed task data as needed |
+| ETag / Last-Modified / size | Protected task state; remote metadata may itself be sensitive | No raw validator logging; opaque ETag Debug / If-Range are redacted | Not currently projected as raw validators |
 
 URL user-info (`https://user:pass@host/`) is rejected rather than normalized. Logs must use structured redaction before formatting; redaction after a string has entered a log pipeline is insufficient. Panic/error chains and HTTP-client tracing must be reviewed so they cannot bypass redaction. Verbose diagnostics are opt-in, local, bounded, and still exclude credentials.
 
@@ -105,9 +105,9 @@ These controls reduce accidental denial of service but do not promise availabili
 
 ## Native installation and update boundary
 
-The source native-host manifest allows only `download-manager@halcyonxp.local`; installation substitutes one JSON-escaped absolute executable path and retains only Firefox's supported manifest fields. The extension requests `nativeMessaging` and `menus`, with no host origins. `install-native-host.ps1` copies a verified executable beneath the current user's local application data and writes only `HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager`; it creates no service, listener, scheduled task, firewall rule, VPN setting, or route. The companion uninstaller refuses to delete a registration pointing at a different manifest, removes only known generated host files, and never recursively removes task state or destination content. Windows CI installs into a path containing spaces, launches the registered binary, negotiates, receives a snapshot, and removes the registration.
+The source native-host manifest allows only `download-manager@halcyonxp.local`; installation substitutes one JSON-escaped absolute executable path and retains only Firefox's supported manifest fields. The extension requires `nativeMessaging` and `menus`, with no mandatory host grants; optional cookies and selected scheme/host grants support explicit session handoff. `install-native-host.ps1` copies a verified executable beneath the current user's local application data and writes only `HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager`; it creates no service, listener, scheduled task, firewall rule, VPN setting, or route. The companion uninstaller refuses to delete a registration pointing at a different manifest, removes only known generated host files, and never recursively removes task state or destination content. Windows CI installs into a path containing spaces, launches the registered binary, negotiates, receives a snapshot, and removes the registration.
 
-The project has no remote updater. Release artifacts and checksums come from GitHub; update behavior is explicit and local. A packaging/upgrade design beyond these development registration scripts remains release work.
+The project has no remote updater. Release artifacts and checksums come from GitHub; update behavior is explicit and local. A packaging/upgrade design beyond these development registration scripts remains release work. The #26 review identified missing root/reparse/ownership and transactional-upgrade protections in these development scripts; #27 must resolve them before a release installer is qualified.
 
 Task-state migrations are versioned and tested. The v1-to-v2 worker-default migration uses a separate strict decoder and atomic replacement. An incompatible upgrade preserves data for diagnosis or explicit cleanup rather than guessing.
 
@@ -123,7 +123,7 @@ Current regression coverage includes partial, malformed, duplicate-member, overs
 - malformed/ignored ranges, changing validators, and resource mutation;
 - short, overlapping, duplicate, and out-of-bounds writes;
 - traversal, Windows reserved names, alternate streams, links, collisions, and paths with spaces;
-- redirect loops and cross-origin credential stripping;
+- redirect loops and no-contact rejection of context-bearing cross-origin redirects;
 - corrupt/incompatible recovery metadata and killed-helper recovery;
 - bounded concurrency, retries, logs, and progress events; and
 - inspection of logs/state for credentials and sensitive query values.
@@ -134,4 +134,4 @@ The manager does not claim to hide network activity from the operating system, V
 
 ## Optional checksum boundary (#25)
 
-Supplied SHA-256 expectations are immutable task inputs, validated before networking and required in v4 recovery shape. Streaming validation reads the owned complete partial, then retains a non-cloneable lease through no-overwrite promotion; mismatch cannot publish output or success. The failure-retention setting applies explicitly. Cancellation joins hashing before acknowledgement. Windows file locks resist ordinary competing I/O, not malicious same-user or memory-mapped mutation/all namespace races. Published files are not continuously rehashed. These limits and test boundaries are explicit in [INTEGRITY.md](INTEGRITY.md); #26 still requires the overall security review.
+Supplied SHA-256 expectations are immutable task inputs, validated before networking and required in v4 recovery shape. Streaming validation reads the owned complete partial, then retains a non-cloneable lease through no-overwrite promotion; mismatch cannot publish output or success. The failure-retention setting applies explicitly. Cancellation joins hashing before acknowledgement. Windows file locks resist ordinary competing I/O, not malicious same-user or memory-mapped mutation/all namespace races. Published files are not continuously rehashed. These limits and test boundaries are explicit in [INTEGRITY.md](INTEGRITY.md); the review and remaining gates are in [SECURITY_REVIEW.md](SECURITY_REVIEW.md).

@@ -45,6 +45,8 @@ The native helper uses the operating system's normal network route, whether a VP
 
 ## Native Messaging development install
 
+**Not a qualified release installer.** The [security review](docs/SECURITY_REVIEW.md) identifies development-script ownership/path/upgrade gaps that #27 must fix. Use only an isolated test root with no existing registration, not a live installation. The manifest targets Firefox 156+; final-artifact qualification remains pending.
+
 Build and register the on-demand helper for the current Windows user, then build and temporarily load the extension:
 
 ```powershell
@@ -52,7 +54,7 @@ Build and register the on-demand helper for the current Windows user, then build
 npm run build
 ```
 
-The installer copies the release helper to the per-user application-data tree and writes only `HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager`. The generated manifest permits only `download-manager@halcyonxp.local`; the extension requests `nativeMessaging` and `menus` and no host access. Paths containing spaces are supported. Remove the registration and installed helper files without touching download state or completed files with:
+The installer copies the release helper to the per-user application-data tree and writes only `HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager`. The generated manifest permits only `download-manager@halcyonxp.local`; the extension requires `nativeMessaging` and `menus`; cookies/selected-site authority is optional and per-Add handoff remains unchecked by default. Paths containing spaces are supported. Remove the registration and installed helper files without touching download state or completed files with:
 
 ```powershell
 ./scripts/uninstall-native-host.ps1

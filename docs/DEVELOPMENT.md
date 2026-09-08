@@ -8,7 +8,7 @@ The supported development host is a clean 64-bit Windows 11 checkout. CI uses th
 2. [Rustup](https://rustup.rs/) using the MSVC host toolchain
 3. Visual Studio 2022 Build Tools with **Desktop development with C++** and a Windows SDK
 4. Node.js 24 and npm 11
-5. Firefox Developer Edition for manual extension testing
+5. Firefox Developer Edition 156 or later for manual extension testing (156 is the exercised API baseline; final-artifact qualification is separate)
 
 The repository pins Rust in `rust-toolchain.toml`, records the npm version in `package.json`, and commits `Cargo.lock` and `package-lock.json`. Node 24 is the CI baseline; Node versions accepted by `package.json` may be used locally.
 
@@ -94,7 +94,7 @@ The installer performs a locked release build by default, copies the executable 
 HKCU\Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager
 ```
 
-No elevation is required. The registration permits only `download-manager@halcyonxp.local`. Open `about:debugging#/runtime/this-firefox` in Firefox Developer Edition, choose **Load Temporary Add-on**, and select `extension/dist/manifest.json`. The background connection object remains on demand: later UI work calls it when a manager surface is opened; every fresh port negotiates v2 and waits for a complete helper snapshot before replacing retained display state.
+**Development-only until #27 resolves the installer findings in [SECURITY_REVIEW.md](SECURITY_REVIEW.md).** Use isolated test roots and refuse existing registrations; do not use or terminate an unowned Firefox instance. No elevation is required. The registration permits only `download-manager@halcyonxp.local`. Open `about:debugging#/runtime/this-firefox` in Firefox Developer Edition, choose **Load Temporary Add-on**, and select `extension/dist/manifest.json`. The background connection object remains on demand: later UI work calls it when a manager surface is opened; every fresh port negotiates v2 and waits for a complete helper snapshot before replacing retained display state.
 
 To exercise the same registration, path-with-spaces, process-launch, hello, initial-snapshot, add-command, and live schema check used by Windows CI:
 

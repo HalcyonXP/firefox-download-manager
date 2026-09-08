@@ -68,3 +68,11 @@ The #23 actual-Firefox slice used a fresh profile, real optional-permission appr
 - **Transfer versus validation progress**: byte counts/download rate describe transfer; the checking/publishing phases have no invented hashing ETA. Cancel is supported while validating, not after promotion begins.
 
 Format-v4 tests exposed the need for genuine old v1/v2/v3 shapes without newer keys. State review also caught the old documentation/Serde nullable-key omission mismatch; v4 now enforces required nullable task/validator keys. An initial phase-metric change broke the established completed-transfer-rate projection; it was replaced with UI-only checking/publishing text, preserving completed history metrics. Independent known vectors and Python fixture digests avoid relying solely on the same hashing implementation for expected test results. See [INTEGRITY.md](INTEGRITY.md).
+
+## Review terms and boundaries (#26)
+
+- **Eligible host pattern**: manifest authority that may be requested, not authority already granted. Canonical `*` URL hosts must never become wildcard grants. Firefox scheme/host grants still cover all ports.
+- **Protected recovery data**: exact URLs and remote validators needed for recovery; not a secret-free export. Memory-only supplied context does not imply remote content cannot reflect secrets.
+- **Review complete versus release approved**: #26 records findings, regressions and residual risks; #27 installer blockers and #28 final-artifact qualification are not waived.
+
+The review found a real wildcard-pattern construction edge case, not an observed cookie breach. It also corrected stale no-host-access prose, redacted opaque validators, and narrowed the unqualified Firefox 128 claim to the actually exercised 156 API baseline. These are implementation safety decisions, not newly confirmed user preferences. The actual privacy fixture initially violated its own exact-referrer contract and returned AUTH_EXPIRED; the test input, not the server contract, was corrected.

@@ -23,7 +23,7 @@ export interface SessionContext {
 export class SessionError extends Error {
   constructor() {
     super(
-      "Session handoff was not submitted. Allow cookies and this site's optional permission, use a normal default-store tab, and check the same-origin referrer / HTTPS Basic or Bearer value. Private, container, partitioned, and first-party-isolated sessions are not supported.",
+      "Session handoff was not submitted. Allow cookies and this site's optional permission, use a normal default-store tab, and check the same-origin referrer / HTTPS Basic or Bearer value. Private, container, partitioned, and first-party-isolated sessions are not supported. Wildcard hosts and IPv6 session permissions are unsupported.",
     );
   }
 }
@@ -31,7 +31,7 @@ export class SessionError extends Error {
 /** Firefox host permissions cover scheme/host, not paths or individual ports. */
 export function sessionPermission(target: string): string {
   const url = directUrl(target);
-  if (url.hostname.includes(":")) throw new SessionError();
+  if (url.hostname.includes(":") || url.hostname.includes("*")) throw new SessionError();
   return `${url.protocol}//${url.hostname}/*`;
 }
 

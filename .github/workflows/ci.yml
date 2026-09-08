@@ -35,6 +35,9 @@ jobs:
       - name: Check extension and protocol
         run: npm run check
 
+      - name: Audit JavaScript dependencies
+        run: npm audit --audit-level=high
+
       - name: Check JavaScript dependency licenses
         run: npm run licenses:js
 
