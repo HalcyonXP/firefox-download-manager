@@ -208,3 +208,7 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 ### Pre-packaging security checkpoint (#26)
 
 [SECURITY_REVIEW.md](SECURITY_REVIEW.md) records the scoped review, fixed wildcard-permission and validator-redaction findings, explicit Firefox 156/CSP/private-window policy, actual native log/state inspection, and dependency audits. Review completion is not release approval. #27 must resolve development-installer reparse/ownership/transactional-upgrade findings and re-run the affected security checks. #28 must qualify the final policy/artifacts in Firefox and the target installation environment, without touching an unowned live profile.
+
+### Packaging work in progress (#27)
+
+[PACKAGING_PLAN.md](PACKAGING_PLAN.md) records the local Rust setup/candidate-artifact design, ownership and recovery requirements, and remaining evidence. The initial library boundaries are not an installer or qualified release. Existing development scripts remain blocked until replaced or safely superseded.

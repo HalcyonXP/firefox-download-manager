@@ -76,3 +76,10 @@ Format-v4 tests exposed the need for genuine old v1/v2/v3 shapes without newer k
 - **Review complete versus release approved**: #26 records findings, regressions and residual risks; #27 installer blockers and #28 final-artifact qualification are not waived.
 
 The review found a real wildcard-pattern construction edge case, not an observed cookie breach. It also corrected stale no-host-access prose, redacted opaque validators, and narrowed the unqualified Firefox 128 claim to the actually exercised 156 API baseline. These are implementation safety decisions, not newly confirmed user preferences. The actual privacy fixture initially violated its own exact-referrer contract and returned AUTH_EXPIRED; the test input, not the server contract, was corrected.
+
+## Packaging terms (#27, implementation in progress)
+
+- **Package descriptor**: bounded, closed metadata for fixed local payload leaves, paired version and file SHA-256 values. Hash consistency does not authenticate the publisher or prove the asserted source commit.
+- **Installation receipt**: versioned ownership/recovery metadata for generated installation files; not task state, a signature or a compromised-account defense.
+- **Candidate artifact**: CI-produced versioned/checksummed output awaiting #28 qualification, not an approved release.
+- **Directory lease**: ordinary Windows ancestor handles held without delete sharing while their paths are used. It narrows ordinary rename/reparse races; it does not confer authority over arbitrary other account actors.
