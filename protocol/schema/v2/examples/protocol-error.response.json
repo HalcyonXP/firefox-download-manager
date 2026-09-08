@@ -1,0 +1,11 @@
+{
+  "protocol_version": 2,
+  "correlation_id": "invalid-command-1",
+  "kind": "response",
+  "command": "protocol",
+  "ok": false,
+  "error": {
+    "code": "PROTOCOL_UNKNOWN_COMMAND",
+    "display_message": "The requested command is not supported by this protocol version."
+  }
+}

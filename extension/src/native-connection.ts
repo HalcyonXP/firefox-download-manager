@@ -141,7 +141,8 @@ export class NativeConnection {
     string,
     {
       command: string;
-      resolve: (task: NativeTask) => void;
+      resolve: (result: unknown) => void;
+      taskId: string | undefined;
       reject: (error: NativeConnectionError) => void;
       timeout: ReturnType<typeof setTimeout>;
     }
@@ -220,10 +221,15 @@ export class NativeConnection {
   }
 
   /** Commands are never replayed automatically after an uncertain disconnect. */
-  async command(
+  command(
     command: "add" | "pause" | "resume" | "cancel" | "get",
     payload: unknown,
-  ): Promise<NativeTask> {
+  ): Promise<NativeTask>;
+  command(command: "remove" | "open_folder", payload: unknown): Promise<unknown>;
+  async command(
+    command: "add" | "pause" | "resume" | "cancel" | "get" | "remove" | "open_folder",
+    payload: unknown,
+  ): Promise<unknown> {
     await this.connect();
     if (this.#commands.size >= 32) throw new NativeConnectionError("unavailable");
     const correlation = this.#nextCorrelation("command");
@@ -237,7 +243,9 @@ export class NativeConnection {
     if (!isBoundedMessage(message)) throw new NativeConnectionError("protocol_error");
     return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => this.#reject(new NativeConnectionError("timeout")), 120_000);
-      this.#commands.set(correlation, { command, resolve, reject, timeout });
+      const taskId =
+        isRecord(payload) && typeof payload.task_id === "string" ? payload.task_id : undefined;
+      this.#commands.set(correlation, { command, resolve, reject, timeout, taskId });
       try {
         this.#port?.postMessage(message);
       } catch {
@@ -301,8 +309,26 @@ export class NativeConnection {
         pending.reject(new NativeConnectionError("helper_error", message.error.code));
         return;
       }
+      if (pending.command === "remove" || pending.command === "open_folder") {
+        const key = pending.command === "remove" ? "removed_task_id" : "opened_task_id";
+        const result = message.result;
+        if (
+          !isRecord(result) ||
+          !hasExactKeys(result, [key]) ||
+          result[key] !== pending.taskId ||
+          !pending.taskId
+        ) {
+          pending.reject(new NativeConnectionError("protocol_error"));
+          this.#reject(new NativeConnectionError("protocol_error"));
+          return;
+        }
+        if (pending.command === "remove") this.#tasks.delete(pending.taskId);
+        pending.resolve(result);
+        this.#notify();
+        return;
+      }
       const task = nativeTask(message.result);
-      if (task === undefined) {
+      if (task === undefined || (pending.taskId !== undefined && task.task_id !== pending.taskId)) {
         pending.reject(new NativeConnectionError("protocol_error"));
         this.#reject(new NativeConnectionError("protocol_error"));
         return;

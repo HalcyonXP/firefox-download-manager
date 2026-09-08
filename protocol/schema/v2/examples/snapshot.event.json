@@ -1,0 +1,15 @@
+{
+  "protocol_version": 2,
+  "correlation_id": "event-snapshot-1",
+  "kind": "event",
+  "event": "snapshot",
+  "sequence": 1,
+  "emitted_at": "2026-09-04T09:00:00Z",
+  "data": {
+    "snapshot_id": "snapshot-initial-1",
+    "page_index": 0,
+    "tasks": [],
+    "next_cursor": null,
+    "complete": true
+  }
+}

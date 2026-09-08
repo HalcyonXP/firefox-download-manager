@@ -141,7 +141,7 @@ impl TimestampMillis {
     }
 }
 
-/// Explicit native task lifecycle states, aligned with protocol v1 names.
+/// Explicit native task lifecycle states, aligned with protocol v2 names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskState {

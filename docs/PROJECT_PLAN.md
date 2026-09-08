@@ -4,6 +4,8 @@ GitHub execution board: [Firefox Download Manager](https://github.com/users/Halc
 
 Current state is maintained on the project board. Planning is complete; implementation proceeds through the lowest-numbered issue in **Ready** status, with dependent work retained in **Backlog** until it is unblocked.
 
+Current protocol: v2 (paired helper/extension upgrade, #12); v1 remains archived.
+
 Project vocabulary and autonomous handoff decisions: [GLOSSARY.md](GLOSSARY.md).
 
 ## Product goal

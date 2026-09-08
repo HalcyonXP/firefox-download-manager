@@ -1,0 +1,16 @@
+{
+  "protocol_version": 2,
+  "correlation_id": "add-20260904-1",
+  "kind": "command",
+  "command": "add",
+  "payload": {
+    "url": "https://downloads.example.test/files/archive.bin",
+    "destination": "C:\\Users\\Example\\Downloads",
+    "suggested_filename": "archive.bin",
+    "workers": 4,
+    "checksum": {
+      "algorithm": "sha256",
+      "digest": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    }
+  }
+}

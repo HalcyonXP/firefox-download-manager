@@ -4,8 +4,8 @@ import { readdir, readFile } from "node:fs/promises";
 import Ajv2020 from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
-const schemaPath = "protocol/schema/v1/message.schema.json";
-const examplesPath = "protocol/schema/v1/examples";
+const schemaPath = "protocol/schema/v2/message.schema.json";
+const examplesPath = "protocol/schema/v2/examples";
 const schema = JSON.parse(await readFile(schemaPath, "utf8"));
 
 // Conditional response schemas require properties declared by their parent object.
@@ -27,7 +27,7 @@ const command = structuredClone(examples.find((message) => message.kind === "com
 assert(command, "at least one command example is required");
 
 const hostileMessages = [
-  { ...command, protocol_version: 2 },
+  { ...command, protocol_version: 99 },
   { ...command, command: "unknown" },
   { ...command, correlation_id: undefined },
   { ...command, unexpected: true },

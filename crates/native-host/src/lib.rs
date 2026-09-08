@@ -1,7 +1,7 @@
 //! On-demand Firefox Native Messaging host.
 //!
 //! The helper owns the authoritative task engine and exposes only strict,
-//! bounded protocol-v1 frames on standard output. Paths and URLs are accepted
+//! bounded protocol-v2 frames on standard output. Paths and URLs are accepted
 //! only inside typed commands and never appear in ordinary diagnostics.
 
 use std::env;
@@ -390,7 +390,15 @@ impl<W: Write> Session<W> {
                         return self.send_error(correlation_id, ResponseCommand::Resume, error);
                     }
                 };
-                match engine.resume(task_id).await {
+                let result = if engine
+                    .snapshot(task_id)
+                    .is_ok_and(|task| task.state() == TaskState::Queued)
+                {
+                    engine.start(task_id)
+                } else {
+                    engine.resume(task_id).await
+                };
+                match result {
                     Ok(task) => self.send_task(correlation_id, ResponseCommand::Resume, &task),
                     Err(error) => self.send_engine_failure(
                         correlation_id,
@@ -462,6 +470,44 @@ impl<W: Write> Session<W> {
                     ),
                 }
             }
+            Command::OpenFolder(payload) => {
+                let task_id = match parse_task_id(payload.task_id()) {
+                    Ok(id) => id,
+                    Err(error) => {
+                        return self.send_error(correlation_id, ResponseCommand::OpenFolder, error);
+                    }
+                };
+                let task = match engine.snapshot(task_id) {
+                    Ok(task) => task,
+                    Err(error) => {
+                        return self.send_engine_failure(
+                            correlation_id,
+                            ResponseCommand::OpenFolder,
+                            &error,
+                            Some(task_id),
+                        );
+                    }
+                };
+                if open_folder(task.destination()).is_err() {
+                    return self.send_failure(
+                        correlation_id,
+                        ResponseCommand::OpenFolder,
+                        ErrorCode::InvalidDestination,
+                    );
+                }
+                self.send_success(
+                    correlation_id,
+                    ResponseCommand::OpenFolder,
+                    &FolderResult {
+                        opened_task_id: task_id.to_string(),
+                    },
+                )
+            }
+            Command::GetSettings(_) => self.send_failure(
+                correlation_id,
+                ResponseCommand::GetSettings,
+                ErrorCode::InvalidSettings,
+            ),
             Command::UpdateSettings(_) => self.send_failure(
                 correlation_id,
                 ResponseCommand::UpdateSettings,
@@ -768,8 +814,38 @@ fn response_command(command: &Command) -> ResponseCommand {
         Command::Remove(_) => ResponseCommand::Remove,
         Command::List(_) => ResponseCommand::List,
         Command::Get(_) => ResponseCommand::Get,
+        Command::OpenFolder(_) => ResponseCommand::OpenFolder,
+        Command::GetSettings(_) => ResponseCommand::GetSettings,
         Command::UpdateSettings(_) => ResponseCommand::UpdateSettings,
     }
+}
+
+#[derive(serde::Serialize)]
+struct FolderResult {
+    opened_task_id: String,
+}
+
+fn open_folder(destination: &std::path::Path) -> Result<(), HostError> {
+    folder_command(destination)?
+        .spawn()
+        .map_err(|_| HostError::Configuration)?;
+    Ok(())
+}
+
+fn folder_command(destination: &std::path::Path) -> Result<std::process::Command, HostError> {
+    // Only an existing canonical task directory, never a UI-supplied command/path.
+    let canonical = std::fs::canonicalize(destination).map_err(|_| HostError::Configuration)?;
+    if !canonical.is_dir() || canonical != destination || !cfg!(windows) {
+        return Err(HostError::Configuration);
+    }
+    let explorer = absolute_environment_path("SystemRoot")?.join("explorer.exe");
+    let mut command = std::process::Command::new(explorer);
+    command
+        .arg(canonical)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    Ok(command)
 }
 
 fn parse_task_id(value: &str) -> Result<TaskId, ProtocolError> {
@@ -1066,16 +1142,32 @@ mod tests {
 
     fn hello(correlation: &str) -> Value {
         json!({
-            "protocol_version": 1,
+            "protocol_version": 2,
             "correlation_id": correlation,
             "kind": "command",
             "command": "hello",
             "payload": {
-                "supported_versions": [1],
+                "supported_versions": [2],
                 "client_name": "native-host-test",
                 "client_version": "0.1.0"
             }
         })
+    }
+
+    #[test]
+    fn folder_open_uses_only_canonical_directory_and_absolute_explorer() {
+        let directories = Directories::new("folder argument with spaces");
+        let destination = fs::canonicalize(&directories.destination).expect("canonical directory");
+        let command = super::folder_command(&destination).expect("folder command");
+        assert!(std::path::Path::new(command.get_program()).is_absolute());
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            vec![destination.as_os_str()]
+        );
+        assert!(super::folder_command(&destination.join("missing")).is_err());
+        let file = destination.join("not-a-directory");
+        fs::write(&file, b"fixture").expect("fixture file");
+        assert!(super::folder_command(&file).is_err());
     }
 
     #[test]
@@ -1163,7 +1255,7 @@ mod tests {
     fn unadvertised_sensitive_fields_are_rejected_without_echo() {
         let directories = Directories::new("sensitive-rejection");
         let add = json!({
-            "protocol_version": 1,
+            "protocol_version": 2,
             "correlation_id": "add-sensitive",
             "kind": "command",
             "command": "add",
@@ -1224,7 +1316,7 @@ mod tests {
         let writer = SharedWriter::default();
         let mut session = Session::new(writer.clone(), Some(directories.destination.clone()));
         let first_json = json!({
-            "protocol_version": 1,
+            "protocol_version": 2,
             "correlation_id": "list-0",
             "kind": "command",
             "command": "list",
@@ -1257,7 +1349,7 @@ mod tests {
         let snapshot_id = first_output[0]["result"]["snapshot_id"].clone();
 
         let second_json = json!({
-            "protocol_version": 1,
+            "protocol_version": 2,
             "correlation_id": "list-1",
             "kind": "command",
             "command": "list",
@@ -1292,7 +1384,7 @@ mod tests {
     fn malformed_message_is_sanitized_and_does_not_prevent_later_hello() {
         let directories = Directories::new("malformed");
         let mut input = Vec::new();
-        let malformed = br#"{"protocol_version":1,"correlation_id":"safe","correlation_id":"other","kind":"command","command":"hello","payload":{}}"#;
+        let malformed = br#"{"protocol_version":2,"correlation_id":"safe","correlation_id":"other","kind":"command","command":"hello","payload":{}}"#;
         input.extend_from_slice(
             &u32::try_from(malformed.len())
                 .expect("length")
@@ -1330,7 +1422,7 @@ mod tests {
         .expect("start test server");
         let directories = Directories::new("add-eof");
         let add = json!({
-            "protocol_version": 1,
+            "protocol_version": 2,
             "correlation_id": "add-1",
             "kind": "command",
             "command": "add",
@@ -1398,7 +1490,7 @@ mod tests {
             (
                 "before-hello",
                 json!({
-                    "protocol_version": 1,
+                    "protocol_version": 2,
                     "correlation_id": "get-1",
                     "kind": "command",
                     "command": "get",
@@ -1409,7 +1501,7 @@ mod tests {
             (
                 "unsupported",
                 json!({
-                    "protocol_version": 2,
+                    "protocol_version": 99,
                     "correlation_id": "hello-2",
                     "kind": "command",
                     "command": "hello",

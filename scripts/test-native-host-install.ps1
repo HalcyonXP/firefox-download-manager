@@ -71,18 +71,18 @@ New-Item -ItemType Directory -Path (Join-Path $TestUserProfile "Downloads") -For
 New-Item -ItemType Directory -Path $TestLocalAppData -Force | Out-Null
 
 $Hello = [ordered]@{
-    protocol_version = 1
+    protocol_version = 2
     correlation_id = "install-test-hello"
     kind = "command"
     command = "hello"
     payload = [ordered]@{
-        supported_versions = @(1)
+        supported_versions = @(2)
         client_name = "windows-install-test"
         client_version = "0.1.0"
     }
 } | ConvertTo-Json -Depth 8 -Compress
 $Add = [ordered]@{
-    protocol_version = 1
+    protocol_version = 2
     correlation_id = "install-test-add"
     kind = "command"
     command = "add"
@@ -94,7 +94,7 @@ $Add = [ordered]@{
     }
 } | ConvertTo-Json -Depth 8 -Compress
 $List = [ordered]@{
-    protocol_version = 1
+    protocol_version = 2
     correlation_id = "install-test-list"
     kind = "command"
     command = "list"
@@ -138,7 +138,7 @@ Assert-Condition ($Messages.Count -ge 4) "The clean command session returned too
 Assert-Condition ($Messages[0].kind -ceq "response") "The first native message is not a response."
 Assert-Condition ($Messages[0].command -ceq "hello") "The first native response is not hello."
 Assert-Condition ($Messages[0].ok -eq $true) "Protocol negotiation failed."
-Assert-Condition ($Messages[0].result.selected_version -eq 1) "The helper selected an unexpected protocol version."
+Assert-Condition ($Messages[0].result.selected_version -eq 2) "The helper selected an unexpected protocol version."
 Assert-Condition ($Messages[0].result.max_message_bytes -eq $MaximumMessageBytes) "The helper advertised an unexpected message limit."
 Assert-Condition ($Messages[1].kind -ceq "event") "The second native message is not an event."
 Assert-Condition ($Messages[1].event -ceq "snapshot") "The reconnect bootstrap event is not a snapshot."

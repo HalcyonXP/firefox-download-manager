@@ -32,7 +32,7 @@ mod tests {
     use super::Engine;
 
     #[test]
-    fn engine_uses_protocol_v1() {
-        assert_eq!(Engine::new().protocol_version(), 1);
+    fn engine_uses_protocol_v2() {
+        assert_eq!(Engine::new().protocol_version(), 2);
     }
 }

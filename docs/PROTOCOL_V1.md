@@ -1,14 +1,14 @@
-# Native Messaging protocol v2
+# Native Messaging protocol v1
 
-Status: accepted; supersedes the archived [v1 contract](PROTOCOL_V1.md). Both peers must be upgraded together; v1 is rejected, not silently reinterpreted.
+Status: accepted
 
-Protocol version: `2`
+Protocol version: `1`
 
-Schema: [`protocol/schema/v2/message.schema.json`](../protocol/schema/v2/message.schema.json)
+Schema: [`protocol/schema/v1/message.schema.json`](../protocol/schema/v1/message.schema.json)
 
 ## Purpose and boundary
 
-Protocol v2 is the only control boundary between the Firefox extension and native helper. It transports commands, responses, snapshots, and events; downloaded file bodies never cross it. The helper remains authoritative and the extension can reconstruct its entire UI from snapshots after any page, background-context, connection, or browser restart.
+Protocol v1 is the only control boundary between the Firefox extension and native helper. It transports commands, responses, snapshots, and events; downloaded file bodies never cross it. The helper remains authoritative and the extension can reconstruct its entire UI from snapshots after any page, background-context, connection, or browser restart.
 
 Every payload is untrusted even when Firefox launched the configured host. Both peers validate messages before acting.
 
@@ -26,23 +26,23 @@ Every message carries:
 
 | Field | Meaning |
 | --- | --- |
-| `protocol_version` | Integer major version; exactly `2` in this contract |
+| `protocol_version` | Integer major version; exactly `1` in this contract |
 | `correlation_id` | Non-secret caller-generated identifier, 1–128 restricted ASCII characters |
 | `kind` | `command`, `response`, or `event` |
 
 Commands and their terminal responses use the same correlation ID. An event caused directly by a command may use that command's correlation ID; unsolicited events use a new helper-generated ID. Correlation IDs must never contain a URL, filename, cookie, token, or other user data.
 
-JSON integers representing byte counts, cursors, rates, or sequence numbers are capped at `9,007,199,254,740,991` so JavaScript can represent them exactly. Unknown properties are rejected throughout v2 rather than silently ignored.
+JSON integers representing byte counts, cursors, rates, or sequence numbers are capped at `9,007,199,254,740,991` so JavaScript can represent them exactly. Unknown properties are rejected throughout v1 rather than silently ignored.
 
 ## Startup and version negotiation
 
-After connecting, the extension sends `hello` before any operational command. It lists protocol major versions it supports. The v2 helper selects version `2`, reports its application version, maximum message size, and implemented capabilities.
+After connecting, the extension sends `hello` before any operational command. It lists protocol major versions it supports. The v1 helper selects version `1`, reports its application version, maximum message size, and implemented capabilities.
 
-If the envelope version is unsupported, the helper performs only bounded extraction of a valid correlation ID and returns a v2 `protocol` error with `PROTOCOL_UNSUPPORTED_VERSION` when possible, then closes the connection. If no safe correlation ID can be recovered, it generates one. An unknown command receives `PROTOCOL_UNKNOWN_COMMAND`; malformed known commands receive `PROTOCOL_INVALID_MESSAGE`. The rejected frame never performs an operation. Bounded malformed frames may be followed by a corrected `hello`; unsupported versions and valid operational commands sent before `hello` close the session after their error.
+If the envelope version is unsupported, the helper performs only bounded extraction of a valid correlation ID and returns a v1 `protocol` error with `PROTOCOL_UNSUPPORTED_VERSION` when possible, then closes the connection. If no safe correlation ID can be recovered, it generates one. An unknown command receives `PROTOCOL_UNKNOWN_COMMAND`; malformed known commands receive `PROTOCOL_INVALID_MESSAGE`. The rejected frame never performs an operation. Bounded malformed frames may be followed by a corrected `hello`; unsupported versions and valid operational commands sent before `hello` close the session after their error.
 
 The implemented helper advertises only `snapshots` and `coalesced_progress`. Immediately after a successful hello response it emits all pages of one authoritative engine snapshot before normal event/command multiplexing begins. The extension does not mark the port ready until that snapshot is complete. Authentication and SHA-256 remain unadvertised and their otherwise valid reserved fields are rejected until their implementation issues complete.
 
-A peer must not infer support from application version strings. Optional behavior is enabled only by the negotiated protocol and advertised capability. Authentication and SHA-256 fields exist in v2, but the helper advertises and accepts them only after their implementation issues are complete.
+A peer must not infer support from application version strings. Optional behavior is enabled only by the negotiated protocol and advertised capability. Authentication and SHA-256 fields exist in v1, but the helper advertises and accepts them only after their implementation issues are complete.
 
 ## Commands
 
@@ -58,8 +58,6 @@ Operational commands are serialized by the helper per task. A command receives e
 | `remove` | Remove eligible task history and optionally retained partial state | Removed task ID |
 | `list` | Return a bounded page from an authoritative snapshot | Snapshot page |
 | `get` | Return one full task | Full task |
-| `open_folder` | Open the existing canonical destination for a task UUID | `opened_task_id` |
-| `get_settings` | Reserved settings read, rejects until #13 | Complete effective settings |
 | `update_settings` | Validate and atomically apply a non-empty patch | Complete effective settings |
 
 `add.url` must be an absolute HTTP(S) URL without URL user-info. Schema pattern checks are only preliminary; the helper performs semantic URL parsing. Destination, suggested filename, request context, checksum, and worker count are likewise revalidated by their consuming subsystem.
@@ -89,7 +87,7 @@ Wire events contain a connection-local monotonically increasing `sequence` and `
 
 Progress is deliberately coalescible. The helper replaces unsent progress for the same task with a newer sample and limits ordinary emission to the configured bounded cadence (250 ms by default). The extension treats each sample as an absolute value, never a delta. High-frequency scheduler updates still replace the engine's full latest snapshot independently of event emission. State changes, warnings, completion, and failure are not discarded as progress noise; if the bounded event queue cannot retain a critical event, it marks continuity uncertain so the connection layer must send/request authoritative snapshots.
 
-The engine also produces best-effort typed `RetryScheduled` bookkeeping so retry budgets and accepted delays can be observed and tested internally. Protocol v2 defines no retry-scheduled discriminator or retry-number/delay fields, so the connection adapter consumes that bookkeeping without serializing it directly or advancing the wire sequence. It must not invent a warning code or an out-of-schema field; protocol-visible retry exhaustion remains `RETRY_EXHAUSTED`.
+The engine also produces best-effort typed `RetryScheduled` bookkeeping so retry budgets and accepted delays can be observed and tested internally. Protocol v1 defines no retry-scheduled discriminator or retry-number/delay fields, so the connection adapter consumes that bookkeeping without serializing it directly or advancing the wire sequence. It must not invent a warning code or an out-of-schema field; protocol-visible retry exhaustion remains `RETRY_EXHAUSTED`.
 
 On a sequence gap or malformed helper event, the implemented extension closes the uncertain port; the next on-demand connection negotiates again and receives the helper's automatic snapshot. A dashboard may also use `list` pages. In either case it rebuilds rather than guessing.
 
@@ -127,7 +125,7 @@ The credential shape reserves the reviewed boundary for issue #15; implementatio
 
 ## Compatibility rules
 
-Protocol versions are positive integer majors. V2 uses strict schemas and rejects unknown fields, so changing required fields, accepted values, command/event names, or object shape requires a new major version. Documentation-only clarifications and implementation bug fixes that preserve the schema do not.
+Protocol versions are positive integer majors. V1 uses strict schemas and rejects unknown fields, so changing required fields, accepted values, command/event names, or object shape requires a new major version. Documentation-only clarifications and implementation bug fixes that preserve the schema do not.
 
 When multiple majors exist, the helper selects the highest mutually supported version from `hello.supported_versions`. A helper may implement more than one major internally, but each connection uses exactly one after negotiation. Unknown majors and commands always fail closed.
 
@@ -135,8 +133,4 @@ Application versions and persisted-state schema versions are independent of the 
 
 ## Examples and validation
 
-Non-sensitive examples are under [`protocol/schema/v2/examples`](../protocol/schema/v2/examples). They are normative test vectors for shape, not promises that every represented capability is already implemented. The schema declares JSON Schema Draft 2020-12 and validates each complete framed-body object independently.
-
-## V2 decision (#12)
-
-V1 cannot express open-folder without violating its strict unknown-command policy. V2 adds an explicit task-ID-only command; no arbitrary executable or path crosses this boundary. The helper invokes the absolute Windows Explorer executable with one canonical directory argument and detached null standard streams. The reserved get_settings command and verbose_logging setting allow #13 to implement settings without another shape change. Credential/checksum fields remain reserved. Queued resume means Start; failed resume means Retry.
+Non-sensitive examples are under [`protocol/schema/v1/examples`](../protocol/schema/v1/examples). They are normative test vectors for shape, not promises that every represented capability is already implemented. The schema declares JSON Schema Draft 2020-12 and validates each complete framed-body object independently.

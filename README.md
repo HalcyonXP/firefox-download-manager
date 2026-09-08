@@ -52,7 +52,7 @@ The installer copies the release helper to the per-user application-data tree an
 ./scripts/uninstall-native-host.ps1
 ```
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for verification and manual Firefox steps. The registered transport and reconnect snapshot layer are implemented; explicit link capture and the creation form are implemented; full dashboard controls remain issue #12. These scripts do not create a service, listener, firewall rule, VPN configuration, or network-route change.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for verification and manual Firefox steps. The registered transport and reconnect snapshot layer are implemented; explicit link capture and the creation form are implemented; the snapshot-driven dashboard supports pause, resume/start/retry, cancel, remove, and task-destination folder opening. Both components must be rebuilt together for protocol v2. These scripts do not create a service, listener, firewall rule, VPN configuration, or network-route change.
 
 ## Guiding principles
 

@@ -63,13 +63,13 @@ function helloCorrelation(port: FakePort): string {
 
 function acceptHello(port: FakePort): void {
   port.onMessage.emit({
-    protocol_version: 1,
+    protocol_version: 2,
     correlation_id: helloCorrelation(port),
     kind: "response",
     command: "hello",
     ok: true,
     result: {
-      selected_version: 1,
+      selected_version: 2,
       helper_version: "0.1.0",
       capabilities: ["snapshots", "coalesced_progress"],
       max_message_bytes: 1_048_576,
@@ -113,7 +113,7 @@ function snapshotPage(
   complete: boolean,
 ): void {
   port.onMessage.emit({
-    protocol_version: 1,
+    protocol_version: 2,
     correlation_id: `event-${sequence}`,
     kind: "event",
     event: "snapshot",
@@ -137,10 +137,10 @@ describe("NativeConnection", () => {
 
     expect(port.sent).toHaveLength(1);
     expect(port.sent[0]).toMatchObject({
-      protocol_version: 1,
+      protocol_version: 2,
       kind: "command",
       command: "hello",
-      payload: { supported_versions: [1] },
+      payload: { supported_versions: [2] },
     });
     acceptHello(port);
     snapshot(port, 0, [task("a4ac080c-862f-4ea8-b60c-06a9718b2306")]);
@@ -150,7 +150,7 @@ describe("NativeConnection", () => {
     expect(connection.state().tasks[0]?.state).toBe("queued");
 
     port.onMessage.emit({
-      protocol_version: 1,
+      protocol_version: 2,
       correlation_id: "event-1",
       kind: "event",
       event: "progress",
@@ -204,7 +204,7 @@ describe("NativeConnection", () => {
     const rejectedConnection = new NativeConnection(() => rejectedPort, "0.1.0");
     const rejected = rejectedConnection.connect();
     rejectedPort.onMessage.emit({
-      protocol_version: 1,
+      protocol_version: 2,
       correlation_id: helloCorrelation(rejectedPort),
       kind: "response",
       command: "hello",
@@ -227,7 +227,7 @@ describe("NativeConnection", () => {
     snapshot(gapPort, 0, []);
     await ready;
     gapPort.onMessage.emit({
-      protocol_version: 1,
+      protocol_version: 2,
       correlation_id: "event-2",
       kind: "event",
       event: "warning",
@@ -253,7 +253,7 @@ describe("operational commands", () => {
     const sent = port.sent[1] as Record<string, unknown>;
     const value = task("a4ac080c-862f-4ea8-b60c-06a9718b2306");
     port.onMessage.emit({
-      protocol_version: 1,
+      protocol_version: 2,
       correlation_id: sent.correlation_id,
       kind: "response",
       command: "add",

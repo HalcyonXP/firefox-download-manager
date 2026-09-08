@@ -72,7 +72,29 @@ browser.runtime.onConnect.addListener((port) => {
     void (async () => {
       try {
         if (message.action === "connect") await nativeConnection.connect();
-        else if (message.action === "add" && "input" in message) {
+        else if (
+          message.action === "control" &&
+          "command" in message &&
+          "taskId" in message &&
+          typeof message.taskId === "string"
+        ) {
+          const payload = { task_id: message.taskId };
+          switch (message.command) {
+            case "pause":
+            case "resume":
+              await nativeConnection.command(message.command, payload);
+              break;
+            case "cancel":
+              await nativeConnection.command("cancel", { ...payload, partial_policy: "keep" });
+              break;
+            case "remove":
+              await nativeConnection.command("remove", { ...payload, delete_partial: true });
+              break;
+            case "open_folder":
+              await nativeConnection.command("open_folder", payload);
+              break;
+          }
+        } else if (message.action === "add" && "input" in message) {
           const input = message.input as CreationInput;
           if (
             typeof input?.url !== "string" ||

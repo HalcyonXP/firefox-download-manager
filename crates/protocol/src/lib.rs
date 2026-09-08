@@ -2,14 +2,14 @@
 //!
 //! Wire bodies are UTF-8 JSON objects prefixed by Firefox Native Messaging's
 //! four-byte little-endian body length. Input is rejected if it is oversized,
-//! truncated, duplicated, malformed, or outside the exact protocol-v1 shape.
+//! truncated, duplicated, malformed, or outside the exact protocol-v2 shape.
 
 mod framing;
 mod strict_json;
-mod v1;
+mod v2;
 
 pub use framing::{FrameReadError, FrameWriteError, read_frame, write_frame};
-pub use v1::{
+pub use v2::{
     AddPayload, CancelPartial, CancelPayload, Command, CommandDecodeError, CommandDecodeFailure,
     CommandMessage, ErrorCode, ErrorContext, EventMessage, EventName, FailedData, HelloPayload,
     HelloResult, ListPayload, MessageBuildError, ProgressData, ProtocolError, RemovePayload,
@@ -19,7 +19,7 @@ pub use v1::{
 };
 
 /// Current wire-protocol major version.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
 /// Maximum JSON body accepted or emitted by the native host.
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 /// Maximum correlation identifier length.

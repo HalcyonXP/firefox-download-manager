@@ -4,7 +4,7 @@ import { MAX_MESSAGE_BYTES, PROTOCOL_VERSION, isValidCorrelationId } from "../sr
 
 describe("protocol constants", () => {
   it("matches the accepted v1 contract", () => {
-    expect(PROTOCOL_VERSION).toBe(1);
+    expect(PROTOCOL_VERSION).toBe(2);
     expect(MAX_MESSAGE_BYTES).toBe(1_048_576);
   });
 

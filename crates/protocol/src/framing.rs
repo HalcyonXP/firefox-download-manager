@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn partial_reads_and_writes_preserve_exact_frames() {
-        let message = json!({"protocol_version": 1, "kind": "test"});
+        let message = json!({"protocol_version": 2, "kind": "test"});
         let mut writer = ShortWriter::default();
         write_frame(&mut writer, &message).expect("write frame");
 

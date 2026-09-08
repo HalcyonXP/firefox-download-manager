@@ -33,7 +33,7 @@ use crate::scheduler::{
 };
 use crate::storage::{IoFailure, PartialFile, StorageError};
 
-/// Maximum automatic retries accepted by protocol-v1 settings.
+/// Maximum automatic retries accepted by protocol-v2 settings.
 pub const MAX_RETRIES: u8 = 20;
 
 const DEFAULT_RETRIES: u8 = 5;
@@ -52,7 +52,7 @@ const MAX_MANAGED_TASKS: usize = 10_000;
 /// Invalid retry or task-engine configuration.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum TaskConfigError {
-    /// Retry count exceeded protocol-v1's maximum of 20.
+    /// Retry count exceeded protocol-v2's maximum of 20.
     #[error("retry count exceeds its supported bound")]
     InvalidRetryCount,
     /// Exponential retry delays were zero, reversed, or above ten minutes.
@@ -247,7 +247,7 @@ pub enum CancelPartialPolicy {
     Delete,
 }
 
-/// Stable task failure category for later protocol-v1 error mapping.
+/// Stable task failure category for later protocol-v2 error mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskFailureKind {
     /// User-requested cancellation reached a safe checkpoint.
@@ -593,7 +593,7 @@ pub struct TaskEvent {
 
 impl TaskEvent {
     /// Monotonic engine dequeue order bounded for JavaScript. The connection
-    /// adapter assigns its own protocol-v1 sequence only to serialized events.
+    /// adapter assigns its own protocol-v2 sequence only to serialized events.
     #[must_use]
     pub const fn sequence(&self) -> u64 {
         self.sequence
@@ -1524,7 +1524,13 @@ impl ManagedState {
         let resource = self.metadata.resource();
         TaskSnapshot {
             task_id: self.metadata.task_id(),
-            display_name: self.metadata.display_name().to_owned(),
+            display_name: self
+                .metadata
+                .final_path()
+                .and_then(Path::file_name)
+                .and_then(std::ffi::OsStr::to_str)
+                .unwrap_or_else(|| self.metadata.display_name())
+                .to_owned(),
             destination: self.metadata.destination().to_owned(),
             source_origin: self.source_origin.clone(),
             state: self.metadata.state(),

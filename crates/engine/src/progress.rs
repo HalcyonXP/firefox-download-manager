@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 
 use thiserror::Error;
 
-/// Largest exact integer representable by protocol-v1 JavaScript consumers.
+/// Largest exact integer representable by protocol-v2 JavaScript consumers.
 pub const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
 
 const MIN_EVENT_INTERVAL: Duration = Duration::from_millis(100);

@@ -1,0 +1,13 @@
+{
+  "protocol_version": 2,
+  "correlation_id": "settings-3",
+  "kind": "command",
+  "command": "update_settings",
+  "payload": {
+    "settings": {
+      "default_workers": 4,
+      "global_concurrency": 16,
+      "retry_limit": 5
+    }
+  }
+}

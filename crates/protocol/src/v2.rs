@@ -11,7 +11,7 @@ const MAX_URL_CHARS: usize = 16_384;
 const MAX_PATH_CHARS: usize = 32_767;
 const MAX_NAME_CHARS: usize = 255;
 
-/// Decoded protocol-v1 command with all envelope and payload fields validated.
+/// Decoded protocol-v2 command with all envelope and payload fields validated.
 pub struct CommandMessage {
     correlation_id: String,
     command: Command,
@@ -25,7 +25,7 @@ impl CommandMessage {
     }
 }
 
-/// A supported protocol-v1 command.
+/// A supported protocol-v2 command.
 pub enum Command {
     Hello(HelloPayload),
     Add(AddPayload),
@@ -35,6 +35,8 @@ pub enum Command {
     Remove(RemovePayload),
     List(ListPayload),
     Get(TaskIdPayload),
+    OpenFolder(TaskIdPayload),
+    GetSettings(EmptyPayload),
     UpdateSettings(UpdateSettingsPayload),
 }
 
@@ -75,7 +77,7 @@ impl CommandDecodeError {
     }
 }
 
-/// Strictly decodes one UTF-8 JSON object as a protocol-v1 command.
+/// Strictly decodes one UTF-8 JSON object as a protocol-v2 command.
 ///
 /// Duplicate object members are rejected at every depth before Serde field
 /// decoding. Unknown fields, invalid bounds, and unsupported nested shapes are
@@ -189,6 +191,8 @@ enum CommandName {
     Remove,
     List,
     Get,
+    OpenFolder,
+    GetSettings,
     UpdateSettings,
 }
 
@@ -203,6 +207,8 @@ impl CommandName {
             "remove" => Some(Self::Remove),
             "list" => Some(Self::List),
             "get" => Some(Self::Get),
+            "open_folder" => Some(Self::OpenFolder),
+            "get_settings" => Some(Self::GetSettings),
             "update_settings" => Some(Self::UpdateSettings),
             _ => None,
         }
@@ -218,6 +224,8 @@ impl CommandName {
             Self::Remove => ResponseCommand::Remove,
             Self::List => ResponseCommand::List,
             Self::Get => ResponseCommand::Get,
+            Self::OpenFolder => ResponseCommand::OpenFolder,
+            Self::GetSettings => ResponseCommand::GetSettings,
             Self::UpdateSettings => ResponseCommand::UpdateSettings,
         }
     }
@@ -233,9 +241,21 @@ fn decode_payload(command: CommandName, payload: Value) -> Result<Command, ()> {
         CommandName::Remove => payload_as::<RemovePayload>(payload).map(Command::Remove),
         CommandName::List => payload_as::<ListPayload>(payload).map(Command::List),
         CommandName::Get => payload_as::<TaskIdPayload>(payload).map(Command::Get),
+        CommandName::OpenFolder => payload_as::<TaskIdPayload>(payload).map(Command::OpenFolder),
+        CommandName::GetSettings => payload_as::<EmptyPayload>(payload).map(Command::GetSettings),
         CommandName::UpdateSettings => {
             payload_as::<UpdateSettingsPayload>(payload).map(Command::UpdateSettings)
         }
+    }
+}
+
+/// Empty strictly validated settings-read payload.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EmptyPayload {}
+impl Validate for EmptyPayload {
+    fn validate(&self) -> bool {
+        true
     }
 }
 
@@ -611,7 +631,7 @@ impl Validate for UpdateSettingsPayload {
     }
 }
 
-/// Syntactically valid protocol-v1 settings patch. Persistence is introduced
+/// Syntactically valid protocol-v2 settings patch. Persistence is introduced
 /// by the settings work item; the native host may currently reject it.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -789,6 +809,8 @@ pub enum ResponseCommand {
     Remove,
     List,
     Get,
+    OpenFolder,
+    GetSettings,
     UpdateSettings,
     Protocol,
 }
@@ -799,7 +821,7 @@ impl ResponseCommand {
     }
 }
 
-/// Stable protocol-v1 error code.
+/// Stable protocol-v2 error code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ErrorCode {
@@ -1031,7 +1053,7 @@ pub struct SettingsDescription {
     pub keep_partial_on_failure: bool,
 }
 
-/// Complete protocol-v1 task projection.
+/// Complete protocol-v2 task projection.
 #[derive(Clone, Serialize)]
 pub struct TaskDescription {
     pub task_id: String,
@@ -1168,14 +1190,14 @@ mod tests {
 
     #[test]
     fn decodes_strict_hello_and_add_commands() {
-        let hello = include_bytes!("../../../protocol/schema/v1/examples/hello.command.json");
+        let hello = include_bytes!("../../../protocol/schema/v2/examples/hello.command.json");
         let (_, command) = decode_command(hello).expect("decode hello").into_parts();
         let Command::Hello(payload) = command else {
             panic!("expected hello");
         };
-        assert_eq!(payload.supported_versions(), &[1]);
+        assert_eq!(payload.supported_versions(), &[2]);
 
-        let add_example = include_bytes!("../../../protocol/schema/v1/examples/add.command.json");
+        let add_example = include_bytes!("../../../protocol/schema/v2/examples/add.command.json");
         let (_, command) = decode_command(add_example)
             .expect("decode add example")
             .into_parts();
@@ -1185,7 +1207,7 @@ mod tests {
         assert!(payload.has_checksum());
 
         let add = br#"{
-          "protocol_version": 1,
+          "protocol_version": 2,
           "correlation_id": "add-1",
           "kind": "command",
           "command": "add",
@@ -1203,7 +1225,7 @@ mod tests {
         assert_eq!(payload.workers(), Some(8));
 
         let authenticated_add = br#"{
-          "protocol_version": 1,
+          "protocol_version": 2,
           "correlation_id": "add-auth",
           "kind": "command",
           "command": "add",
@@ -1235,7 +1257,7 @@ mod tests {
         assert!(payload.has_request_context());
 
         let settings =
-            include_bytes!("../../../protocol/schema/v1/examples/update-settings.command.json");
+            include_bytes!("../../../protocol/schema/v2/examples/update-settings.command.json");
         let (_, command) = decode_command(settings)
             .expect("decode settings")
             .into_parts();
@@ -1245,11 +1267,11 @@ mod tests {
     #[test]
     fn rejects_duplicates_unknown_fields_and_invalid_nested_shapes() {
         for (index, body) in [
-            br#"{"protocol_version":1,"correlation_id":"x","kind":"command","command":"get","payload":{"task_id":"x","task_id":"y"}}"#.as_slice(),
-            br#"{"protocol_version":1,"correlation_id":"x","kind":"command","command":"get","payload":{"task_id":"x","extra":true}}"#.as_slice(),
-            br#"{"protocol_version":1,"correlation_id":"x","kind":"command","command":"add","payload":{"url":"https://example.invalid","request_context":{"credentials":{}}}}"#.as_slice(),
-            br#"{"protocol_version":1,"correlation_id":"x","kind":"command","command":"list","payload":{"limit":1,"include_terminal":true}}"#.as_slice(),
-            br#"{"protocol_version":1,"correlation_id":"x","kind":"command","command":"add","payload":{"url":"https://example.invalid","request_context":{"credentials":{"cookies":[{"name":"a","value":"b","domain":"example.invalid","path":"/","secure":true,"http_only":true,"expires_at":"not-a-date"}]}}}}"#.as_slice(),
+            br#"{"protocol_version":2,"correlation_id":"x","kind":"command","command":"get","payload":{"task_id":"x","task_id":"y"}}"#.as_slice(),
+            br#"{"protocol_version":2,"correlation_id":"x","kind":"command","command":"get","payload":{"task_id":"x","extra":true}}"#.as_slice(),
+            br#"{"protocol_version":2,"correlation_id":"x","kind":"command","command":"add","payload":{"url":"https://example.invalid","request_context":{"credentials":{}}}}"#.as_slice(),
+            br#"{"protocol_version":2,"correlation_id":"x","kind":"command","command":"list","payload":{"limit":1,"include_terminal":true}}"#.as_slice(),
+            br#"{"protocol_version":2,"correlation_id":"x","kind":"command","command":"add","payload":{"url":"https://example.invalid","request_context":{"credentials":{"cookies":[{"name":"a","value":"b","domain":"example.invalid","path":"/","secure":true,"http_only":true,"expires_at":"not-a-date"}]}}}}"#.as_slice(),
         ]
         .into_iter()
         .enumerate()
@@ -1268,7 +1290,7 @@ mod tests {
     fn decode_errors_never_debug_raw_sensitive_payloads() {
         let secret = "https://example.invalid/file?token=do-not-log";
         let body = format!(
-            r#"{{"protocol_version":1,"correlation_id":"add-safe","kind":"command","command":"add","payload":{{"url":"{secret}","unexpected":true}}}}"#
+            r#"{{"protocol_version":2,"correlation_id":"add-safe","kind":"command","command":"add","payload":{{"url":"{secret}","unexpected":true}}}}"#
         );
         let error = decode_command(body.as_bytes()).err().expect("invalid add");
         let debug = format!("{error:?}");
@@ -1280,7 +1302,7 @@ mod tests {
     #[test]
     fn reports_only_validated_bootstrap_fields() {
         let unsupported = decode_command(
-            br#"{"protocol_version":2,"correlation_id":"safe-2","kind":"command","command":"hello","payload":{}}"#,
+            br#"{"protocol_version":99,"correlation_id":"safe-2","kind":"command","command":"hello","payload":{}}"#,
         )
         .err()
         .expect("unsupported version");
@@ -1292,7 +1314,7 @@ mod tests {
         assert_eq!(unsupported.command(), None);
 
         let unknown = decode_command(
-            br#"{"protocol_version":1,"correlation_id":"safe-1","kind":"command","command":"future","payload":{}}"#,
+            br#"{"protocol_version":2,"correlation_id":"safe-1","kind":"command","command":"future","payload":{}}"#,
         )
         .err()
         .expect("unknown command");
@@ -1300,7 +1322,7 @@ mod tests {
         assert_eq!(unknown.correlation_id(), Some("safe-1"));
 
         let invalid_correlation = decode_command(
-            br#"{"protocol_version":1,"correlation_id":"secret/value","kind":"command","command":"get","payload":{}}"#,
+            br#"{"protocol_version":2,"correlation_id":"secret/value","kind":"command","command":"get","payload":{}}"#,
         )
         .err()
         .expect("invalid correlation");
@@ -1308,7 +1330,7 @@ mod tests {
     }
 
     #[test]
-    fn error_code_serialization_matches_the_v1_registry() {
+    fn error_code_serialization_matches_the_v2_registry() {
         let cases = [
             (
                 ErrorCode::ProtocolUnsupportedVersion,
@@ -1353,7 +1375,7 @@ mod tests {
             (ErrorCode::InternalError, "INTERNAL_ERROR"),
         ];
         let schema: Value = serde_json::from_str(include_str!(
-            "../../../protocol/schema/v1/message.schema.json"
+            "../../../protocol/schema/v2/message.schema.json"
         ))
         .expect("parse protocol schema");
         let schema_codes = schema
