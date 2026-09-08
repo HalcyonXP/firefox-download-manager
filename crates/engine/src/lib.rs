@@ -1,5 +1,6 @@
 //! Native download engine boundary.
 
+pub mod auth;
 pub mod network;
 pub mod persistence;
 pub mod progress;

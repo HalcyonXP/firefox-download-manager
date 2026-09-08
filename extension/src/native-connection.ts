@@ -164,6 +164,7 @@ export class NativeConnection {
   #pending: PendingConnection | undefined;
   #helloCorrelation: string | undefined;
   #helloAccepted = false;
+  #capabilities: string[] = [];
   #snapshot: SnapshotAssembly | undefined;
   #nextSequence = 0;
   #correlationCounter = 0;
@@ -176,6 +177,10 @@ export class NativeConnection {
   ) {
     this.#connector = connector;
     this.#clientVersion = clientVersion;
+  }
+
+  supports(capability: string): boolean {
+    return this.state().connected && this.#capabilities.includes(capability);
   }
 
   /** Opens/reopens the helper and resolves only after its initial snapshot. */
@@ -254,6 +259,14 @@ export class NativeConnection {
     payload: unknown,
   ): Promise<unknown> {
     await this.connect();
+    if (
+      command === "add" &&
+      isRecord(payload) &&
+      payload.request_context !== undefined &&
+      !this.supports("authenticated_requests")
+    ) {
+      throw new NativeConnectionError("protocol_error");
+    }
     if (this.#commands.size >= 32) throw new NativeConnectionError("unavailable");
     const correlation = this.#nextCorrelation("command");
     const message = {
@@ -393,6 +406,7 @@ export class NativeConnection {
       this.#reject(new NativeConnectionError("protocol_error"));
       return;
     }
+    this.#capabilities = (message.result as { capabilities: string[] }).capabilities;
     this.#helloAccepted = true;
     this.#armTimeout();
   }

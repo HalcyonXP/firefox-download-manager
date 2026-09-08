@@ -1,3 +1,4 @@
+import { sessionPermission, SessionError } from "./session";
 import { creationPayload, suggestedFilename } from "./creation";
 import type { NativeState, NativeTask, NativeSettings } from "./native-connection";
 import { Dashboard } from "./dashboard";
@@ -88,6 +89,9 @@ url.addEventListener("change", () => {
   filename.value = suggestedFilename(url.value);
 });
 form.addEventListener("submit", (event) => {
+  void submitDownload(event);
+});
+async function submitDownload(event: SubmitEvent): Promise<void> {
   event.preventDefault();
   const input = {
     url: url.value,
@@ -99,11 +103,50 @@ form.addEventListener("submit", (event) => {
     creationPayload(input);
     submit.disabled = true;
     feedback.textContent = "Creating download…";
-    port.postMessage({ action: "add", input });
+    const session = {
+      enabled: element<HTMLInputElement>("session-enabled").checked,
+      referrer: element<HTMLInputElement>("session-referrer").value,
+      authorization: element<HTMLInputElement>("session-authorization").value,
+    };
+    if (
+      session.enabled &&
+      !(await browser.permissions.request({
+        permissions: ["cookies"],
+        origins: [sessionPermission(input.url)],
+      }))
+    )
+      throw new SessionError();
+    const sessionTabId = session.enabled ? (await browser.tabs.getCurrent())?.id : undefined;
+    port.postMessage({ action: "add", input, session, sessionTabId });
+    clearSession();
   } catch (error) {
-    feedback.textContent = error instanceof Error ? error.message : "Invalid download.";
+    feedback.textContent =
+      error instanceof SessionError
+        ? error.message
+        : "Download was not submitted. Check the form and optional session permission.";
     submit.disabled = false;
+    clearSession();
   }
+}
+function clearSession(): void {
+  element<HTMLInputElement>("session-enabled").checked = false;
+  element<HTMLInputElement>("session-referrer").value = "";
+  element<HTMLInputElement>("session-authorization").value = "";
+}
+element("revoke-session").addEventListener("click", () => {
+  void browser.permissions
+    .getAll()
+    .then(async (permissions) => {
+      const origins = (permissions.origins ?? []).filter((origin) => /^https?:/u.test(origin));
+      await browser.permissions.remove({ permissions: ["cookies"], origins });
+      clearSession();
+      feedback.textContent =
+        "Optional permissions revoked. Already-submitted tasks retain their in-memory context; cancel them separately.";
+    })
+    .catch(() => {
+      feedback.textContent =
+        "Could not revoke permissions. Use Firefox's extension permissions page.";
+    });
 });
 element("reconnect").addEventListener("click", () => {
   port.disconnect();

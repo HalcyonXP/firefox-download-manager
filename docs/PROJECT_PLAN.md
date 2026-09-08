@@ -194,3 +194,7 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 - Area labels identify ownership boundaries without duplicating milestones.
 - Automation outcomes must be verified; workflow automation does not replace acceptance review.
 - Scope changes should update this document and the architecture decision record in the same pull request.
+
+## Implementation decisions since the public-authority handoff
+
+#32/#33 restored the failed cancellation baseline; public PR and merged-main Windows CI passed with repeated cancellation regressions. #23 implements per-download default-store session handoff, not full session cloning. Its conservative private/container/partition limitations, permission granularity, memory-only recovery behavior, and fresh-task retry are in [AUTHENTICATION.md](AUTHENTICATION.md) and ADR 0010. Wire v2 is unchanged; internal task state is v3. #24/#25 and the security/packaging/real-browser release gates remain required.

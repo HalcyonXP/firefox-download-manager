@@ -2,7 +2,7 @@
 
 Status: implemented for issues #15 through #17 and #22
 
-Internal format version: `2`
+Internal format version: `3`
 
 Last updated: 2026-09-08
 
@@ -45,12 +45,13 @@ Every file is one strict UTF-8 JSON object with this conceptual shape:
 ```json
 {
   "format": "firefox-download-manager-task",
-  "version": 2,
+  "version": 3,
   "task": {
     "task_id": "7b1c7182-37e9-4a3a-89bd-f9e4e2d6f376",
     "revision": 6,
     "state": "downloading",
     "original_url": "https://downloads.example.test/archive.bin",
+    "needs_session": false,
     "final_url": "https://cdn.example.test/archive.bin",
     "expected_size": 10485760,
     "validators": {
@@ -90,7 +91,7 @@ Version 2 has no fields for:
 - live speed samples, active-worker counters, retry budgets, or event queues; or
 - detailed terminal failure data (the `failed` lifecycle state persists, but restart uses a bounded generic recovery error).
 
-These values cannot enter serialization accidentally through a generic header map because no such map exists in the persisted type. Authentication remains deferred to issue #23 and credentials stay memory-only by default. Exact URLs and local paths are persisted only because recovery needs them, and custom `Debug` implementations redact URLs, destinations, partial paths, final paths, and filenames.
+These values cannot enter serialization accidentally through a generic header map because no such map exists in the persisted type. Session handoff is implemented in #23; its secrets remain memory-only. Only the non-secret `needs_session` marker is persisted, and a recovered marked task cannot send without its lost context (see [AUTHENTICATION.md](AUTHENTICATION.md)). Exact URLs and local paths are persisted only because recovery needs them, and custom `Debug` implementations redact URLs, destinations, partial paths, final paths, and filenames.
 
 ## Bytes-first crash-safe checkpoints
 
@@ -137,7 +138,7 @@ Startup acquires the store lock and removes narrowly matched stale temporary fil
 - partial and published-final file types and exact known lengths; and
 - same-file identity when a recoverable publication records both hard links.
 
-Unknown future versions and corrupt records remain untouched for diagnosis or deliberate local cleanup and are returned as safe failure classifications, not resumable tasks. Format v2 has one explicit, strict migration from v1: the old shape is parsed with its own deny-unknown-fields type, receives the historical four-worker default, is semantically and filesystem validated, and is atomically rewritten as v2 before being returned. A v2 record missing `workers`, or a v1 record containing a v2/future field, is malformed rather than guessed. Migration failure excludes only that task and leaves its previous complete record available for diagnosis.
+Unknown future versions and corrupt records remain untouched for diagnosis or deliberate local cleanup and are returned as safe failure classifications, not resumable tasks. Format v3 has strict dedicated migrations from v1 and v2: v1 receives the historical four-worker default; both receive `needs_session: false`, undergo semantic/filesystem validation, and are atomically rewritten as v3 before being returned. Missing required fields in the current version, or newer fields in older shapes, are malformed rather than guessed. Migration failure excludes only that task and preserves its prior complete record. A missing v3 session marker never authorizes an unauthenticated resume.
 
 A missing, truncated, linked, or wrong-length partial excludes active prepublication work from recovery; a `promoting` or `completed` task may instead prove its recorded final file. At task-engine startup, a valid interrupted `downloading` record becomes `paused`; interrupted `probing` or `validating` becomes `failed`; `promoting` becomes `completed` only when its recorded final path already passed recovery validation, otherwise it becomes `failed`. A failed/cancelled record whose partial deletion completed before its metadata checkpoint durably forgets the now-missing path and coverage. Each normalization is a critical checkpoint before the snapshot is exposed.
 

@@ -20,7 +20,7 @@ use thiserror::Error;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, watch};
 
 use crate::network::{
-    ProbeMode, RangeAssignment, RangeValidationError, ResourceProbe, Validators, if_range_value,
+    ProbeMode, RangeAssignment, RangeValidationError, ResourceProbe, if_range_value,
     optional_u64_header, parse_validators, reject_unexpected_encoding, retry_after_seconds,
     validate_expected_validators, validate_range_response,
 };
@@ -428,6 +428,9 @@ impl TransferSummary {
 /// Path-free transfer failures.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum SchedulerError {
+    /// Invalid or expired memory-only session.
+    #[error("request session is unavailable: {0}")]
+    Context(#[from] crate::auth::ContextError),
     /// The conservatively configured HTTP client could not be built.
     #[error("transfer HTTP client setup failed")]
     ClientSetup,
@@ -730,8 +733,7 @@ impl DownloadScheduler {
         while let Some(work) = coordinator.next_work().await? {
             match self
                 .fetch_range(
-                    probe.final_url(),
-                    probe.validators(),
+                    probe,
                     total,
                     work,
                     Arc::clone(&host),
@@ -770,8 +772,7 @@ impl DownloadScheduler {
     #[allow(clippy::too_many_arguments)]
     async fn fetch_range(
         &self,
-        url: &Url,
-        validators: &Validators,
+        probe: &ResourceProbe,
         total: u64,
         work: Work,
         host: Arc<Semaphore>,
@@ -792,11 +793,14 @@ impl DownloadScheduler {
         let _activity = RequestActivity::begin(Arc::clone(&self.inner), Arc::clone(metrics));
         metrics.record_request(work.hedged);
 
+        let url = probe.final_url();
+        let validators = probe.validators();
         let assignment = RangeAssignment::new(work.range.start(), work.range.end() - 1, total)?;
         let mut request = self
             .inner
             .client
             .get(url.clone())
+            .headers(probe.request_headers()?)
             .header(
                 RANGE,
                 format!("bytes={}-{}", assignment.start(), assignment.end()),
@@ -811,6 +815,7 @@ impl DownloadScheduler {
         if response.url() != url {
             return Err(SchedulerError::ResponseUrlChanged);
         }
+        probe.check_session_status(response.status().as_u16())?;
         if response.status() != StatusCode::PARTIAL_CONTENT {
             return Err(SchedulerError::HttpStatus {
                 status: response.status().as_u16(),
@@ -868,6 +873,7 @@ impl DownloadScheduler {
             .inner
             .client
             .get(probe.final_url().clone())
+            .headers(probe.request_headers()?)
             .header(ACCEPT_ENCODING, "identity");
         let response = send_with_cancellation(request, cancellation).await?;
         let actual = self
@@ -894,6 +900,7 @@ impl DownloadScheduler {
         if response.url() != probe.final_url() {
             return Err(SchedulerError::ResponseUrlChanged);
         }
+        probe.check_session_status(response.status().as_u16())?;
         if response.status() != StatusCode::OK {
             return Err(SchedulerError::HttpStatus {
                 status: response.status().as_u16(),

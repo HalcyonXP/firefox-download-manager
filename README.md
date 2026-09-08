@@ -78,3 +78,7 @@ The manager page includes helper-owned destination, worker/request caps, retry, 
 ## License status
 
 This transition did not select a first-party project license. Public visibility is not a new license grant; reviewed third-party attribution remains in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
+
+## Optional authenticated downloads
+
+Per-download [session handoff](docs/AUTHENTICATION.md) supports eligible normal default-store cookies, same-origin referrers, and HTTPS Basic/Bearer values using optional permissions. Secrets remain memory-only; cross-origin redirects are blocked and restart/expiry requires a fresh task. Private, container, partitioned, and first-party-isolated sessions are not supported. This implementation is not yet a qualified installable release.

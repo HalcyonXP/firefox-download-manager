@@ -18,6 +18,7 @@ use tokio::runtime::Handle;
 use tokio::sync::{Notify, watch};
 use tokio::time::MissedTickBehavior;
 
+use crate::auth::{ContextError, RequestContext};
 use crate::network::{ProbeClient, ProbeError, RangeValidationError, ResourceProbe};
 use crate::persistence::{
     CheckpointOutcome, CheckpointUrgency, CleanupOutcome, LoadFailure, PartialCleanup,
@@ -260,6 +261,12 @@ pub enum CancelPartialPolicy {
 /// Stable task failure category for later protocol-v2 error mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskFailureKind {
+    /// Recovery lost the memory-only session.
+    AuthRequired,
+    /// Server denied access or a transferred cookie expired.
+    AuthExpired,
+    /// A redirect was forbidden before contacting its next origin.
+    RedirectRejected,
     /// User-requested cancellation reached a safe checkpoint.
     Cancelled,
     /// HTTP probing could not safely characterize the resource.
@@ -886,6 +893,7 @@ struct ManagedState {
     workers: WorkerCount,
     partial: Option<PartialFile>,
     probe: Option<ResourceProbe>,
+    context: Option<Arc<RequestContext>>,
     failure: Option<TaskFailure>,
     progress: TaskProgress,
     estimator: SpeedEstimator,
@@ -906,6 +914,7 @@ impl fmt::Debug for ManagedState {
             .field("workers", &self.workers)
             .field("has_partial", &self.partial.is_some())
             .field("has_probe", &self.probe.is_some())
+            .field("has_context", &self.context.is_some())
             .field("failure", &self.failure)
             .field("progress", &self.progress)
             .field("estimator", &"<rate-window>")
@@ -1062,12 +1071,29 @@ impl TaskEngine {
         suggested_filename: &str,
         workers: WorkerCount,
     ) -> Result<TaskSnapshot, TaskEngineError> {
-        let metadata = TaskMetadata::new_with_workers(
+        self.create_task_with_context(original_url, destination, suggested_filename, workers, None)
+    }
+
+    /// Creates a task with memory-only request context and a durable recovery marker.
+    /// # Errors
+    /// Rejects invalid task input or persistence failure before starting network I/O.
+    pub fn create_task_with_context(
+        &self,
+        original_url: &str,
+        destination: &Path,
+        suggested_filename: &str,
+        workers: WorkerCount,
+        context: Option<Arc<RequestContext>>,
+    ) -> Result<TaskSnapshot, TaskEngineError> {
+        let mut metadata = TaskMetadata::new_with_workers(
             original_url,
             destination,
             suggested_filename,
             workers.get(),
         )?;
+        if context.is_some() {
+            metadata.require_session();
+        }
         let mut tasks = lock(&self.inner.tasks);
         if tasks.len() >= MAX_MANAGED_TASKS {
             return Err(TaskEngineError::TooManyTasks);
@@ -1079,6 +1105,7 @@ impl TaskEngine {
             .store
             .checkpoint(&metadata, CheckpointUrgency::Critical)?;
         let managed = managed_task(metadata, self.inner.options.progress, None)?;
+        lock(&managed.state).context = context;
         let snapshot = lock(&managed.state).snapshot();
         tasks.insert(snapshot.task_id(), managed);
         Ok(snapshot)
@@ -1835,9 +1862,24 @@ async fn probe_with_retries(
     cancellation: &TransferCancellation,
     budget: &mut RetryBudget,
 ) -> Result<ResourceProbe, RunError> {
+    let context = {
+        let tasks = lock(&inner.tasks);
+        let task = tasks
+            .get(&task_id)
+            .ok_or(RunError::Failed(TaskFailure::new(
+                TaskFailureKind::Internal,
+            )))?;
+        let state = lock(&task.state);
+        if state.metadata.needs_session() && state.context.is_none() {
+            return Err(RunError::Failed(TaskFailure::new(
+                TaskFailureKind::AuthRequired,
+            )));
+        }
+        state.context.clone()
+    };
     loop {
         let result = tokio::select! {
-            result = inner.probe_client.probe(url) => result,
+            result = inner.probe_client.probe_with_context(url, context.clone()) => result,
             () = cancellation.cancelled() => return Err(RunError::Cancelled),
         };
         match result {
@@ -2461,6 +2503,13 @@ fn leave_promoting_failure(inner: &TaskEngineInner, task: &Arc<ManagedTask>, fai
 
 fn finish_running(task: &Arc<ManagedTask>, state: &mut ManagedState) {
     state.running = false;
+    if matches!(
+        state.metadata.state(),
+        TaskState::Completed | TaskState::Cancelled | TaskState::Failed
+    ) {
+        state.context = None;
+        state.probe = None;
+    }
     state.cancellation = None;
     state.stop_request = None;
     publish(task, state);
@@ -2554,6 +2603,7 @@ fn managed_task(
         workers,
         partial: None,
         probe: None,
+        context: None,
         failure,
         progress,
         estimator: SpeedEstimator::new(progress_policy.speed_window())
@@ -2743,11 +2793,25 @@ fn failure_from_probe(error: &ProbeError) -> TaskFailure {
         ProbeError::HttpStatus {
             status,
             retry_after_seconds,
-        } => TaskFailure::http(TaskFailureKind::HttpStatus, *status, *retry_after_seconds),
+        } => TaskFailure::http(
+            if *status == 401 {
+                TaskFailureKind::AuthRequired
+            } else {
+                TaskFailureKind::HttpStatus
+            },
+            *status,
+            *retry_after_seconds,
+        ),
         ProbeError::InvalidRange(
             RangeValidationError::ValidatorChanged | RangeValidationError::ValidatorMissing,
-        )
-        | ProbeError::RedirectRejected => TaskFailure::new(TaskFailureKind::ResourceChanged),
+        ) => TaskFailure::new(TaskFailureKind::ResourceChanged),
+        ProbeError::RedirectRejected => TaskFailure::new(TaskFailureKind::RedirectRejected),
+        ProbeError::Context(ContextError::Expired) => {
+            TaskFailure::new(TaskFailureKind::AuthExpired)
+        }
+        ProbeError::Context(ContextError::Invalid) => {
+            TaskFailure::new(TaskFailureKind::AuthRequired)
+        }
         ProbeError::InvalidRange(_) | ProbeError::BodyLengthMismatch => {
             TaskFailure::new(TaskFailureKind::RangeResponseInvalid)
         }
@@ -2757,10 +2821,24 @@ fn failure_from_probe(error: &ProbeError) -> TaskFailure {
 
 fn failure_from_scheduler(error: &SchedulerError) -> TaskFailure {
     match error {
+        SchedulerError::Context(ContextError::Expired) => {
+            TaskFailure::new(TaskFailureKind::AuthExpired)
+        }
+        SchedulerError::Context(ContextError::Invalid) => {
+            TaskFailure::new(TaskFailureKind::AuthRequired)
+        }
         SchedulerError::HttpStatus {
             status,
             retry_after_seconds,
-        } => TaskFailure::http(TaskFailureKind::HttpStatus, *status, *retry_after_seconds),
+        } => TaskFailure::http(
+            if *status == 401 {
+                TaskFailureKind::AuthRequired
+            } else {
+                TaskFailureKind::HttpStatus
+            },
+            *status,
+            *retry_after_seconds,
+        ),
         SchedulerError::ResponseUrlChanged
         | SchedulerError::InvalidRange(
             RangeValidationError::ValidatorChanged | RangeValidationError::ValidatorMissing,

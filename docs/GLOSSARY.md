@@ -26,9 +26,9 @@
 
 ## Decision and learning history — 2026-09-08
 
-The user authorized autonomous development toward an installable release, without changing their live browser profile. Initial work through the native host was followed by explicit capture, dashboard/protocol v2, settings, and strong resource identity. Current implementation is through #22; #23/#24/#25 are the next Ready feature work.
+The user authorized autonomous development toward an installable release, without changing their live browser profile. Initial work through the native host was followed by explicit capture, dashboard/protocol v2, settings, and strong resource identity. Implementation now includes #23 session handoff. #32 restored the cancellation baseline with deterministic local-ownership evidence; #24/#25 are next feature work.
 
-#19 interpreted “resolved filename” as a visible, editable, Windows-safe proposed name, because the then-current v1 contract had no preview command. That is an implementation decision, not a separately confirmed user preference. Referrers and cookie access remain deferred to #23. Mocked Firefox transport was useful rendered-UI evidence, not real Firefox Native Messaging qualification.
+#19 interpreted “resolved filename” as a visible, editable, Windows-safe proposed name, because the then-current v1 contract had no preview command. That is an implementation decision, not a separately confirmed user preference. Their later opt-in referrer/cookie boundary is now implemented in #23. Mocked Firefox transport was useful rendered-UI evidence, not real Firefox Native Messaging qualification.
 
 Privacy cleanup first rewrote contact metadata without changing writable branch tip trees. GitHub rejected removal of retained PR refs; Support browser sign-in was unavailable and no request was submitted. #30 selected an independent target while preserving private records. Fresh Dependabot refs/logs were audited rather than assuming the new repository remained empty. Pattern false positives for project-board URLs, GitHub SSH routing, and public bot sign-offs were narrowly reviewed and regression-tested.
 
@@ -40,3 +40,12 @@ The user's subsequent request **explicitly authorized public visibility and docu
 - **Stop acknowledgement**: all owned worker futures have joined, the final local progress sample is published, reporter ownership closes, and partial coverage/bytes cannot change until an explicit resume. Already-transmitted bytes and remote handler observations cannot be retracted.
 
 The prior 150 ms stable-server-ledger assertion conflated remote observation with local shutdown. A test-only barrier now holds fully received requests before ledger insertion, deterministically demonstrating late observation after successful local cancellation without late workers or disk writes. The regression also verifies that resumed requests skip retained coverage and final bytes match. A final metrics publication after all joins prevents concurrent worker samples from leaving a stale terminal projection. These are measured boundaries, not permission for workers to survive acknowledgement.
+
+## Session vocabulary (#23)
+
+- **Session handoff**: explicit per-download transfer of eligible default-store cookies and optional same-origin referrer/HTTPS Basic or Bearer values. Not a request clone, cookie jar, or consent to inspect arbitrary browsing data.
+- **Site permission**: Firefox's optional scheme/host grant, covering all ports; do not confuse it with the helper's exact scheme/host/port **origin confinement**.
+- **Needs-session marker**: a required non-secret internal-v3 Boolean. It forbids a restarted task from silently sending without memory-only context; it contains no cookie values.
+- **Fresh authenticated retry**: sign in and create a new task. V2 does not accept replacement credentials on resume, and previously retained bytes cannot change authentication context.
+
+Initial testing caught two implementation/evidence mistakes: old persistence tests hardcoded v2 as current/v3 as future, and a new recovery test expected a control error where `resume` deliberately returns an authoritative failed snapshot. Tests now preserve the actual contracts, including strict legacy migration and required-marker corruption rejection. An early blanket 401/403-to-expired mapping was corrected: only supplied context can expire; unauthenticated 401 is required-auth and 403 remains ordinary HTTP failure.

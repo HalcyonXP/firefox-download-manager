@@ -1,3 +1,4 @@
+use download_manager_engine::persistence::STATE_FORMAT_VERSION;
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -291,6 +292,10 @@ fn worker_selection_is_strict_and_legacy_version_one_records_default_to_four() {
     value["task"]
         .as_object_mut()
         .expect("task object")
+        .remove("needs_session");
+    value["task"]
+        .as_object_mut()
+        .expect("task object")
         .remove("workers");
     fs::write(
         &path,
@@ -303,7 +308,7 @@ fn worker_selection_is_strict_and_legacy_version_one_records_default_to_four() {
     let mut migrated: Value =
         serde_json::from_slice(&fs::read(&path).expect("read migrated state"))
             .expect("parse migrated state");
-    assert_eq!(migrated["version"], json!(2));
+    assert_eq!(migrated["version"], json!(STATE_FORMAT_VERSION));
     assert_eq!(migrated["task"]["workers"], json!(4));
 
     let mut future_shaped_legacy = migrated.clone();
@@ -316,6 +321,32 @@ fn worker_selection_is_strict_and_legacy_version_one_records_default_to_four() {
     let malformed = store.load_all().expect("load malformed legacy state");
     assert_failure(&malformed, task.task_id(), &LoadFailureReason::Malformed);
 
+    let mut legacy_two = migrated.clone();
+    legacy_two["version"] = json!(2);
+    legacy_two["task"]
+        .as_object_mut()
+        .expect("task object")
+        .remove("needs_session");
+    fs::write(
+        &path,
+        serde_json::to_vec(&legacy_two).expect("serialize v2"),
+    )
+    .expect("write v2");
+    let report = store.load_all().expect("migrate v2");
+    assert!(report.failures().is_empty());
+    assert!(!report.tasks()[0].needs_session());
+    assert_eq!(report.tasks()[0].workers(), 4);
+    legacy_two["version"] = json!(STATE_FORMAT_VERSION);
+    fs::write(
+        &path,
+        serde_json::to_vec(&legacy_two).expect("serialize missing marker"),
+    )
+    .expect("write marker corruption");
+    assert_failure(
+        &store.load_all().expect("reject missing marker"),
+        task.task_id(),
+        &LoadFailureReason::Malformed,
+    );
     migrated["task"]["workers"] = json!(3);
     fs::write(
         &path,
@@ -636,12 +667,16 @@ fn corrupt_unknown_and_future_records_fail_independently_and_remain_on_disk() {
     let duplicate = String::from_utf8(valid_bytes.clone())
         .expect("valid UTF-8 state")
         .replace(&task.task_id().to_string(), &duplicate_id.to_string())
-        .replacen("\"version\":2", "\"version\":2,\"version\":2", 1);
+        .replacen(
+            &format!("\"version\":{STATE_FORMAT_VERSION}"),
+            &format!("\"version\":{STATE_FORMAT_VERSION},\"version\":{STATE_FORMAT_VERSION}"),
+            1,
+        );
     fs::write(state_path(&store, duplicate_id), duplicate).expect("write duplicate field state");
 
     let future_id = TaskId::new();
     let mut future: Value = serde_json::from_slice(&valid_bytes).expect("parse valid state");
-    future["version"] = json!(3);
+    future["version"] = json!(STATE_FORMAT_VERSION + 1);
     future["task"]["task_id"] = json!(future_id.to_string());
     fs::write(
         state_path(&store, future_id),
@@ -689,7 +724,9 @@ fn corrupt_unknown_and_future_records_fail_independently_and_remain_on_disk() {
     assert_failure(
         &report,
         future_id,
-        &LoadFailureReason::IncompatibleVersion { found: 3 },
+        &LoadFailureReason::IncompatibleVersion {
+            found: STATE_FORMAT_VERSION + 1,
+        },
     );
     assert_failure(&report, unknown_id, &LoadFailureReason::Malformed);
     assert_failure(&report, format_id, &LoadFailureReason::UnknownFormat);

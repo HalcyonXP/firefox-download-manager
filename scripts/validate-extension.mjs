@@ -17,7 +17,13 @@ assert.deepEqual(
   ["nativeMessaging", "menus"],
   "extension should request only Native Messaging and explicit link menu permissions",
 );
-assert.deepEqual(source.host_permissions ?? [], [], "scaffold should request no host access");
+assert.deepEqual(source.host_permissions ?? [], [], "no mandatory host access");
+assert.deepEqual(source.optional_permissions, ["cookies"], "session access is optional");
+assert.deepEqual(
+  source.optional_host_permissions,
+  ["http://*/*", "https://*/*"],
+  "only direct HTTP(S) sites may be requested on demand",
+);
 
 for (const script of source.background?.scripts ?? []) {
   assert.equal(script.includes(".."), false, "background path traverses out of extension");

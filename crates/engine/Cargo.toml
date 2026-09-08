@@ -12,6 +12,7 @@ download-manager-protocol = { version = "=0.1.0", path = "../protocol" }
 httpdate.workspace = true
 reqwest.workspace = true
 same-file.workspace = true
+time.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

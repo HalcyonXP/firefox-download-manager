@@ -279,3 +279,19 @@ describe("operational commands", () => {
     expect(port.sent).toHaveLength(2);
   });
 });
+
+describe("session capability gate", () => {
+  it("never sends reserved session fields to a helper that did not advertise support", async () => {
+    const port = new FakePort();
+    const connection = new NativeConnection(() => port, "0.1.0");
+    const ready = connection.connect();
+    acceptHello(port);
+    snapshot(port, 0, []);
+    await ready;
+    await expect(
+      connection.command("add", { request_context: { credentials: { cookies: [] } } }),
+    ).rejects.toMatchObject({ failure: "protocol_error" });
+    expect(port.sent).toHaveLength(1);
+    connection.disconnect();
+  });
+});

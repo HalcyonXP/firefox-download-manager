@@ -354,6 +354,11 @@ impl AddPayload {
     }
 
     #[must_use]
+    pub const fn request_context(&self) -> Option<&RequestContextInput> {
+        self.request_context.as_ref()
+    }
+
+    #[must_use]
     pub const fn has_request_context(&self) -> bool {
         self.request_context.is_some()
     }
@@ -395,9 +400,17 @@ impl Validate for ChecksumInput {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RequestContextInput {
-    referrer: Option<String>,
-    credentials: Option<CredentialsInput>,
+pub struct RequestContextInput {
+    pub referrer: Option<String>,
+    pub credentials: Option<CredentialsInput>,
+}
+
+impl RequestContextInput {
+    /// Whether all reserved protocol-v2 field bounds and required values are valid.
+    #[must_use]
+    pub fn is_valid(&self) -> bool {
+        self.validate()
+    }
 }
 
 impl Validate for RequestContextInput {
@@ -413,9 +426,9 @@ impl Validate for RequestContextInput {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CredentialsInput {
-    cookies: Option<Vec<CookieInput>>,
-    authorization: Option<AuthorizationInput>,
+pub struct CredentialsInput {
+    pub cookies: Option<Vec<CookieInput>>,
+    pub authorization: Option<AuthorizationInput>,
 }
 
 impl Validate for CredentialsInput {
@@ -430,15 +443,25 @@ impl Validate for CredentialsInput {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CookieInput {
-    name: String,
-    value: String,
-    domain: String,
-    path: String,
-    secure: bool,
-    http_only: bool,
+pub struct CookieInput {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub secure: bool,
+    pub http_only: bool,
     #[serde(default)]
     expires_at: RequiredNullableString,
+}
+
+impl CookieInput {
+    #[must_use]
+    pub fn expires_at(&self) -> Option<&str> {
+        match &self.expires_at {
+            RequiredNullableString::String(value) => Some(value),
+            _ => None,
+        }
+    }
 }
 
 impl Validate for CookieInput {
@@ -478,9 +501,9 @@ impl<'de> Deserialize<'de> for RequiredNullableString {
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct AuthorizationInput {
-    scheme: String,
-    value: String,
+pub struct AuthorizationInput {
+    pub scheme: String,
+    pub value: String,
 }
 
 impl Validate for AuthorizationInput {
@@ -878,8 +901,12 @@ impl ErrorCode {
             Self::InvalidTaskState => {
                 "The download cannot perform that action in its current state."
             }
-            Self::AuthRequired => "The server requires authorization.",
-            Self::AuthExpired => "The supplied authorization has expired.",
+            Self::AuthRequired => {
+                "Session required. Sign in, then add a fresh download with session handoff enabled."
+            }
+            Self::AuthExpired => {
+                "Session expired or access denied. Sign in, then explicitly add a fresh download; old partials cannot receive new credentials."
+            }
             Self::RedirectRejected => "The server redirect was rejected.",
             Self::ProbeFailed => "The helper could not establish a safe resource identity.",
             Self::RangeUnsupported => "The server does not support the required byte ranges.",

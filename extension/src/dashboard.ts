@@ -102,7 +102,9 @@ export class Dashboard {
       else
         row.progress.value =
           task.expected_size === 0 && task.state === "completed" ? 1 : task.bytes_completed;
-      row.error.textContent = task.error ? `${task.error.code}: ${task.error.display_message}` : "";
+      row.error.textContent = task.error
+        ? `${task.error.code}: ${task.error.display_message}${["AUTH_REQUIRED", "AUTH_EXPIRED"].includes(task.error.code) ? " Sign in, paste the original direct URL above, and explicitly add a fresh task with session handoff. Remove the old task separately to delete its partial." : ""}`
+        : "";
       row.error.hidden = task.error === null;
       const key = `${task.state}:${state.connected}`;
       if (row.actionKey !== key) {
