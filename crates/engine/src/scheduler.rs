@@ -273,12 +273,19 @@ impl fmt::Debug for TransferCancellation {
 /// Absolute transfer counters suitable for coalesced progress sampling.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct TransferProgress {
+    requests_started: u64,
     bytes_completed: u64,
     expected_size: Option<u64>,
     active_workers: u8,
 }
 
 impl TransferProgress {
+    /// Locally initiated requests, independent of delayed remote observation.
+    #[must_use]
+    pub const fn requests_started(self) -> u64 {
+        self.requests_started
+    }
+
     /// Bytes represented by this invocation's durable baseline plus safe
     /// in-process progress.
     #[must_use]
@@ -634,6 +641,9 @@ impl DownloadScheduler {
                 Ok(metrics.summary(TransferKind::Empty, 0))
             }
         };
+        // Publish once after every worker has joined; concurrent worker samples
+        // can otherwise arrive out of order. No worker retains a reporter here.
+        metrics.publish();
         if cancellation.is_cancelled() {
             return Err(SchedulerError::Cancelled);
         }
@@ -1045,6 +1055,7 @@ impl TransferMetrics {
             .load(Ordering::Acquire)
             .min(usize::from(MAX_WORKERS));
         self.progress.publish(TransferProgress {
+            requests_started: self.requests_started.load(Ordering::Acquire),
             bytes_completed: self.bytes_completed.load(Ordering::Acquire),
             expected_size: *lock(&self.expected_size),
             active_workers: u8::try_from(active).unwrap_or(MAX_WORKERS),

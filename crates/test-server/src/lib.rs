@@ -3,6 +3,10 @@
 //! The server intentionally implements only the bounded HTTP/1.1 surface needed
 //! by this project. It must never be included in production packages.
 
+mod observation;
+use observation::ObservationGate;
+pub use observation::ObservationPause;
+
 use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{self, Read, Write};
@@ -220,6 +224,7 @@ pub struct TestServer {
     stop: Arc<AtomicBool>,
     state: Arc<Mutex<SharedState>>,
     listener_thread: Option<JoinHandle<()>>,
+    observation: Arc<ObservationGate>,
 }
 
 impl TestServer {
@@ -244,11 +249,19 @@ impl TestServer {
         let state = Arc::new(Mutex::new(SharedState::default()));
         let thread_stop = Arc::clone(&stop);
         let thread_state = Arc::clone(&state);
+        let observation = Arc::new(ObservationGate::default());
+        let thread_observation = Arc::clone(&observation);
 
         let listener_thread = thread::Builder::new()
             .name("adversarial-http-listener".to_owned())
             .spawn(move || {
-                accept_loop(&listener, &config, &thread_stop, &thread_state);
+                accept_loop(
+                    &listener,
+                    &config,
+                    &thread_stop,
+                    &thread_state,
+                    &thread_observation,
+                );
             })?;
 
         Ok(Self {
@@ -256,6 +269,7 @@ impl TestServer {
             stop,
             state,
             listener_thread: Some(listener_thread),
+            observation,
         })
     }
 
@@ -283,6 +297,13 @@ impl TestServer {
         lock_state(&self.state).requests.clone()
     }
 
+    /// Pauses ledger observation after complete HTTP headers have arrived.
+    /// The server and guard both release waiters on drop.
+    #[must_use]
+    pub fn pause_observation(&self) -> ObservationPause {
+        self.observation.pause()
+    }
+
     /// Highest number of response handlers active at the same time.
     #[must_use]
     pub fn max_concurrent_requests(&self) -> usize {
@@ -293,6 +314,7 @@ impl TestServer {
 impl Drop for TestServer {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Release);
+        self.observation.release();
         let _ = TcpStream::connect_timeout(&self.address, Duration::from_millis(100));
         if let Some(handle) = self.listener_thread.take() {
             let _ = handle.join();
@@ -322,6 +344,7 @@ fn accept_loop(
     config: &ServerConfig,
     stop: &AtomicBool,
     state: &Arc<Mutex<SharedState>>,
+    observation: &Arc<ObservationGate>,
 ) {
     while !stop.load(Ordering::Acquire) {
         match listener.accept() {
@@ -331,10 +354,16 @@ fn accept_loop(
                 }
                 let connection_config = (*config).clone();
                 let connection_state = Arc::clone(state);
+                let connection_observation = Arc::clone(observation);
                 let _ = thread::Builder::new()
                     .name("adversarial-http-connection".to_owned())
                     .spawn(move || {
-                        let _ = handle_connection(stream, &connection_config, &connection_state);
+                        let _ = handle_connection(
+                            stream,
+                            &connection_config,
+                            &connection_state,
+                            &connection_observation,
+                        );
                     });
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
@@ -358,6 +387,7 @@ fn handle_connection(
     mut stream: TcpStream,
     config: &ServerConfig,
     state: &Mutex<SharedState>,
+    observation: &ObservationGate,
 ) -> io::Result<()> {
     // Windows can inherit nonblocking mode from the listener. Connection
     // handlers need ordinary blocking semantics so transient WouldBlock errors
@@ -377,6 +407,7 @@ fn handle_connection(
         return write_empty_status(&mut stream, 400, &[]);
     }
 
+    observation.arrive();
     let (observed, range_request_number) = {
         let mut shared = lock_state(state);
         let count = shared.path_counts.entry(request.path.clone()).or_default();

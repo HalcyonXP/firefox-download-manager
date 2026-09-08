@@ -14,7 +14,7 @@ The user explicitly authorized public visibility and requested that all document
 
 Twenty-two regular issues were transferred with their states and comment history. Current documentation uses their new numbers; [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) records the mapping and links historical implementations to cleaned public commits. The owner-private planning board retains the corresponding work statuses. The predecessor stays private solely as an archive, not an alternative source of truth.
 
-Implementation is complete through #22; #23, #24, and #25 are Ready after #8. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
+Implementation is complete through #22. The cancellation-observation investigation #32 temporarily gates #23, #24, and #25; after the baseline is verified they return to Ready in numeric order. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
 
 ## Product goal
 
@@ -163,7 +163,7 @@ A release must preserve these invariants:
 ## Release quality gates
 
 - Formatting, linting, unit tests, and integration tests pass in GitHub Actions.
-- Publication privacy checks pass for the independent target (#29/#41) before public visibility; the original repository remains private unless its GitHub-retained metadata is separately removed.
+- Publication privacy checks remain clean for this public repository (#8, #29, #30); never import the private archive's retained Git refs.
 - Adversarial HTTP fixtures cover malformed and changing responses.
 - The final output is byte-identical for all supported worker counts.
 - Firefox and helper restart paths are tested.

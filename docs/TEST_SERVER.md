@@ -73,3 +73,7 @@ cargo test -p download-manager-test-server --all-features --locked
 ```
 
 The workspace CI command runs these tests automatically on Windows. Engine probe, scheduler, and task-lifecycle integration tests instantiate this crate directly rather than depend on public servers. Targeted request ordinals deterministically exercise transient recovery, retry exhaustion, `Retry-After`, fatal no-retry behavior, changed identity, cancellation during backoff, durable pause/resume, and progress cadence.
+
+## Observation barrier (#32)
+
+`TestServer::pause_observation()` returns a drop-released, test-only guard. `wait_for_pending` waits for complete request headers to arrive before their records are inserted. This separates already-sent HTTP work from delayed server-ledger visibility in cancellation tests. It is not included in the native helper and must not be used as a production networking dependency.
