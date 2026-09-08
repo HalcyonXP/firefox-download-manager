@@ -14,7 +14,7 @@ The user explicitly authorized public visibility and requested that all document
 
 Twenty-two regular issues were transferred with their states and comment history. Current documentation uses their new numbers; [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) records the mapping and links historical implementations to cleaned public commits. The owner-private planning board retains the corresponding work statuses. The predecessor stays private solely as an archive, not an alternative source of truth.
 
-Implementation is complete through #22. The cancellation-observation investigation #32 temporarily gates #23, #24, and #25; after the baseline is verified they return to Ready in numeric order. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
+Implementation includes #23 authenticated handoff, #24 shared polite request admission, and #25 integrity/SHA-256. #32/#33 resolved the cancellation-observation baseline and actual public CI passed; that temporary gate is no longer active. Security review #26, packaging #27, and qualification/release #28 remain required. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
 
 ## Product goal
 
@@ -197,6 +197,10 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 
 ## Implementation decisions since the public-authority handoff
 
-#32/#33 restored the failed cancellation baseline; public PR and merged-main Windows CI passed with repeated cancellation regressions. #23 implements per-download default-store session handoff, not full session cloning. Its conservative private/container/partition limitations, permission granularity, memory-only recovery behavior, and fresh-task retry are in [AUTHENTICATION.md](AUTHENTICATION.md) and ADR 0010. Wire v2 is unchanged; internal task state is v3. #24/#25 and the security/packaging/real-browser release gates remain required.
+#32/#33 restored the failed cancellation baseline; public PR and merged-main Windows CI passed with repeated cancellation regressions. #23 implements per-download default-store session handoff, not full session cloning. Its conservative private/container/partition limitations, permission granularity, memory-only recovery behavior, and fresh-task retry are in [AUTHENTICATION.md](AUTHENTICATION.md) and ADR 0010. Wire v2 is unchanged. #25 advances internal task state to v4 while retaining v3 session meaning. #24 and #25 are implemented; security/packaging/real-browser release gates remain required.
 
 #24 extends concurrency admission to probes/redirects as well as transfers, retains 429/503 guidance across peer tasks and settings, reduces effective retry widths, and permits only bounded identity revalidation after a worker 416. Optional tail duplication is now off by default; local fixture timing/request-cost evidence and its limits are in [RELIABILITY.md](RELIABILITY.md). No wire change or benchmark-driven arbitrary worker restart policy is introduced.
+
+### Integrity checkpoint (#25)
+
+[INTEGRITY.md](INTEGRITY.md) records completion ordering, streamed SHA-256, immutable recovery expectations, explicit mismatch retention, and cancellation/file-lock limits. Unit/native integration and actual helper kill/restart cover checksum behavior; they do not extend the earlier real-Firefox evidence or waive large-file/clean-install qualification. Documentation audit also removed stale front-matter claims that #32 still blocked features and that authentication was still unadvertised; merged code, board state, and later plan notes already agreed those were resolved.

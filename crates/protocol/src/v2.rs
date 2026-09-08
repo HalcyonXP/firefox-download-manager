@@ -349,6 +349,13 @@ impl AddPayload {
     }
 
     #[must_use]
+    pub fn expected_sha256(&self) -> Option<&str> {
+        self.checksum
+            .as_ref()
+            .map(|checksum| checksum.digest.as_str())
+    }
+
+    #[must_use]
     pub const fn has_checksum(&self) -> bool {
         self.checksum.is_some()
     }

@@ -10,7 +10,7 @@ export function actionsFor(state: string): Array<{ action: TaskAction; label: st
       action: "resume",
       label: state === "failed" ? "Retry" : state === "queued" ? "Start" : "Resume",
     });
-  if (["queued", "probing", "downloading", "paused"].includes(state))
+  if (["queued", "probing", "downloading", "paused", "validating"].includes(state))
     actions.push({ action: "cancel", label: "Cancel" });
   if (["completed", "failed", "cancelled"].includes(state))
     actions.push({
@@ -31,6 +31,8 @@ export function bytes(value: number | null): string {
   return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 export function progressText(task: NativeTask): string {
+  if (["validating", "promoting"].includes(task.state))
+    return `${bytes(task.bytes_completed)} / ${bytes(task.expected_size)} · ${task.state === "validating" ? "Validating file; final name withheld" : "Publishing validated file"} · Completion time unknown`;
   const eta = task.eta_seconds === null ? "ETA unknown" : `${task.eta_seconds}s remaining`;
   const speed =
     task.speed_bytes_per_second === null
@@ -103,7 +105,7 @@ export class Dashboard {
         row.progress.value =
           task.expected_size === 0 && task.state === "completed" ? 1 : task.bytes_completed;
       row.error.textContent = task.error
-        ? `${task.error.code}: ${task.error.display_message}${["AUTH_REQUIRED", "AUTH_EXPIRED"].includes(task.error.code) ? " Sign in, paste the original direct URL above, and explicitly add a fresh task with session handoff. Remove the old task separately to delete its partial." : ""}`
+        ? `${task.error.code}: ${task.error.display_message}${task.error.code === "CHECKSUM_MISMATCH" ? " Check the digest and create a fresh task; no new final file was published." : ""}${["AUTH_REQUIRED", "AUTH_EXPIRED"].includes(task.error.code) ? " Sign in, paste the original direct URL above, and explicitly add a fresh task with session handoff. Remove the old task separately to delete its partial." : ""}`
         : "";
       row.error.hidden = task.error === null;
       const key = `${task.state}:${state.connected}`;

@@ -292,6 +292,10 @@ fn worker_selection_is_strict_and_legacy_version_one_records_default_to_four() {
     value["task"]
         .as_object_mut()
         .expect("task object")
+        .remove("expected_sha256");
+    value["task"]
+        .as_object_mut()
+        .expect("task object")
         .remove("needs_session");
     value["task"]
         .as_object_mut()
@@ -321,32 +325,8 @@ fn worker_selection_is_strict_and_legacy_version_one_records_default_to_four() {
     let malformed = store.load_all().expect("load malformed legacy state");
     assert_failure(&malformed, task.task_id(), &LoadFailureReason::Malformed);
 
-    let mut legacy_two = migrated.clone();
-    legacy_two["version"] = json!(2);
-    legacy_two["task"]
-        .as_object_mut()
-        .expect("task object")
-        .remove("needs_session");
-    fs::write(
-        &path,
-        serde_json::to_vec(&legacy_two).expect("serialize v2"),
-    )
-    .expect("write v2");
-    let report = store.load_all().expect("migrate v2");
-    assert!(report.failures().is_empty());
-    assert!(!report.tasks()[0].needs_session());
-    assert_eq!(report.tasks()[0].workers(), 4);
-    legacy_two["version"] = json!(STATE_FORMAT_VERSION);
-    fs::write(
-        &path,
-        serde_json::to_vec(&legacy_two).expect("serialize missing marker"),
-    )
-    .expect("write marker corruption");
-    assert_failure(
-        &store.load_all().expect("reject missing marker"),
-        task.task_id(),
-        &LoadFailureReason::Malformed,
-    );
+    assert_v2_v3_migrations(&store, &path, &task, &migrated);
+    assert_current_nullable_keys(&store, &path, &task, &migrated);
     migrated["task"]["workers"] = json!(3);
     fs::write(
         &path,
@@ -360,6 +340,120 @@ fn worker_selection_is_strict_and_legacy_version_one_records_default_to_four() {
         task.task_id(),
         &LoadFailureReason::InvalidTask(StateValidationError::InvalidWorkerCount),
     );
+}
+
+fn assert_v2_v3_migrations(store: &TaskStore, path: &Path, task: &TaskMetadata, migrated: &Value) {
+    let mut legacy_two = migrated.clone();
+    legacy_two["version"] = json!(2);
+    legacy_two["task"]
+        .as_object_mut()
+        .expect("task object")
+        .remove("expected_sha256");
+    legacy_two["task"]
+        .as_object_mut()
+        .expect("task object")
+        .remove("needs_session");
+    fs::write(path, serde_json::to_vec(&legacy_two).expect("serialize v2")).expect("write v2");
+    let report = store.load_all().expect("migrate v2");
+    assert!(report.failures().is_empty());
+    assert!(!report.tasks()[0].needs_session());
+    assert_eq!(report.tasks()[0].workers(), 4);
+    legacy_two["version"] = json!(STATE_FORMAT_VERSION);
+    legacy_two["task"]["expected_sha256"] = Value::Null;
+    fs::write(
+        path,
+        serde_json::to_vec(&legacy_two).expect("serialize missing marker"),
+    )
+    .expect("write marker corruption");
+    assert_failure(
+        &store.load_all().expect("reject missing marker"),
+        task.task_id(),
+        &LoadFailureReason::Malformed,
+    );
+    let mut legacy_three = migrated.clone();
+    legacy_three["version"] = json!(3);
+    legacy_three["task"]["needs_session"] = json!(true);
+    legacy_three["task"]
+        .as_object_mut()
+        .expect("task object")
+        .remove("expected_sha256");
+    fs::write(
+        path,
+        serde_json::to_vec(&legacy_three).expect("serialize v3"),
+    )
+    .expect("write v3");
+    let report = store.load_all().expect("migrate v3");
+    assert!(report.failures().is_empty());
+    assert_eq!(report.tasks()[0].expected_sha256(), None);
+    assert!(report.tasks()[0].needs_session());
+    legacy_three["version"] = json!(STATE_FORMAT_VERSION);
+    fs::write(
+        path,
+        serde_json::to_vec(&legacy_three).expect("serialize missing checksum field"),
+    )
+    .expect("write corruption");
+    assert_failure(
+        &store.load_all().expect("reject missing checksum field"),
+        task.task_id(),
+        &LoadFailureReason::Malformed,
+    );
+    legacy_three["task"]["expected_sha256"] = json!("not-a-checksum");
+    fs::write(
+        path,
+        serde_json::to_vec(&legacy_three).expect("serialize invalid checksum"),
+    )
+    .expect("write invalid checksum");
+    assert_failure(
+        &store.load_all().expect("reject invalid checksum"),
+        task.task_id(),
+        &LoadFailureReason::InvalidTask(StateValidationError::InvalidChecksum),
+    );
+}
+
+fn assert_current_nullable_keys(
+    store: &TaskStore,
+    path: &Path,
+    task: &TaskMetadata,
+    migrated: &Value,
+) {
+    for field in [
+        "expected_sha256",
+        "final_url",
+        "expected_size",
+        "partial_path",
+        "final_path",
+        "needs_session",
+    ] {
+        let mut missing = migrated.clone();
+        missing["task"].as_object_mut().expect("task").remove(field);
+        fs::write(
+            path,
+            serde_json::to_vec(&missing).expect("serialize missing key"),
+        )
+        .expect("write missing key");
+        assert_failure(
+            &store.load_all().expect("reject missing key"),
+            task.task_id(),
+            &LoadFailureReason::Malformed,
+        );
+    }
+    for field in ["etag", "last_modified"] {
+        let mut missing = migrated.clone();
+        missing["task"]["validators"]
+            .as_object_mut()
+            .expect("validators")
+            .remove(field);
+        fs::write(
+            path,
+            serde_json::to_vec(&missing).expect("serialize missing validator"),
+        )
+        .expect("write missing validator");
+        assert_failure(
+            &store.load_all().expect("reject missing validator"),
+            task.task_id(),
+            &LoadFailureReason::Malformed,
+        );
+    }
 }
 
 #[test]

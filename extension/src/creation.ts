@@ -6,12 +6,14 @@ export interface CreationInput {
   destination: string;
   filename: string;
   workers: number;
+  checksum?: string;
 }
 export interface AddInput {
   url: string;
   destination: string;
   suggested_filename: string;
   workers: 1 | 2 | 4 | 8;
+  checksum?: { algorithm: "sha256"; digest: string };
 }
 
 export function directUrl(input: string): URL {
@@ -63,7 +65,11 @@ export function creationPayload(input: CreationInput): AddInput {
   if (![1, 2, 4, 8].includes(input.workers)) throw new Error("Choose 1, 2, 4, or 8 connections.");
   if (!input.filename || input.filename !== safeFilename(input.filename))
     throw new Error("Choose a Windows-safe filename (no path, device name, or trailing dot).");
+  const checksum = input.checksum?.trim().toLowerCase() ?? "";
+  if (checksum && !/^[a-f0-9]{64}$/u.test(checksum))
+    throw new Error("Expected SHA-256 must be 64 hexadecimal characters, or blank.");
   return {
+    ...(checksum ? { checksum: { algorithm: "sha256" as const, digest: checksum } } : {}),
     url: input.url,
     destination: input.destination,
     suggested_filename: input.filename,
@@ -78,6 +84,8 @@ export function connectionMessage(error: unknown): string {
     return "Extension and helper are incompatible. Install matching versions, then reconnect.";
   if (["AUTH_REQUIRED", "AUTH_EXPIRED"].includes(error.helperCode ?? ""))
     return "Sign in, then explicitly add a fresh download with session handoff. Old partials cannot receive refreshed credentials.";
+  if (error.helperCode === "CHECKSUM_MISMATCH")
+    return "SHA-256 mismatch: no new final file was published. Check the expected digest and create a fresh task. Partial retention follows your failure setting.";
   if (error.helperCode === "INVALID_SETTINGS")
     return "Settings were not applied. Pause active tasks and check the existing destination, connection caps, and retry limit.";
   if (error.helperCode)

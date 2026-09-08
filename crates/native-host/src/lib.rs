@@ -202,6 +202,7 @@ async fn negotiate<W: Write>(
                                 "snapshots",
                                 "coalesced_progress",
                                 "authenticated_requests",
+                                "sha256",
                             ],
                             max_message_bytes: MAX_MESSAGE_BYTES,
                         },
@@ -332,13 +333,6 @@ impl<W: Write> Session<W> {
         match command {
             Command::Hello(_) => unreachable!("hello is handled before dispatch"),
             Command::Add(payload) => {
-                if payload.has_checksum() {
-                    return self.send_failure(
-                        correlation_id,
-                        ResponseCommand::Add,
-                        ErrorCode::ProtocolInvalidMessage,
-                    );
-                }
                 let destination = payload
                     .destination()
                     .map(PathBuf::from)
@@ -386,12 +380,28 @@ impl<W: Write> Session<W> {
                         );
                     }
                 };
-                let task = match engine.create_task_with_context(
+                let expected = match payload.expected_sha256() {
+                    Some(value) => {
+                        match download_manager_engine::integrity::ExpectedSha256::parse(value) {
+                            Some(value) => Some(value),
+                            None => {
+                                return self.send_failure(
+                                    correlation_id,
+                                    ResponseCommand::Add,
+                                    ErrorCode::ProtocolInvalidMessage,
+                                );
+                            }
+                        }
+                    }
+                    None => None,
+                };
+                let task = match engine.create_task_with_integrity(
                     payload.url(),
                     &destination,
                     payload.suggested_filename().unwrap_or(DEFAULT_FILENAME),
                     workers,
                     context,
+                    expected,
                 ) {
                     Ok(task) => task,
                     Err(error) => {
@@ -1010,6 +1020,7 @@ fn task_failure_error(failure: TaskFailure, task_id: Option<TaskId>) -> Protocol
 
 const fn failure_code(kind: TaskFailureKind) -> ErrorCode {
     match kind {
+        TaskFailureKind::ChecksumMismatch => ErrorCode::ChecksumMismatch,
         TaskFailureKind::AuthRequired => ErrorCode::AuthRequired,
         TaskFailureKind::AuthExpired => ErrorCode::AuthExpired,
         TaskFailureKind::RedirectRejected => ErrorCode::RedirectRejected,
@@ -1059,7 +1070,8 @@ const fn state_error_code(error: StateValidationError) -> ErrorCode {
         StateValidationError::InvalidFilename => ErrorCode::InvalidFilename,
         StateValidationError::InvalidWorkerCount => ErrorCode::InvalidSettings,
         StateValidationError::InvalidTaskId => ErrorCode::TaskNotFound,
-        StateValidationError::InvalidTimestamp
+        StateValidationError::InvalidChecksum
+        | StateValidationError::InvalidTimestamp
         | StateValidationError::InvalidRevision
         | StateValidationError::InvalidResource
         | StateValidationError::InvalidValidator
@@ -1424,6 +1436,49 @@ mod tests {
         .expect("state");
         assert!(!state.contains("not-a-real-session"));
         assert!(!state.contains("/session/page"));
+        engine.shutdown().await.expect("shutdown");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn checksum_input_dispatches_and_mismatch_is_an_actionable_failed_snapshot() {
+        let directories = Directories::new("checksum dispatch");
+        let server = TestServer::start(ServerConfig::default()).expect("server");
+        let mut engine =
+            TaskEngine::open(&directories.state, TaskEngineOptions::default()).expect("engine");
+        let writer = SharedWriter::default();
+        let mut session = Session::new(writer.clone(), Some(directories.destination.clone()));
+        let add = json!({"protocol_version":2,"correlation_id":"checksum-add","kind":"command","command":"add","payload":{
+            "url":server.url("/fixture"),"suggested_filename":"mismatch.bin","checksum":{"algorithm":"sha256","digest":"f".repeat(64)}
+        }});
+        let (correlation, command) =
+            download_manager_protocol::decode_command(&serde_json::to_vec(&add).expect("bytes"))
+                .expect("decode")
+                .into_parts();
+        session
+            .dispatch(&mut engine, correlation, command)
+            .await
+            .expect("dispatch");
+        let id = TaskId::parse(
+            messages(&writer)[0]["result"]["task_id"]
+                .as_str()
+                .expect("task ID"),
+        )
+        .expect("ID");
+        engine.wait_until_inactive(id).await.expect("finished");
+        session
+            .send_snapshot_events(&engine.snapshots())
+            .expect("snapshot");
+        let output = messages(&writer);
+        let snapshot = output
+            .iter()
+            .find(|message| message["event"] == "snapshot")
+            .expect("snapshot");
+        assert_eq!(snapshot["data"]["tasks"][0]["state"], "failed");
+        assert_eq!(
+            snapshot["data"]["tasks"][0]["error"]["code"],
+            "CHECKSUM_MISMATCH"
+        );
+        assert!(!directories.destination.join("mismatch.bin").exists());
         engine.shutdown().await.expect("shutdown");
     }
 

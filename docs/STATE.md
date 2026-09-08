@@ -1,8 +1,8 @@
 # Persistent task-state and recovery policy
 
-Status: implemented for issues #15 through #17 and #22
+Status: implemented for issues #15 through #17 and #22–#25
 
-Internal format version: `3`
+Internal format version: `4`
 
 Last updated: 2026-09-08
 
@@ -38,20 +38,21 @@ The persisted state names match protocol v2:
 
 A transition also validates its required data and rolls back entirely on failure. For example, `downloading` requires accepted resource identity and a confined partial path; `validating` and `promoting` require exact completed coverage; `completed` requires exact coverage and a published final path. A failed task may retain its partial, but retry must reprobe and apply the same accepted resource identity before those bytes can resume. Timestamps cannot move backwards, and every semantic mutation advances the revision.
 
-## Version 2 record
+## Version 4 record
 
 Every file is one strict UTF-8 JSON object with this conceptual shape:
 
 ```json
 {
   "format": "firefox-download-manager-task",
-  "version": 3,
+  "version": 4,
   "task": {
     "task_id": "7b1c7182-37e9-4a3a-89bd-f9e4e2d6f376",
     "revision": 6,
     "state": "downloading",
     "original_url": "https://downloads.example.test/archive.bin",
     "needs_session": false,
+    "expected_sha256": null,
     "final_url": "https://cdn.example.test/archive.bin",
     "expected_size": 10485760,
     "validators": {
@@ -109,6 +110,8 @@ A write/flush/replace failure leaves the previous complete record authoritative.
 
 Rust's portable Windows API does not expose destination-directory flushing, so power loss can yield the old or new complete record rather than a promised directory-journal ordering. Recovery validates either record against the partial file and never trusts a torn or mismatched combination.
 
+Final publication follows [integrity validation](INTEGRITY.md), including a streamed optional SHA-256 pass over the owned partial. The non-cloneable validation lease retains helper-write exclusion and its file lock across the promoting checkpoint.
+
 Final publication has a second checkpoint boundary. Storage creates the collision-safe final hard link but retains the `.part` link. The task records both paths in `promoting` state and critically checkpoints them before explicit partial-link cleanup. It then records and checkpoints the cleanup before completion. A crash therefore leaves at least one metadata-identified complete link; recovery never has to guess which pre-existing final filename belongs to the task.
 
 ## Bounded write frequency and input
@@ -138,7 +141,7 @@ Startup acquires the store lock and removes narrowly matched stale temporary fil
 - partial and published-final file types and exact known lengths; and
 - same-file identity when a recoverable publication records both hard links.
 
-Unknown future versions and corrupt records remain untouched for diagnosis or deliberate local cleanup and are returned as safe failure classifications, not resumable tasks. Format v3 has strict dedicated migrations from v1 and v2: v1 receives the historical four-worker default; both receive `needs_session: false`, undergo semantic/filesystem validation, and are atomically rewritten as v3 before being returned. Missing required fields in the current version, or newer fields in older shapes, are malformed rather than guessed. Migration failure excludes only that task and preserves its prior complete record. A missing v3 session marker never authorizes an unauthenticated resume.
+Unknown future versions and corrupt records remain untouched for diagnosis or deliberate local cleanup and are returned as safe failure classifications, not resumable tasks. Format v4 has dedicated strict shapes for v1/v2/v3 migration: v1 receives the historical four-worker default; v1/v2 receive `needs_session: false`; v3 retains its required session marker. All three receive `expected_sha256: null` because they never accepted checksums, undergo semantic/filesystem validation, and are atomically rewritten as v4 before being returned. Missing required fields in the current version, or newer fields in older shapes, are malformed rather than guessed. Migration failure excludes only that task and preserves its prior complete record. A missing v3/v4 session marker never authorizes an unauthenticated resume. A missing v4 checksum key never silently disables validation. The v4 parser makes all nullable task/validator keys explicitly required, correcting the older discrepancy between the documented shape and Serde Option omission behavior. Legacy task shapes retain their dedicated migrations.
 
 A missing, truncated, linked, or wrong-length partial excludes active prepublication work from recovery; a `promoting` or `completed` task may instead prove its recorded final file. At task-engine startup, a valid interrupted `downloading` record becomes `paused`; interrupted `probing` or `validating` becomes `failed`; `promoting` becomes `completed` only when its recorded final path already passed recovery validation, otherwise it becomes `failed`. A failed/cancelled record whose partial deletion completed before its metadata checkpoint durably forgets the now-missing path and coverage. Each normalization is a critical checkpoint before the snapshot is exposed.
 
@@ -171,4 +174,4 @@ Later work may tune timing within validated bounds, but it may not reverse bytes
 
 ## Process-kill evidence
 
-`crates/native-host/tests/crash_recovery.rs` launches the actual native-host binary against a loopback 8 MiB fixture in isolated paths containing spaces, waits for persisted completed ranges while a tail is stalled, forcibly kills the process (not cooperative EOF), launches a second helper, asserts paused recovery with retained bytes, resumes, and byte-compares final output. This does not claim a real power-loss or filesystem hardware-fault test.
+`crates/native-host/tests/crash_recovery.rs` launches the actual native-host binary against a loopback 8 MiB fixture in isolated paths containing spaces, waits for persisted completed ranges while a tail is stalled, forcibly kills the process (not cooperative EOF), launches a second helper, asserts paused recovery with retained bytes, resumes with the persisted expected SHA-256 still required, and byte-compares final output. This does not claim a real power-loss or filesystem hardware-fault test.

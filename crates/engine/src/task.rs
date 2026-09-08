@@ -19,6 +19,7 @@ use tokio::sync::{Notify, watch};
 use tokio::time::MissedTickBehavior;
 
 use crate::auth::{ContextError, RequestContext};
+use crate::integrity::ExpectedSha256;
 use crate::network::{ProbeClient, ProbeError, RangeValidationError, ResourceProbe};
 use crate::persistence::{
     CheckpointOutcome, CheckpointUrgency, CleanupOutcome, LoadFailure, PartialCleanup,
@@ -261,6 +262,8 @@ pub enum CancelPartialPolicy {
 /// Stable task failure category for later protocol-v2 error mapping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TaskFailureKind {
+    /// Optional user checksum failed before publication.
+    ChecksumMismatch,
     /// Recovery lost the memory-only session.
     AuthRequired,
     /// Server denied access or a transferred cookie expired.
@@ -1103,6 +1106,28 @@ impl TaskEngine {
         workers: WorkerCount,
         context: Option<Arc<RequestContext>>,
     ) -> Result<TaskSnapshot, TaskEngineError> {
+        self.create_task_with_integrity(
+            original_url,
+            destination,
+            suggested_filename,
+            workers,
+            context,
+            None,
+        )
+    }
+
+    /// Creates a task whose expected checksum cannot change on retry/recovery.
+    /// # Errors
+    /// Rejects unsafe task data, exhausted task capacity, or persistence failure.
+    pub fn create_task_with_integrity(
+        &self,
+        original_url: &str,
+        destination: &Path,
+        suggested_filename: &str,
+        workers: WorkerCount,
+        context: Option<Arc<RequestContext>>,
+        expected: Option<ExpectedSha256>,
+    ) -> Result<TaskSnapshot, TaskEngineError> {
         let mut metadata = TaskMetadata::new_with_workers(
             original_url,
             destination,
@@ -1111,6 +1136,9 @@ impl TaskEngine {
         )?;
         if context.is_some() {
             metadata.require_session();
+        }
+        if let Some(expected) = expected {
+            metadata.require_checksum(expected);
         }
         let mut tasks = lock(&self.inner.tasks);
         if tasks.len() >= MAX_MANAGED_TASKS {
@@ -1662,7 +1690,7 @@ async fn run_task(
                 } else if cancellation.is_cancelled() {
                     finish_stop(&inner, &task, generation);
                 } else {
-                    complete_run(&inner, &task, generation, &partial, &cancellation);
+                    complete_run(&inner, &task, generation, &partial, &cancellation).await;
                 }
                 return;
             }
@@ -2126,7 +2154,7 @@ fn checkpoint_boundary(
     Ok(())
 }
 
-fn complete_run(
+async fn complete_run(
     inner: &TaskEngineInner,
     task: &Arc<ManagedTask>,
     generation: u64,
@@ -2141,12 +2169,49 @@ fn complete_run(
         finish_stop(inner, task, generation);
         return;
     }
+    let expected = lock(&task.state).metadata.expected_sha256();
+    let owned_partial = partial.clone();
+    let signal = cancellation.clone();
+    let validation = tokio::task::spawn_blocking(move || {
+        owned_partial.validate(expected, || signal.is_cancelled())
+    })
+    .await;
+    let lease = match validation {
+        Ok(Ok(lease)) => lease,
+        Ok(Err(StorageError::ValidationCancelled)) => {
+            finish_stop(inner, task, generation);
+            return;
+        }
+        Ok(Err(error)) => {
+            if cancellation.is_cancelled() {
+                finish_stop(inner, task, generation);
+            } else {
+                fail_run(inner, task, generation, failure_from_storage(&error));
+            }
+            return;
+        }
+        Err(_) => {
+            fail_run(
+                inner,
+                task,
+                generation,
+                TaskFailure::new(TaskFailureKind::Internal),
+            );
+            return;
+        }
+    };
+    if cancellation.is_cancelled() {
+        drop(lease);
+        finish_stop(inner, task, generation);
+        return;
+    }
     if let Err(failure) = enter_run_state(inner, task, generation, TaskState::Promoting) {
+        drop(lease);
         finish_or_fail_completion(inner, task, generation, failure);
         return;
     }
 
-    let mut promotion = match partial.promote() {
+    let mut promotion = match lease.promote() {
         Ok(promotion) => promotion,
         Err(error) => {
             fail_run(inner, task, generation, failure_from_storage(&error));
@@ -2931,6 +2996,8 @@ fn failure_from_scheduler(error: &SchedulerError) -> TaskFailure {
 
 fn failure_from_storage(error: &StorageError) -> TaskFailure {
     match error {
+        StorageError::ChecksumMismatch => TaskFailure::new(TaskFailureKind::ChecksumMismatch),
+        StorageError::ValidationCancelled => TaskFailure::new(TaskFailureKind::Cancelled),
         StorageError::Io { failure, .. } => match failure {
             IoFailure::DiskFull => TaskFailure::new(TaskFailureKind::DiskFull),
             IoFailure::AccessDenied => TaskFailure::new(TaskFailureKind::AccessDenied),

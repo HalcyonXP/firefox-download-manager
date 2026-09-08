@@ -59,7 +59,7 @@ Promotion occurs only after validation. If the filesystem cannot provide an atom
 
 ### Persisted state to restarted helper
 
-Metadata is versioned but untrusted. Recovery validates identifiers, enum values, the persisted 1/2/4/8 worker selection, size arithmetic, range ordering and coverage, paths, partial/final file type and length, same-file publication identity, and resource validators. Formats v1/v2 are accepted only through dedicated strict migration into v3; unknown future formats and corrupt state fail closed. Secret headers and cookies are not persisted by default. Concrete schema, checkpoint ordering, recovery bounds, and cleanup behavior are documented in [STATE.md](STATE.md).
+Metadata is versioned but untrusted. Recovery validates identifiers, enum values, the persisted 1/2/4/8 worker selection, size arithmetic, range ordering and coverage, paths, partial/final file type and length, same-file publication identity, and resource validators. Formats v1/v2/v3 are accepted only through dedicated migration into strict v4, preserving session requirements and supplying no checksum only for historical formats that could not accept one; unknown future formats and corrupt state fail closed. Secret headers and cookies are not persisted by default. Concrete schema, checkpoint ordering, recovery bounds, and cleanup behavior are documented in [STATE.md](STATE.md).
 
 ## Sensitive-data policy
 
@@ -131,3 +131,7 @@ Current regression coverage includes partial, malformed, duplicate-member, overs
 ## Explicit exclusions
 
 The manager does not claim to hide network activity from the operating system, VPN provider, ISP, or destination server. It does not scan downloaded content, bypass endpoint security, enforce download licensing, or protect against a fully compromised Windows account. These exclusions do not relax byte-integrity, least-privilege, or secret-handling requirements.
+
+## Optional checksum boundary (#25)
+
+Supplied SHA-256 expectations are immutable task inputs, validated before networking and required in v4 recovery shape. Streaming validation reads the owned complete partial, then retains a non-cloneable lease through no-overwrite promotion; mismatch cannot publish output or success. The failure-retention setting applies explicitly. Cancellation joins hashing before acknowledgement. Windows file locks resist ordinary competing I/O, not malicious same-user or memory-mapped mutation/all namespace races. Published files are not continuously rehashed. These limits and test boundaries are explicit in [INTEGRITY.md](INTEGRITY.md); #26 still requires the overall security review.

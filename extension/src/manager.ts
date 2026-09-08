@@ -68,6 +68,7 @@ function attach(): void {
     if (message.kind === "added" && message.task) {
       feedback.textContent = `Added ${message.task.display_name}. The helper now owns this download.`;
       url.value = "";
+      element<HTMLInputElement>("checksum").value = "";
     }
     if (message.kind === "idle") {
       submit.disabled = false;
@@ -98,6 +99,7 @@ async function submitDownload(event: SubmitEvent): Promise<void> {
     destination: destination.value,
     filename: filename.value,
     workers: Number(workers.value),
+    checksum: element<HTMLInputElement>("checksum").value,
   };
   try {
     creationPayload(input);

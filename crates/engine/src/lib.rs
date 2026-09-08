@@ -2,6 +2,7 @@
 
 pub mod admission;
 pub mod auth;
+pub mod integrity;
 pub mod network;
 pub mod persistence;
 pub mod progress;
