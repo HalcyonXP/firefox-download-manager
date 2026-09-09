@@ -8,11 +8,13 @@ import {
   originalCommitAbsent,
   outsideCheckout,
   platformRecordCounts,
+  platformCoverageObservation,
 } from "./publication-policy.mjs";
 import { repository as target } from "./repository-policy.mjs";
 
 const maxBuffer = 64 * 1024 * 1024;
 let stage = "inputs";
+let coverageObservation; // Counts only; never raw API payloads, identifiers or errors.
 function requireCondition(value) {
   if (!value) throw new Error("Publication verification condition failed");
 }
@@ -174,12 +176,19 @@ async function main() {
         `query=query { repository(owner:"${owner}",name:"${name}") { issues { totalCount } pullRequests { totalCount } } }`,
       ]),
     );
-    requireCondition(!totalResponse.errors);
     const totalRepository = totalResponse.data?.repository;
-    const platformCounts = platformRecordCounts(surfaces.issues, surfaces.pulls, {
+    const totals = {
       issues: totalRepository?.issues?.totalCount,
       pullRequests: totalRepository?.pullRequests?.totalCount,
-    });
+    };
+    coverageObservation = platformCoverageObservation(
+      surfaces.issues,
+      surfaces.pulls,
+      totals,
+      Boolean(totalResponse.errors),
+    );
+    requireCondition(!totalResponse.errors);
+    const platformCounts = platformRecordCounts(surfaces.issues, surfaces.pulls, totals);
     stage = "unstarted-jobs";
     surfaces.jobs = surfaces.runs.flatMap((run) =>
       pages(`repos/${target}/actions/runs/${run.id}/jobs?filter=all`, "jobs"),
@@ -238,6 +247,8 @@ async function main() {
 }
 main().catch(() => {
   console.error(`Audit stage: ${stage}`);
+  if (stage === "issue-and-pull-coverage" && coverageObservation)
+    console.error(`Bounded coverage observation: ${JSON.stringify(coverageObservation)}`);
   console.error(
     "Remote privacy audit failed or incomplete. Inspect locally before publishing additional data; details withheld to avoid exposing private values or paths. Required inputs: external private-identifiers JSON, then original-commits JSON; optional --metadata-only never clears log/artifact contents.",
   );

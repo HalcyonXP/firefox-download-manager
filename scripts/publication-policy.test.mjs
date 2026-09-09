@@ -6,6 +6,7 @@ import {
   originalCommitAbsent,
   outsideCheckout,
   platformRecordCounts,
+  platformCoverageObservation,
 } from "./publication-policy.mjs";
 
 test("comparison inputs must be outside the checkout, not merely dot-prefixed", () => {
@@ -41,6 +42,36 @@ test("independent pull metadata and totals cover an issues-only response without
   ]) {
     assert.throws(() => platformRecordCounts(issues, pulls, counts), /coverage is incomplete/u);
   }
+});
+
+test("coverage diagnostics contain only bounded counts and error presence, not API payloads", () => {
+  const canary = "synthetic-private-canary";
+  const observed = platformCoverageObservation(
+    [{ number: 1, body: canary }],
+    [],
+    { issues: 1, pullRequests: 2 },
+    true,
+  );
+  assert.deepEqual(observed, {
+    issueEndpointRecords: 1,
+    regularIssueRecords: 1,
+    fullPullRecords: 0,
+    expectedIssues: 1,
+    expectedPulls: 2,
+    graphErrors: "present",
+  });
+  assert.equal(JSON.stringify(observed).includes(canary), false);
+  const malformed = platformCoverageObservation(
+    null,
+    canary,
+    { issues: canary, pullRequests: Infinity },
+    false,
+  );
+  assert.equal(malformed.issueEndpointRecords, "invalid");
+  assert.equal(malformed.fullPullRecords, "invalid");
+  assert.equal(malformed.expectedIssues, "invalid");
+  assert.equal(malformed.expectedPulls, "invalid");
+  assert.equal(JSON.stringify(malformed).includes(canary), false);
 });
 
 test("only an exact missing-commit response proves a tested original is absent", () => {

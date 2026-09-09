@@ -6,6 +6,22 @@ export function outsideCheckout(checkout, input) {
   return path === ".." || path.startsWith(`..${sep}`) || isAbsolute(path);
 }
 
+export function platformCoverageObservation(issues, pulls, totals, graphErrors) {
+  const bounded = (value) =>
+    Number.isSafeInteger(value) && value >= 0 && value <= 10000 ? value : "invalid";
+  const usable = Array.isArray(issues) && issues.every((row) => row && typeof row === "object");
+  return {
+    issueEndpointRecords: bounded(Array.isArray(issues) ? issues.length : undefined),
+    regularIssueRecords: usable
+      ? bounded(issues.filter((row) => !Object.hasOwn(row, "pull_request")).length)
+      : "invalid",
+    fullPullRecords: bounded(Array.isArray(pulls) ? pulls.length : undefined),
+    expectedIssues: bounded(totals?.issues),
+    expectedPulls: bounded(totals?.pullRequests),
+    graphErrors: graphErrors ? "present" : "absent",
+  };
+}
+
 // The issues endpoint may omit PR records. Read pulls independently and reconcile
 // against independent repository totals rather than blessing a short response.
 export function platformRecordCounts(issues, pulls, totals) {
