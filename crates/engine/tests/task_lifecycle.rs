@@ -15,7 +15,7 @@ use download_manager_engine::scheduler::{
 use download_manager_engine::storage::{FileRange, PartialFile};
 use download_manager_engine::task::{
     CancelPartialPolicy, RetryPolicy, TaskEngine, TaskEngineError, TaskEngineOptions,
-    TaskEventKind, TaskFailureKind,
+    TaskEventKind, TaskFailureKind, TaskSubscription,
 };
 use download_manager_test_server::{
     BadRange, ByteRange, Fault, FaultRule, Fixture, RequestSelector, ServerConfig, TestServer,
@@ -705,19 +705,262 @@ async fn routine_progress_eventually_flushes_deferred_ranges_during_a_stall() {
     assert_eq!(paused.state(), TaskState::Paused);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
-    let fixture = Fixture {
-        len: 8 * MIB,
-        seed: 105,
-    };
+fn progress_fixture(seed: u8) -> (Fixture, TestServer) {
+    let fixture = Fixture { len: 8 * MIB, seed };
     let server = TestServer::start(ServerConfig {
         fixture: fixture.clone(),
         rules: Vec::new(),
     })
-    .expect("start progress server");
-    // Withhold the second assignment, not an assumed number of wall-clock ticks.
-    // The first assignment still exercises real networking, disk and snapshots.
+    .expect("start progress fixture");
+    (fixture, server)
+}
+
+// Read the independently published watch snapshot, not the managed-state mutex:
+// a slow critical checkpoint may still own that mutex when a deadline fires.
+// No URL, filename, path, validator, task ID or credential is formatted here.
+fn progress_observation(subscription: &TaskSubscription, started: Instant) -> String {
+    let snapshot = subscription.latest();
+    format!(
+        "elapsed_ms={} published_state={:?} bytes={} expected={:?} active={} speed={:?} failure={:?}",
+        started.elapsed().as_millis(),
+        snapshot.state(),
+        snapshot.bytes_completed(),
+        snapshot.expected_size(),
+        snapshot.active_workers(),
+        snapshot.speed_bytes_per_second(),
+        snapshot
+            .failure()
+            .map(download_manager_engine::task::TaskFailure::kind),
+    )
+}
+
+#[test]
+fn progress_diagnostics_omit_sensitive_snapshot_fields() {
+    let directories = TestDirectories::new("diagnostic-canary44");
+    let engine = TaskEngine::open(directories.state(), TaskEngineOptions::default())
+        .expect("open diagnostic fixture");
+    let task = engine
+        .create_task_default(
+            "https://diagnostic44.example.test/private-path?token=synthetic44",
+            directories.destination(),
+            "private-name44.bin",
+        )
+        .expect("create diagnostic task without starting network");
+    let subscription = engine.subscribe(task.task_id()).expect("subscribe");
+    let text = progress_observation(&subscription, Instant::now());
+    assert!(text.len() <= 256);
+    assert!(
+        text.contains(
+            "published_state=Queued bytes=0 expected=None active=0 speed=None failure=None"
+        )
+    );
+    for forbidden in [
+        "diagnostic44",
+        "private-path",
+        "synthetic44",
+        "private-name44",
+        "diagnostic-canary44",
+        &task.task_id().to_string(),
+        &directories.root.to_string_lossy(),
+    ] {
+        assert!(!text.contains(forbidden));
+    }
+}
+
+fn assert_progress_samples(
+    progress_events: &[(TimestampMillis, download_manager_engine::task::TaskProgress)],
+    size: u64,
+    elapsed: Duration,
+) {
+    assert!(
+        progress_events
+            .windows(2)
+            .all(|samples| samples[0].1.bytes_completed() <= samples[1].1.bytes_completed())
+    );
+    let ordinary: Vec<_> = progress_events
+        .iter()
+        .filter(|(_, sample)| sample.bytes_completed() < size)
+        .collect();
+    assert!(
+        ordinary
+            .windows(2)
+            .all(|samples| { samples[1].0.get().saturating_sub(samples[0].0.get()) >= 80 })
+    );
+    let generous_maximum =
+        usize::try_from(elapsed.as_millis() / 100).expect("test duration fits usize") + 3;
+    assert!(progress_events.len() <= generous_maximum);
+}
+
+// Workflow containment is not a progress-frequency or transfer-latency SLO.
+// A single accepted request may take 30s; preparation, joined disk validation and
+// promotion do not belong to the active-cadence observation window. The latter
+// retains its 10s missing-events watchdog after independent prefix/gate readiness.
+const PROGRESS_WORKFLOW_LIMIT: Duration = Duration::from_secs(60);
+const CADENCE_OBSERVATION_LIMIT: Duration = Duration::from_secs(10);
+
+async fn prove_preparation_outlasts_old_deadline(
+    engine: &TaskEngine,
+    subscription: &TaskSubscription,
+    pause: Option<download_manager_test_server::ObservationPause>,
+    started: Instant,
+) {
+    let Some(pause) = pause else { return };
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !pause.wait_for_pending(1, Duration::ZERO) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("controlled probe did not arrive");
+    // The connected probe is allowed 30s by the real client. Keep it pending
+    // across the original 10s whole-task budget; do not consume any task event.
+    let task_id = subscription.latest().task_id();
+    assert!(
+        tokio::time::timeout(
+            CADENCE_OBSERVATION_LIMIT,
+            engine.wait_until_inactive(task_id),
+        )
+        .await
+        .is_err(),
+        "withheld preparation must outlast the old whole-task deadline",
+    );
+    let snapshot = subscription.latest();
+    assert_eq!(snapshot.state(), TaskState::Probing);
+    assert_eq!(snapshot.bytes_completed(), 0);
+    assert_eq!(snapshot.failure(), None);
+    eprintln!(
+        "controlled preparation at old deadline: {}",
+        progress_observation(subscription, started)
+    );
+    drop(pause);
+}
+
+async fn wait_for_cadence_readiness(
+    subscription: &mut TaskSubscription,
+    pause: &download_manager_test_server::ResponsePause,
+    deadline: tokio::time::Instant,
+    started: Instant,
+) {
+    let prepared = tokio::time::timeout_at(deadline, async {
+        loop {
+            let snapshot = subscription.latest();
+            assert_ne!(
+                snapshot.state(),
+                TaskState::Failed,
+                "preparation failed; {}",
+                progress_observation(subscription, started)
+            );
+            if snapshot.bytes_completed() == 2 * MIB && pause.wait_for_pending(1, Duration::ZERO) {
+                break;
+            }
+            subscription
+                .changed()
+                .await
+                .expect("preparation watch closed");
+        }
+    })
+    .await;
+    assert!(
+        prepared.is_ok(),
+        "preparation workflow deadline; {}",
+        progress_observation(subscription, started)
+    );
+}
+
+async fn observe_active_cadence(
+    engine: &TaskEngine,
+    subscription: &TaskSubscription,
+    pause: download_manager_test_server::ResponsePause,
+    workflow_deadline: tokio::time::Instant,
+    started: Instant,
+) -> Option<u64> {
+    let observation_started = Instant::now();
+    let cadence_deadline = tokio::time::Instant::now() + CADENCE_OBSERVATION_LIMIT;
+    let mut pause = Some(pause);
+    let mut held_samples = 0;
+    let mut first_prefix_ms = None;
+    let mut released_ms = None;
+    let mut last_transition = None;
+    let mut validation_rate = None;
+    let mut progress_events = Vec::new();
+    let completion = tokio::time::timeout_at(workflow_deadline, async {
+        loop {
+            let next = engine.next_event();
+            let event =
+                if pause.is_some() {
+                    tokio::time::timeout_at(cadence_deadline, next).await.unwrap_or_else(|_| panic!(
+                    "active cadence observation deadline; held_samples={held_samples}; {}",
+                    progress_observation(subscription, started),
+                ))
+                } else {
+                    next.await
+                }
+                .expect("next task event");
+            match event.kind() {
+                TaskEventKind::Progress(progress) => {
+                    progress_events.push((event.emitted_at(), *progress));
+                    if pause.is_some() && progress.bytes_completed() == 2 * MIB {
+                        first_prefix_ms.get_or_insert_with(|| started.elapsed().as_millis());
+                        held_samples += 1;
+                        if held_samples >= 4
+                            && progress.speed_bytes_per_second().is_some()
+                            && pause
+                                .as_ref()
+                                .is_some_and(|guard| guard.wait_for_pending(1, Duration::ZERO))
+                        {
+                            released_ms = Some(started.elapsed().as_millis());
+                            drop(pause.take());
+                        }
+                    }
+                }
+                TaskEventKind::Completed(task) => {
+                    assert_eq!(Some(task.speed_bytes_per_second()), validation_rate,
+                        "validation/promotion must preserve the final transfer estimate, including None");
+                    break;
+                }
+                TaskEventKind::StateChanged { task, .. } => {
+                    if task.state() == TaskState::Validating {
+                        validation_rate = Some(task.speed_bytes_per_second());
+                    }
+                    last_transition = Some((task.state(), started.elapsed().as_millis()));
+                }
+                TaskEventKind::Failed { failure, .. } => panic!(
+                    "progress fixture failed: {:?}; {}",
+                    failure.kind(),
+                    progress_observation(subscription, started),
+                ),
+                TaskEventKind::RetryScheduled(_) => {}
+            }
+        }
+    })
+    .await;
+    let gate_pending = pause
+        .as_ref()
+        .is_some_and(|guard| guard.wait_for_pending(1, Duration::ZERO));
+    let observation = format!(
+        "{} events={} held_samples={held_samples} first_prefix_ms={first_prefix_ms:?} \
+         released_ms={released_ms:?} gate_pending={gate_pending} last_transition={last_transition:?}",
+        progress_observation(subscription, started),
+        progress_events.len(),
+    );
+    assert!(
+        completion.is_ok(),
+        "completion workflow deadline; {observation}"
+    );
+    eprintln!("progress cadence observation: {observation}");
+    assert!(
+        pause.is_none(),
+        "completion must follow explicit response release"
+    );
+    assert!(held_samples >= 4);
+    // Preparation time cannot inflate the permitted ordinary-event count.
+    assert_progress_samples(&progress_events, 8 * MIB, observation_started.elapsed());
+    validation_rate.expect("validation phase must be observed")
+}
+
+async fn assert_cadence_fixture(delay_preparation: bool) {
+    let (fixture, server) = progress_fixture(105);
+    let preparation = delay_preparation.then(|| server.pause_observation());
     let pause = server
         .pause_responses(RequestSelector {
             path: Some("/fixture".to_owned()),
@@ -729,7 +972,9 @@ async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
         })
         .expect("pause second response");
     let directories = TestDirectories::new("progress-events");
-    let progress = ProgressPolicy::new(Duration::from_millis(100), Duration::from_secs(1))
+    // Keep observed active samples eligible throughout this test's watchdog.
+    // The one-second stale-window semantics have independent deterministic tests.
+    let progress = ProgressPolicy::new(Duration::from_millis(100), CADENCE_OBSERVATION_LIMIT)
         .expect("progress policy");
     let options = TaskEngineOptions::new(WorkerCount::One, RetryPolicy::default(), progress, 256)
         .expect("task options");
@@ -742,86 +987,48 @@ async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
             WorkerCount::One,
         )
         .expect("create task");
-    let started = std::time::Instant::now();
+    let mut subscription = engine
+        .subscribe(task.task_id())
+        .expect("diagnostic subscription");
+    let delay_subscription = engine
+        .subscribe(task.task_id())
+        .expect("delay subscription");
+    let started = Instant::now();
+    let deadline = tokio::time::Instant::now() + PROGRESS_WORKFLOW_LIMIT;
     engine.start(task.task_id()).expect("start task");
-
-    let mut pause = Some(pause);
-    let mut held_samples = 0;
-    let mut progress_events = Vec::new();
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let event = engine.next_event().await.expect("next task event");
-            match event.kind() {
-                TaskEventKind::Progress(progress) => {
-                    progress_events.push((event.emitted_at(), *progress));
-                    if pause.is_some() && progress.bytes_completed() == 2 * MIB {
-                        held_samples += 1;
-                        // Observe an actual estimator window too; do not assume the
-                        // fixture takes long enough to produce a speed estimate.
-                        if held_samples >= 4
-                            && progress.speed_bytes_per_second().is_some()
-                            && pause
-                                .as_ref()
-                                .is_some_and(|guard| guard.wait_for_pending(1, Duration::ZERO))
-                        {
-                            drop(pause.take());
-                        }
-                    }
-                }
-                TaskEventKind::Completed(_) => break,
-                _ => {}
-            }
-        }
-    })
-    .await
-    .expect("event completion timeout");
-
-    assert!(
-        pause.is_none(),
-        "completion must follow explicit response release"
+    let ((), final_rate) = tokio::join!(
+        prove_preparation_outlasts_old_deadline(&engine, &delay_subscription, preparation, started),
+        async {
+            wait_for_cadence_readiness(&mut subscription, &pause, deadline, started).await;
+            observe_active_cadence(&engine, &subscription, pause, deadline, started).await
+        },
     );
-    assert!(held_samples >= 4);
-    assert!(
-        progress_events
-            .windows(2)
-            .all(|samples| samples[0].1.bytes_completed() <= samples[1].1.bytes_completed())
-    );
-    let ordinary: Vec<_> = progress_events
-        .iter()
-        .filter(|(_, sample)| sample.bytes_completed() < fixture.len)
-        .collect();
-    assert!(
-        ordinary
-            .windows(2)
-            .all(|samples| { samples[1].0.get().saturating_sub(samples[0].0.get()) >= 80 })
-    );
-    let generous_maximum =
-        usize::try_from(started.elapsed().as_millis() / 100).expect("test duration fits usize") + 3;
-    assert!(progress_events.len() <= generous_maximum);
-
     let snapshot = engine.snapshot(task.task_id()).expect("latest snapshot");
     assert_eq!(snapshot.state(), TaskState::Completed);
     assert_eq!(snapshot.bytes_completed(), fixture.len);
     assert_eq!(snapshot.expected_size(), Some(fixture.len));
-    assert!(snapshot.speed_bytes_per_second().is_some());
+    assert_eq!(snapshot.speed_bytes_per_second(), final_rate);
+    assert_eq!(snapshot.active_workers(), 0);
     assert_eq!(snapshot.eta_seconds(), Some(0));
     assert_eq!(
         fs::read(directories.destination().join("progress.bin")).expect("read published bytes"),
-        fixture.bytes(0, usize::try_from(fixture.len).expect("fixture fits"), 0)
+        fixture.bytes(0, usize::try_from(fixture.len).expect("fixture fits"), 0),
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn progress_events_coalesce_for_a_late_consumer_without_losing_final_state() {
-    let fixture = Fixture {
-        len: 8 * MIB,
-        seed: 139,
-    };
-    let server = TestServer::start(ServerConfig {
-        fixture: fixture.clone(),
-        rules: Vec::new(),
-    })
-    .expect("start coalescing server");
+async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
+    assert_cadence_fixture(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn preparation_can_outlast_old_whole_task_deadline_without_losing_cadence() {
+    assert_cadence_fixture(true).await;
+}
+
+async fn assert_late_consumer_fixture(delay_preparation: bool) {
+    let (fixture, server) = progress_fixture(139);
+    let preparation = delay_preparation.then(|| server.pause_observation());
     let directories = TestDirectories::new("late-progress-consumer");
     let engine = TaskEngine::open(directories.state(), TaskEngineOptions::default())
         .expect("open task engine");
@@ -832,16 +1039,27 @@ async fn progress_events_coalesce_for_a_late_consumer_without_losing_final_state
             "coalesced.bin",
         )
         .expect("create task");
+    let subscription = engine
+        .subscribe(task.task_id())
+        .expect("diagnostic subscription");
+    let started = Instant::now();
+    let deadline = tokio::time::Instant::now() + PROGRESS_WORKFLOW_LIMIT;
     engine.start(task.task_id()).expect("start task");
-    // Deliberately consume no events until the task completes. Snapshot watching
-    // is a separate channel, so this deterministically exercises a late consumer.
-    let completed = tokio::time::timeout(
-        Duration::from_secs(10),
-        engine.wait_until_inactive(task.task_id()),
-    )
-    .await
-    .expect("task timeout")
-    .expect("wait for task");
+    prove_preparation_outlasts_old_deadline(&engine, &subscription, preparation, started).await;
+    // Consume no events until inactivity, including during controlled preparation.
+    let completed = tokio::time::timeout_at(deadline, engine.wait_until_inactive(task.task_id()))
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "late consumer workflow deadline; {}",
+                progress_observation(&subscription, started)
+            )
+        })
+        .expect("wait for task");
+    eprintln!(
+        "late consumer completion: {}",
+        progress_observation(&subscription, started)
+    );
     assert_eq!(completed.state(), TaskState::Completed);
     assert_eq!(completed.bytes_completed(), fixture.len);
     let mut samples = Vec::new();
@@ -860,12 +1078,15 @@ async fn progress_events_coalesce_for_a_late_consumer_without_losing_final_state
         }
     })
     .await
-    .expect("completion event timeout");
-    // A minimum of four observed events is not the coalescing contract.
+    .unwrap_or_else(|_| {
+        panic!(
+            "late consumer event timeout; samples={}; {}",
+            samples.len(),
+            progress_observation(&subscription, started)
+        )
+    });
     assert!(samples.len() <= 1);
     for sample in samples {
-        // Ordinary progress can predate completion (even show zero on a fast
-        // transfer). The terminal snapshot, not this event, seals final metrics.
         assert!(sample.bytes_completed() <= fixture.len);
         assert_eq!(sample.expected_size(), Some(fixture.len));
         assert!(sample.active_workers() <= 4);
@@ -876,8 +1097,18 @@ async fn progress_events_coalesce_for_a_late_consumer_without_losing_final_state
     assert!(!engine.events_require_snapshot());
     assert_eq!(
         fs::read(directories.destination().join("coalesced.bin")).expect("read published bytes"),
-        fixture.bytes(0, usize::try_from(fixture.len).expect("fixture fits"), 0)
+        fixture.bytes(0, usize::try_from(fixture.len).expect("fixture fits"), 0),
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn progress_events_coalesce_for_a_late_consumer_without_losing_final_state() {
+    assert_late_consumer_fixture(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn preparation_can_outlast_old_whole_task_deadline_without_losing_coalescing() {
+    assert_late_consumer_fixture(true).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

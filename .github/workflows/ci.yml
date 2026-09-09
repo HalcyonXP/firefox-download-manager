@@ -71,6 +71,20 @@ jobs:
         shell: pwsh
         run: ./scripts/build-package.ps1 -TestRust -Rebuild
 
+      - name: Observe release-target lifecycle contention (fixed three runs)
+        if: ${{ !cancelled() }}
+        shell: pwsh
+        run: |
+          $tests = @(Get-ChildItem target/package-build/x86_64-pc-windows-gnullvm/release/deps/task_lifecycle-*.exe -File)
+          if ($tests.Count -ne 1) { throw "Expected exactly one built lifecycle test executable" }
+          $failed = $false
+          1..3 | ForEach-Object {
+            Write-Output "Lifecycle observation run $_ of 3 (default parallelism)"
+            & $tests[0].FullName --nocapture
+            if ($LASTEXITCODE) { $failed = $true }
+          }
+          if ($failed) { throw "At least one release-target lifecycle observation failed" }
+
       - name: Repeat release-target probe-cancellation regression
         shell: pwsh
         run: |
@@ -87,7 +101,7 @@ jobs:
           $tests = @(Get-ChildItem target/package-build/x86_64-pc-windows-gnullvm/release/deps/task_lifecycle-*.exe -File)
           if ($tests.Count -ne 1) { throw "Expected exactly one built lifecycle test executable" }
           1..10 | ForEach-Object {
-            & $tests[0].FullName progress_events_
+            & $tests[0].FullName progress_events_ --nocapture
             if ($LASTEXITCODE) { throw "Release-target progress regression failed" }
           }
 

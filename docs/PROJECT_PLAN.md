@@ -228,8 +228,24 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 
 #41 / PR #42 subsequently merged as `78a92ea` after CI `34286434188` passed all three jobs. #39 is now updated onto that main and its full combined gate must pass; merged-main CI `34287899024` was still pending at this integration checkpoint. #28 stays blocked until the current baseline is verified. A successful Dependabot Updates run is not the CI workflow and is never used as that gate.
 
-## Current #28 checkpoint: baseline resolved, artifact slices not release approval
+## Pre-#44 checkpoint: artifact slices, not release approval
 
 The preceding #39/#41 integration notes are historical: merged-main CI `34287899024` passed, combined #39 PR CI `34288270754` passed, #39 merged as `01a49d0`, and main CI `34289550859` passed all three jobs. #28 resumed; draft PR #43 foundation `0ccc6ea` passed CI `34292916341` with native candidate/2-GiB evidence as well as existing package lifecycles.
 
 A clean-driver native Windows 11 x64 main-artifact run passed. A later dirty-driver real Firefox 156/aurora packaged-XPI slice passed settings, checksum success/mismatch, pause/resume, actual optional cookie/site permission plus revocation, session-loss restart refusal and owned upgrade/removal. Fixture regressions correct last-byte probe classification and expected peer resets; no product behavior or release criteria were weakened. [QUALIFICATION_PLAN.md](QUALIFICATION_PLAN.md) and [FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) distinguish inputs, old narrower evidence, successes and remaining gates. No live profile was used, unowned process terminated, signing preference overridden, OS feature enabled or qualified release published.
+
+## New progress-deadline investigation (#44)
+
+The owner has renewed autonomous execution through install readiness; no further approval is needed within the established scope. #28's MIT and existing-machine decisions are preserved in draft PR #43 (not reverted on this independent main-based correction branch). A second computer or clean OS is not required; safety, privacy, ownership and exact-artifact gates remain.
+
+CI `34321346203` at #28 tip `26e302b` failed two existing release-target progress deadlines, with 29 other lifecycle cases passing. #44 is In Progress from main `01a49d0`, whose engine/test source is identical to the failing tip. #28 is temporarily Backlog. The earlier #39/#41 successes remain historical; they do not waive this new failed gate. [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md) records observations, diagnostic intervention and unresolved cause. Do not merge a diagnostics-only passing rerun as an explanation or release approval.
+
+#44's diagnostics-only CI `34325455523` passed, but that alone did not meet acceptance. Real connected-probe counterexamples now demonstrate valid preparation outlasting the old aggregate ten-second bound. The correction retains ten-second active-cadence and five-second drain watchdogs, introduces explicit whole-workflow containment, and preserves all output/spacing/coalescing assertions. Phase-clock, missing-event and keyed-coalescing mutations fail as intended. Final combined gates remain required; the unavailable original trace is not replaced with a speculative cause.
+
+CI `34327670669` then exposed the inherited mandatory-terminal-rate assertion in a controlled delayed case, not a repeated deadline failure. #44 explicitly reconciles that predicate with the nullable rate/sliding-window contract: retain the observed active-window rate requirement and phase-history equality, but do not invent `Some` at completion after insufficient recent sampling. A deterministic stale-window unit and history-clearing mutation cover this correction; production behavior and final-state/bytes/ETA/output requirements remain unchanged.
+
+## #28 resumed after #44 merge (2026-09-09)
+
+#44 / PR #45 merged as `6482a17892fb2e532077b08ce451a1bf0929de62` after final PR CI `34331518837` passed all three jobs. Merged-main CI `34333682602` is pending at this checkpoint and remains an authoritative gate. #28 is In Progress again on its preserved branch/draft PR #43. The merge retains both the qualification/licensing vocabulary and #44's phase/rate decisions, rather than choosing one side of the documentation conflicts. MIT/eight-payload packaging/nine-leaf XPI and ADR 0011 remain intact.
+
+The latest license-bearing local `26e302b` package passed twelve native checks and 2 GiB from a clean harness. The last actual Firefox run remains the clean pre-license `5ce837c` candidate slice, not a license-bearing rerun. Fresh count-only observation found nineteen unowned Firefox processes; none was stopped or its profile accessed. Native/harness work continues independently. Remaining actual controls/security/restart and artifact/adversary/report-safety/publication work is recorded in #28. The owner requires autonomous completion through install readiness, without additional in-scope approval requests; established safety/privacy/ownership constraints still apply.

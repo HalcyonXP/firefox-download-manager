@@ -119,3 +119,14 @@ The review found a real wildcard-pattern construction edge case, not an observed
 - **Unavailable versus failing coverage**: clean-machine evidence is unavailable under the revised plan and must be disclosed; an actual failing correctness/security test still blocks release. A user-authorized environment change is not permission to relax assertions or manufacture a green run.
 
 See [ADR 0011](decisions/0011-license-and-available-qualification.md). Historical no-license/clean-machine prerequisites are superseded; artifact/source identity, native-x64 intent and safety boundaries are retained.
+
+## Progress-test deadlines (#44)
+
+- **Preparation readiness**: the independently published 2 MiB prefix and selected response-barrier arrival, before consuming cadence samples. Not a guarantee of durable retained-range metadata.
+- **Active-cadence watchdog**: ten-second test containment for observing the held-prefix samples after readiness; not a product delivery-frequency SLO. Preparation cannot spend this clock.
+- **Workflow containment**: a separate, single sixty-second test bound covering preparation/transfer/validation/promotion; neither a product latency promise nor a Windows I/O upper bound. The five-second late-consumer drain bound remains distinct.
+- **Controlled counterexample versus reconstruction**: holding a real accepted probe through the old ten-second deadline demonstrates an invalid aggregate test premise. It does not reconstruct the unavailable original CI schedule.
+
+See [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md). First-party licensing and existing-machine qualification are preserved separately in #28/PR43; this correction does not require another computer or alter safety constraints.
+
+- **Available rate versus retained transfer history (#44)**: an actual rate must be observed in the controlled active window. A later final sample may have insufficient recent history and legitimately yield `None`; the nullable rate at `Validating` entry is retained through promotion/completion, not forcibly cleared or required to be `Some`. Zero terminal ETA and exact joined bytes remain independent requirements. The CI follow-up and deterministic stale-window counterexample are in [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md).
