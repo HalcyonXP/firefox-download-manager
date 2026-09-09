@@ -8,6 +8,7 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
+download-manager-protocol = { version = "=0.1.0", path = "../protocol" }
 getrandom.workspace = true
 hmac.workspace = true
 sha2.workspace = true

@@ -45,3 +45,11 @@ Manual `--preview` also uses a newly created temporary state domain. No-argument
 ## Transport increment
 
 [LOCAL_IPC.md](LOCAL_IPC.md) defines IPC1 authentication/framing, local SID/DACL construction, four-session admission, cancellation observations, actual same-user/cross-process tests and the pending-write defect found in the wrappers. ADR0015 records the explicit compiler-policy exception rather than hiding it in a dependency. The engine/stdio bridge, installed authority and installer remain unintegrated. Prior six-check UI reports are not evidence for new source/binary bytes.
+
+## Next integration constraints (proposal, not completed work)
+
+The native host currently keeps negotiation, sequence numbers, list cursors and a mutable settings borrow inside one private Session. A multi-client engine coordinator must preserve separate per-client protocol state while serializing access to the ONE EngineOwner/settings store. Client EOF must not call owner shutdown; explicit companion Quit must retire both directions, inspect cancellation failures and join runtime/engine work. Refresh defaults from owner settings rather than leaving other clients with a stale cached destination after a settings change.
+
+Do not implement the output adapter by collecting an unbounded Vec or blocking the engine on a slow reader. Give incoming/outgoing queues explicit byte and frame budgets, reserve control-response capacity, and produce initial/overflow snapshot pages incrementally; synchronously enqueueing an entire history into a small queue can disconnect even a healthy client. Disconnecting a failed/slow client must not become an engine failure or automatically replay an uncertain Add. These actor/backpressure choices still require implementation and real-transport tests before pairing with native stdio/setup.
+
+IPC now shares the established 1 MiB native body bound (LOCAL_IPC.md), while metadata/log bounds stay 64 KiB. The original IPC cap could not transparently support wire2; lowering the hello result would also fail the Firefox client's exact check. No installed binding was changed while resolving that contradiction.

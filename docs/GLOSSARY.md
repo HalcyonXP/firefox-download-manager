@@ -180,3 +180,5 @@ See [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) for the demonstrated corr
 - **Narrow FFI exception**: ADR0015 permits only the reviewed borrowed-handle CancelIoEx call in `crates/windows-io`; existing crates still inherit unsafe-forbid. Not a Windows/TLS/Firefox protection change.
 
 See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed test premises and remaining installed-authority gaps.
+
+- **Native/IPC frame limit versus metadata/log limit (#50)**: IPC shares native wire2's 1 MiB body limit. The original 64 KiB IPC draft was incompatible with the Firefox client's exact hello check and was explicitly revised before integration; qualification metadata and ordinary-log bounds stay 64 KiB. Opaque framing still does not validate or authorize a native command.

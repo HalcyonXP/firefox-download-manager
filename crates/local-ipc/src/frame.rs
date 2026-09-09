@@ -4,8 +4,9 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, Wr
 
 use crate::Error;
 
-/// Bounded opaque transport body; JSON/native protocol validation is separate.
-pub const MAX_FRAME: usize = 64 * 1024;
+/// Bounded opaque body, sharing the native wire limit rather than imposing a
+/// smaller incompatible bridge limit. JSON/command validation remains separate.
+pub const MAX_FRAME: usize = download_manager_protocol::MAX_MESSAGE_BYTES;
 const FRAME_LIMIT: Duration = Duration::from_secs(2);
 
 /// Authenticated transport. Not evidence of installed authority or peer delivery.
@@ -116,13 +117,31 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn valid_native_message_at_wire_limit_survives_transport_unchanged() {
+        // Whitespace is legal JSON; this exercises the actual native decoder at
+        // its boundary without huge fields, untrusted endpoints or credentials.
+        let mut body =
+            include_bytes!("../../../protocol/schema/v2/examples/hello.command.json").to_vec();
+        body.resize(download_manager_protocol::MAX_MESSAGE_BYTES, b' ');
+        assert!(body.len() > 64 * 1024);
+        assert!(download_manager_protocol::decode_command(&body).is_ok());
+        let (a, b) = tokio::io::duplex(MAX_FRAME + 4);
+        let (mut reader, _) = Channel::new(a).split();
+        let (_, mut writer) = Channel::new(b).split();
+        writer.write(&body).await.unwrap();
+        let received = reader.read().await.unwrap();
+        assert!(received == body, "native body changed in transport");
+        assert!(download_manager_protocol::decode_command(&received).is_ok());
+    }
+
+    #[tokio::test]
     async fn exact_frames_and_preallocation_length_refusal() {
         let (a, b) = tokio::io::duplex(MAX_FRAME + 4);
         let (mut reader, _) = Channel::new(a).split();
         let (_, mut writer) = Channel::new(b).split();
         for bytes in [vec![1], vec![9; MAX_FRAME]] {
             writer.write(&bytes).await.unwrap();
-            assert_eq!(reader.read().await.unwrap(), bytes);
+            assert!(reader.read().await.unwrap() == bytes, "frame body changed");
         }
         assert_eq!(writer.write(&[]).await, Err(Error::Frame));
         assert_eq!(

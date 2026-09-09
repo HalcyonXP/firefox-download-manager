@@ -236,6 +236,7 @@ dependencies = [
 name = "download-manager-local-ipc"
 version = "0.1.0"
 dependencies = [
+ "download-manager-protocol",
  "download-manager-windows-io",
  "getrandom 0.4.3",
  "hmac",
