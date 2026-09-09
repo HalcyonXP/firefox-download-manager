@@ -100,3 +100,14 @@ The review found a real wildcard-pattern construction edge case, not an observed
 
 - **Retry cancellation readiness**: the retry wait becomes ready for a cancellation signal without requiring its timer to expire. It is distinct from when the executor schedules that ready future.
 - **Durable control acknowledgement**: the pause/cancel/shutdown result follows safe owned-work stopping and the critical checkpoint. A test deadlock-containment deadline is not a product latency SLO or permission to abandon blocking filesystem work.
+
+## Qualification vocabulary and learning (#28)
+
+- **Artifact slice**: an explicit subset exercised against identified real package bytes. Real Firefox/native transport does not make a manager-page slice the full release/support matrix.
+- **Clean driver revision**: committed harness files with a clean Git worktree, not a factory-clean Windows image. Reports bind source revision and file hashes; a dirty driver is recorded, never silently qualified.
+- **Boundary probes versus workers**: the helper verifies the first and last resource bytes before scheduling. The Python fixture initially misclassified the last-byte probe as a worker; the selector was corrected, preserving older reports as probe-stage evidence only.
+- **Worker-body gate**: test-owned hold after headers for non-probe slow responses. It makes an active UI control observable without assuming a transfer lasts long enough; it does not prove retained nonempty coverage.
+- **Expected peer disconnect versus fixture failure**: cancellation/navigation can reset a socket before headers or during a body. Typed connection errors/timeouts are expected; unknown exceptions or unjoined owned handlers invalidate the report.
+- **Owned-process resource observation**: helper working set/private usage, CPU, aggregate I/O and event counts for identified inputs. OS cache/kernel/other-process memory and physical-device/Internet performance are not inferred from those fields.
+
+[FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) preserves the probe-gate correction, independently reproduced peer-reset boundary, actual browser successes and remaining gaps. The old prototype's manual registration/signing override/tree cleanup was not reused.

@@ -1,4 +1,4 @@
-# Final-artifact qualification â€” #28
+# Final-artifact qualification — #28
 
 ## Objective and established baseline
 

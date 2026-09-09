@@ -14,7 +14,7 @@ The user explicitly authorized public visibility and requested that all document
 
 Twenty-two regular issues were transferred with their states and comment history. Current documentation uses their new numbers; [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) records the mapping and links historical implementations to cleaned public commits. The owner-private planning board retains the corresponding work statuses. The predecessor stays private solely as an archive, not an alternative source of truth.
 
-Implementation includes #23 authenticated handoff, #24 shared polite request admission, and #25 integrity/SHA-256. #32/#33 resolved the cancellation-observation baseline and actual public CI passed; that temporary gate is no longer active. The #26 security review is recorded with explicit packaging blockers; packaging #27 and qualification/release #28 remain required. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
+Implementation includes #23 authenticated handoff, #24 shared polite request admission, and #25 integrity/SHA-256. #32/#33 resolved the cancellation-observation baseline and actual public CI passed; that temporary gate is no longer active. The #26 security review is recorded; #27 remediated its packaging blockers within the documented ownership/fault model and merged. #39/#41 baseline corrections also merged and main CI passed. Qualification/release #28 is In Progress (draft PR #43), not approved. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
 
 ## Product goal
 
@@ -223,3 +223,9 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 
 
 #41 / PR #42 subsequently merged as `78a92ea` after CI `34286434188` passed all three jobs. #39 is now updated onto that main and its full combined gate must pass; merged-main CI `34287899024` was still pending at this integration checkpoint. #28 stays blocked until the current baseline is verified. A successful Dependabot Updates run is not the CI workflow and is never used as that gate.
+
+## Current #28 checkpoint: baseline resolved, artifact slices not release approval
+
+The preceding #39/#41 integration notes are historical: merged-main CI `34287899024` passed, combined #39 PR CI `34288270754` passed, #39 merged as `01a49d0`, and main CI `34289550859` passed all three jobs. #28 resumed; draft PR #43 foundation `0ccc6ea` passed CI `34292916341` with native candidate/2-GiB evidence as well as existing package lifecycles.
+
+A clean-driver native Windows 11 x64 main-artifact run passed. A later dirty-driver real Firefox 156/aurora packaged-XPI slice passed settings, checksum success/mismatch, pause/resume, actual optional cookie/site permission plus revocation, session-loss restart refusal and owned upgrade/removal. Fixture regressions correct last-byte probe classification and expected peer resets; no product behavior or release criteria were weakened. [QUALIFICATION_PLAN.md](QUALIFICATION_PLAN.md) and [FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) distinguish inputs, old narrower evidence, successes and remaining gates. No live profile was used, unowned process terminated, signing preference overridden, OS feature enabled or qualified release published.
