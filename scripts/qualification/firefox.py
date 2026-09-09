@@ -20,9 +20,11 @@ import winreg
 if __package__:
     from .fixture import Handler, Fixture, SMALL_SIZE, expected_sha256
     from .native import evidence_identity, file_sha256
+    from .support import bounded_json, new_report, write_report
 else:
     from fixture import Handler, Fixture, SMALL_SIZE, expected_sha256
     from native import evidence_identity, file_sha256
+    from support import bounded_json, new_report, write_report
 
 KEY = r"Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager"
 ADDON = "download-manager@halcyonxp.local"
@@ -47,14 +49,6 @@ def absent_registration():
                     raise RuntimeError("existing native registration; browser test refused")
             except FileNotFoundError:
                 pass
-
-
-def bounded_json(path):
-    with path.open("rb") as source:
-        data = source.read(64 * 1024 + 1)
-    if len(data) > 64 * 1024:
-        raise RuntimeError("oversized owned metadata")
-    return json.loads(data)
 
 
 def setup(package, action, root, environment):
@@ -358,10 +352,10 @@ button.click();return true;""", [self.manager])
 
 
 def qualify(package, executable, report):
+    if not __debug__:
+        raise RuntimeError("qualification requires enabled assertions")
     repository = Path(__file__).resolve().parents[2]
-    package, executable, report = package.resolve(), executable.resolve(), report.resolve()
-    if report.exists() or report.suffix != ".json" or not report.is_relative_to(repository / "artifacts"):
-        raise RuntimeError("use a new JSON report beneath artifacts")
+    package, executable, report = package.resolve(), executable.resolve(), new_report(report)
     closed_apps()
     absent_registration()
     subprocess.run([str(package / "download-manager-setup.exe"), "verify"], check=True, timeout=30, capture_output=True)
@@ -522,9 +516,7 @@ def qualify(package, executable, report):
                                               "scope": "preserved after incomplete browser/setup cleanup; not a live-profile location"}), encoding="utf-8")
     if not cleaned:
         raise RuntimeError("owned browser domain preserved; no success report authorized")
-    report.parent.mkdir(parents=True, exist_ok=True)
-    with report.open("x", encoding="utf-8") as output:
-        output.write(json.dumps(evidence, indent=2) + "\n")
+    write_report(report, evidence)
     print("Actual Firefox artifact slice passed; full qualification remains separate.")
 
 

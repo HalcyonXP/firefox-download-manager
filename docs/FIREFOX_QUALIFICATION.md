@@ -52,7 +52,7 @@ This also sharpens prior native evidence: the earlier bad-range/change/truncate 
 
 The next browser attempt reached all then-implemented UI/installation checks but failed fixture shutdown. The original exception was not classified, so its precise cause is unavailable. A deterministic real TCP-reset reproduction established an overstrict fixture boundary: a peer reset before headers produced `live=0` and one handler failure. Typed peer disconnects/timeouts are now expected across handler entry as well as body writing; unexpected exceptions and unjoined threads still refuse success. The regression also injects an unexpected exception and verifies refusal/listener closure. Subsequent complete slices, including permission readback and session-loss restart, passed. No blanket exception suppression, test disabling or product assertion relaxation was used.
 
-Seven harness policy/real-HTTP/transport tests currently pass. Browser-facing code and new fixture changes need final-tip CI and clean-driver evidence before any acceptance decision.
+Seven harness policy/real-HTTP/transport tests passed at that checkpoint. The later eighteen-test report/fixture/ownership boundary and expanded native-artifact matrix are recorded in [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md). The body handler still had a broad `OSError` catch and treated gate exhaustion as an expected timeout at the earlier checkpoint; later real-HTTP regressions exposed and corrected those distinctions without assigning a cause to the old unclassified Firefox failure. Final-tip CI and clean-driver evidence remain required.
 
 ## Remaining gates
 

@@ -130,3 +130,12 @@ See [ADR 0011](decisions/0011-license-and-available-qualification.md). Historica
 See [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md). First-party licensing and existing-machine qualification are preserved separately in #28/PR43; this correction does not require another computer or alter safety constraints.
 
 - **Available rate versus retained transfer history (#44)**: an actual rate must be observed in the controlled active window. A later final sample may have insufficient recent history and legitimately yield `None`; the nullable rate at `Validating` entry is retained through promotion/completion, not forcibly cleared or required to be `Some`. Zero terminal ETA and exact joined bytes remain independent requirements. The CI follow-up and deterministic stale-window counterexample are in [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md).
+
+## Expanded native qualification (#28)
+
+- **Durable retained prefix**: joined control acknowledgement plus actual persisted, bounded disjoint half-open coverage and an independent disk-prefix hash. Aggregate received bytes alone do not establish it; adjacent ranges need not be stored as one entry.
+- **Retained gate waiter**: an observed server handler held after headers beyond the prefix. Cancelled remote waiters can outlive local worker joins; their count is not the helper's worker/admission count.
+- **Evidence sink**: a new bounded report under ordinary owned artifact ancestors, staged and published without replacing a destination. Narrow ASCII report spelling is not the product's download-filename policy. Metadata-only Windows handles do not provide the read-access sharing lease proven by the rename regression.
+- **Qualified component versus qualified release**: exact native bytes can pass 26 cases/2 GiB while actual Firefox, source/tag and publication gates remain incomplete. No earlier artifact, dirty driver or unavailable clean-machine test is silently upgraded.
+
+See [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) for the demonstrated corrections and remaining uncertainty.

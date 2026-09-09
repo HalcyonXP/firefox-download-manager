@@ -11,6 +11,10 @@ from urllib.parse import urlsplit
 
 BLOCK = bytes(range(256)) * 4096  # 1 MiB, reused for arbitrarily large fixtures.
 SMALL_SIZE = 8 * 1024 * 1024
+PREFIX_SIZE = 2 * 1024 * 1024
+RETAINED = {"retained-resume", "retained-restart", "retained-changed", "retained-cancel"}
+MODES = {"range", "single", "bad-range", "change", "truncate", "slow", "large", "empty", "unknown",
+         "weak", "missing-validator", "worker-ignored", "missing-range", "out-of-bounds", "corrupt", *RETAINED}
 
 
 def expected_sha256(size):
@@ -80,17 +84,27 @@ class Fixture:
         self.peak = 0
         self.slow_body = threading.Event()
         self.slow_body.set()
+        self.retained_body = threading.Event()
+        self.retained_body.set()
+        self.retained_requests = {mode: [] for mode in RETAINED}
+        self.retained_waiting = {mode: 0 for mode in RETAINED}
+        self.generations = {mode: 1 for mode in RETAINED}
         self.server = BoundedServer(("127.0.0.1", 0), handler or Handler)
         self.server.daemon_threads = True
         self.server.fixture = self
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
-        self.thread.start()
+        try:
+            self.thread.start()
+        except Exception:
+            self.server.server_close()
+            raise
 
     def url(self, mode):
         return f"http://127.0.0.1:{self.server.server_port}/{mode}"
 
     def close(self):
         self.slow_body.set()
+        self.retained_body.set()
         self.server.shutdown()
         self.thread.join(timeout=10)
         try:
@@ -120,14 +134,14 @@ class Handler(BaseHTTPRequestHandler):
     def reply(self, body):
         fixture = self.server.fixture
         mode = urlsplit(self.path).path.removeprefix("/")
-        if mode not in {"range", "single", "bad-range", "change", "truncate", "slow", "large"}:
+        if mode not in MODES:
             self.send_error(404)
             return
         self.connection.settimeout(10)
-        size = fixture.large_size if mode == "large" else SMALL_SIZE
+        size = fixture.large_size if mode == "large" else 0 if mode == "empty" else SMALL_SIZE
         start, end = 0, size - 1
         ranged = False
-        if body and mode != "single" and self.headers.get("Range"):
+        if body and mode not in {"single", "unknown"} and self.headers.get("Range"):
             value = self.headers["Range"]
             match = re.fullmatch(r"bytes=([0-9]+)-([0-9]+)", value) if len(value) <= 64 else None
             if not match or not 0 <= int(match[1]) <= int(match[2]) < size:
@@ -143,31 +157,57 @@ class Handler(BaseHTTPRequestHandler):
         probe = ranged and start == end and start in {0, size - 1}
         with fixture.lock:
             fixture.requests[(mode, self.command, "probe" if probe else "body")] += 1
+            generation = fixture.generations.get(mode, 1)
+            if mode in RETAINED and body and not probe:
+                if len(fixture.retained_requests[mode]) >= 128:
+                    raise RuntimeError("retained request observation bound")
+                fixture.retained_requests[mode].append((start, end))
             if body:
                 fixture.active += 1
                 fixture.peak = max(fixture.peak, fixture.active)
         try:
+            if mode == "worker-ignored" and ranged and not probe:
+                ranged, start, end = False, 0, size - 1
             self.send_response(206 if ranged else 200)
-            self.send_header("Content-Length", str(end - start + 1))
+            if mode != "unknown":
+                self.send_header("Content-Length", str(end - start + 1))
             self.send_header("Accept-Ranges", "bytes")
-            self.send_header("ETag", '"fixture-v2"' if mode == "change" and ranged and not probe else '"fixture-v1"')
+            if mode != "missing-validator":
+                tag = f'"fixture-v{generation}"'
+                if mode == "change" and ranged and not probe:
+                    tag = '"fixture-v2"'
+                self.send_header("ETag", "W/" + tag if mode == "weak" else tag)
             self.send_header("Connection", "close")
-            if ranged:
+            if ranged and not (mode == "missing-range" and not probe):
                 reported = start + 1 if mode == "bad-range" and not probe else start
-                self.send_header("Content-Range", f"bytes {reported}-{end}/{size}")
+                reported_end = size if mode == "out-of-bounds" and not probe else end
+                self.send_header("Content-Range", f"bytes {reported}-{reported_end}/{size}")
             self.end_headers()
             if body:
                 if mode == "slow" and not probe and not fixture.slow_body.wait(timeout=30):
-                    raise TimeoutError("owned response gate deadline")
+                    raise RuntimeError("owned response gate deadline")
+                if mode in RETAINED and not probe and start >= PREFIX_SIZE:
+                    with fixture.lock:
+                        fixture.retained_waiting[mode] += 1
+                    try:
+                        if not fixture.retained_body.wait(timeout=30):
+                            raise RuntimeError("owned retained-response gate deadline")
+                    finally:
+                        with fixture.lock:
+                            fixture.retained_waiting[mode] -= 1
                 limit = start + (end - start + 1) // 2 if mode == "truncate" and not probe else end + 1
                 while start < limit:
                     offset = start % len(BLOCK)
                     amount = min(64 * 1024, limit - start, len(BLOCK) - offset)
-                    self.wfile.write(BLOCK[offset:offset + amount])
+                    chunk = BLOCK[offset:offset + amount]
+                    if mode == "corrupt" and not probe and start <= SMALL_SIZE // 2 < start + amount:
+                        corrupt = SMALL_SIZE // 2 - start
+                        chunk = chunk[:corrupt] + bytes([chunk[corrupt] ^ 1]) + chunk[corrupt + 1:]
+                    self.wfile.write(chunk)
                     start += amount
                     if mode == "slow" and not probe:
                         time.sleep(0.025)
-        except (ConnectionError, TimeoutError, OSError):
+        except (ConnectionError, TimeoutError):
             # Disconnects are expected for cancellation/rejection; never log paths.
             pass
         finally:
