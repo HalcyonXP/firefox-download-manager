@@ -37,7 +37,7 @@ Keep Firefox capture, controls and display, and Rust networking/scheduling/stora
 
 ### Ordinary download clicks, not every request
 
-Automatic capture means a supported HTTP(S) file download initiated by an ordinary click is added and started using saved settings. It does not mean hijacking page navigation, replaying POST bodies as GETs, cancelling all download events, or collecting cookies/authorization implicitly. GGUF is an opaque downloadable file type, not a media-extraction feature; its actual provider/URL is unknown.
+Automatic capture means a supported HTTP(S) file download initiated by an ordinary click is added and started using saved settings. It is enabled after ordinary installation/permission approval unless the user turns it off; fresh-install acceptance must not quietly add a manual enable/configuration step. It does not mean hijacking page navigation, replaying POST bodies as GETs, cancelling all download events, or collecting cookies/authorization implicitly. GGUF is an opaque downloadable file type, not a media-extraction feature; its actual provider/URL is unknown.
 
 #49 must prove the browser classification, permission and handoff mechanism before #51 selects it. Firefox response-time blocking promises are a candidate, not an already proven product design. A native prepare/accept/browser-cancel/commit or equivalent contract needs bounded waits and stable receipts so failure, restart, duplicate events and lost acknowledgements do not create duplicate tasks/files or silently lose the click. Existing v2 Add acknowledgement alone does not establish that cross-process contract.
 
