@@ -53,3 +53,19 @@ The first local JSON contains the private `emails` array and the `archiveReposit
 GitHub handles, noreply identities, fixed extension/native-host principals, and reviewed third-party notices remain attributable. This is not an anonymity promise or a detector for arbitrary identifying prose. Synthetic path/URL/authentication fixtures are not real user data. No first-party project license was selected by the visibility change. The owner subsequently clarified permissive FOSS intent; [ADR 0011](decisions/0011-license-and-available-qualification.md) records the later MIT decision, without changing privacy/attribution rules.
 
 Private comparison inputs, Support draft, and original recovery bundle remain outside the checkout. Never upload `.git`, audit kits, browser profiles/screenshots, settings/state, diagnostics, cookies, authorization values, signed URLs, or downloaded partials. Prefer a fresh canonical clone; privately preserve and reapply uncommitted work rather than merging pre-scrub branches. The runtime application remains local-only, with no telemetry, cloud synchronization, or remote updater.
+
+
+## Published v0.1.0 outcome
+
+The [release record](releases/v0.1.0.md) binds the frozen main-d03 product, separate clean-e24 auditor, completed archive/release-input reviews, eight inventoried cache deletions (not inspections), and anonymous four-asset/source/tag readback. Clean audits after completed CI/stable advertised refs and after tag/draft creation passed explicit28-issue/19-PR coverage. Initial checksum-attachment omission was corrected additively without replacing the qualified ZIP, tag or existing assets. The refusals and older pending checkpoints below remain historical; raw private audits/recovery material are not public inputs, and no snapshot clears future data or the retained private archive.
+
+## Final-publication metadata coverage correction (#46)
+
+The pre-tag main-d03 audit at 2026-09-09T14:01:08Z reported28 issue/PR records, while independent REST reads and GraphQL totals showed28 regular issues plus18 PRs (46 distinct numbers). The original raw platform response was not retained; its omitted records and cause are not reconstructed. That snapshot is not accepted as complete PR-metadata coverage merely because its other checks passed.
+
+The publication auditor now reads full pull-request metadata independently of the issues endpoint, reconciles distinct regular-issue and PR numbers against separate GraphQL totals, and refuses missing/duplicate/overlapping/inconsistent records. Issues-endpoint PR entries are not double-counted. Pure tests cover both mixed and issues-only responses, malformed numbers/totals and omissions; a passing baseline followed by removal of the pull-count comparison fails the intended assertion, then restored tests pass. An actual corrected remote audit is still required before publication, not an unchanged retry of the earlier incomplete observation.
+
+The report records the auditor revision/dirty status separately from the remotely inspected main commit. Publication-tool/documentation follow-up is not an untested replacement for the frozen product: intended0.1.0 source remains main `d03a56c373bfee37776d23031908a93fc68da89a`, whose exact CI bytes and clean-d03 native/Firefox/setup drivers passed. This distinction is preserved when the auditor is newer than the product tag.
+
+
+The first corrected remote run refused at the new coverage stage before counts were retained. A separate Node API probe then observed consistent28-issue/19-PR coverage after PR47 was created. Counts-only, bounded, canary-tested failure diagnostics were added; the diagnostic dirty-driver run passed47-record reconciliation. Neither later response reconstructs the earlier refusal. Missing-pull counterexamples/mutations establish the coverage contract; diagnostic-only success is not the final clean-auditor gate. No API assertion was relaxed to obtain that result.

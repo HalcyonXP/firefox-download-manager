@@ -4,7 +4,7 @@ A local download manager for Firefox Developer Edition on Windows 11. It is inte
 
 ## Repository and privacy status
 
-**[HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager)** is the public, authoritative repository for code, issues, CI, and future releases. Use this repository directly; there is no publication mirror to synchronize.
+**[HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager)** is the public, authoritative repository for code, issues, CI, and releases. Use this repository directly; there is no publication mirror to synchronize.
 
 The private predecessor is retained only as an archive. Its sensitive original Git history was not imported. See [publication privacy](docs/PUBLICATION_PRIVACY.md) and the [issue migration map](docs/ISSUE_MIGRATION.md). Public source availability is not an installable-release announcement.
 
@@ -43,9 +43,11 @@ The initial product targets direct HTTP(S) downloads selected explicitly by the 
 
 The native helper uses the operating system's normal network route, whether a VPN is connected or not.
 
-## Installation and candidate packaging
+## Install v0.1.0
 
-The current implementation is **not yet a qualified release**. Follow [installation instructions](docs/INSTALLATION.md) only with the checksummed artifact identified by release notes. Packaging/recovery design and evidence are in [PACKAGING_PLAN.md](docs/PACKAGING_PLAN.md); final qualification remains #28.
+**[Download the qualified Windows-x64 personal release](https://github.com/HalcyonXP/firefox-download-manager/releases/tag/v0.1.0).** Follow its notes and [installation instructions](docs/INSTALLATION.md), using the original `PACKAGE-SHA256SUMS.txt` to verify the ZIP. The [release record](docs/releases/v0.1.0.md) binds the exact main-d03 source, tested bytes, evidence and support limits. Later CI candidates are not replacements for that release.
+
+Qualification used the existing native Windows11 x64 computer and Developer Edition156.0, not a separate clean OS. The helper and temporary XPI are unsigned; do not disable protections. Packaging/recovery design is in [PACKAGING_PLAN.md](docs/PACKAGING_PLAN.md).
 
 The Rust setup executable uses current-user registration, verified immutable generations, ownership receipts and conservative journal recovery. It requires closed Firefox/helpers and does not modify a browser profile or security policy. The old development PowerShell registration scripts are retired and deliberately refuse all operations. Developer build/testing instructions are in [DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
@@ -72,4 +74,4 @@ First-party code is free and open-source under the [MIT license](LICENSE). Use, 
 
 ## Optional authenticated downloads
 
-Per-download [session handoff](docs/AUTHENTICATION.md) supports eligible normal default-store cookies, same-origin referrers, and HTTPS Basic/Bearer values using optional permissions. Secrets remain memory-only; cross-origin redirects are blocked and restart/expiry requires a fresh task. Private, container, partitioned, and first-party-isolated sessions are not supported. This implementation is not yet a qualified installable release.
+Per-download [session handoff](docs/AUTHENTICATION.md) supports eligible normal default-store cookies, same-origin referrers, and HTTPS Basic/Bearer values using optional permissions. Secrets remain memory-only; cross-origin redirects are blocked and restart/expiry requires a fresh task. Private, container, partitioned, and first-party-isolated sessions are not supported. The release notes distinguish tested session behavior from unsupported contexts.

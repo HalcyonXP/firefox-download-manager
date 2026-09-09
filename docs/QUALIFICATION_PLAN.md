@@ -1,5 +1,9 @@
 # Candidate and final-artifact qualification — #28 → #46
 
+## Published outcome
+
+The sequence completed with [v0.1.0](releases/v0.1.0.md): exact main-d03/CI34357070862 bytes passed clean-d03 native26/default2GiB, Firefox20 and installer7; final source/tag/privacy/upload/public readback gates passed. Subsequent auditor/docs work does not change that release input. Earlier candidate/pending checkpoints below remain historical evidence. Release attachment names must include the builder `PACKAGE-SHA256SUMS.txt` required by the installed guide; a release-wide checksum manifest is additive, not a rename/substitute.
+
 ## Acceptance/publication sequence
 
 [ADR0012](decisions/0012-qualification-publication-sequence.md) resolves the former merge/publication ordering conflict without removing a release gate. #28/PR43 qualifies the implementation/candidate; dependent #46 owns authoritative merged-main CI, final exact-input reruns, final privacy review and versioned publication. M4/the owner-facing release remain incomplete until #46 passes. Earlier “do not merge #28 before publication” wording is superseded by this explicit transfer, not permission to skip final-main qualification.
