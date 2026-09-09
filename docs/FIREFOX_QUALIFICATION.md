@@ -1,5 +1,9 @@
 # Actual Firefox artifact slice — #28 (not release approval)
 
+## Owner clarification after these checkpoints
+
+[ADR 0011](decisions/0011-license-and-available-qualification.md) supersedes the earlier unresolved licensing and separate-clean-machine prerequisites: permissive FOSS is implemented as MIT; the personal release will be qualified on the owner's existing native Windows 11 x64 machine with isolated owned state/profiles. Clean-machine evidence is unavailable, not passed. All other listed functional/safety work remains. Later clean-driver/CI success at `5ce837c` is recorded in [QUALIFICATION_PLAN.md](QUALIFICATION_PLAN.md); license-bearing artifacts still need new evidence.
+
 ## Outcome and inputs
 
 The confirmed project outcome remains a qualified Windows 11 native-x64 / Firefox Developer Edition release. This document records a **subset of that qualification**, not a narrowed release requirement.
@@ -52,4 +56,4 @@ Seven harness policy/real-HTTP/transport tests currently pass. Browser-facing co
 
 ## Remaining gates
 
-Toolbar/link-menu creation, Cancel/Remove and relevant validation controls, CSP/private-window enforcement, the complete safe-restart/fresh-session matrix, all critical adversaries, clean-machine/support criteria, accepted resource interpretation, exact artifact freeze/tag linkage, first-party licensing/signing handling and final public-input/log/artifact/cache review remain separate. See [QUALIFICATION_PLAN.md](QUALIFICATION_PLAN.md). Do not merge #28 or publish a qualified release on the strength of this slice alone.
+Toolbar/link-menu creation, Cancel/Remove and relevant validation controls, CSP/private-window enforcement, the complete safe-restart/fresh-session matrix, all critical adversaries, the revised existing-machine/support criteria (clean-machine evidence remains unavailable, not required for this personal release), accepted resource interpretation, exact artifact freeze/tag linkage, license-bearing artifact/signing handling and final public-input/log/artifact/cache review remain separate. See [QUALIFICATION_PLAN.md](QUALIFICATION_PLAN.md). Do not merge #28 or publish a qualified release on the strength of this slice alone.

@@ -18,9 +18,9 @@ TOOLCHAIN = ROOT / "target/toolchains/llvm-mingw-20260826-ucrt-x86_64"
 TOOLCHAIN_SHA256 = "ae601f4e0f72bbdf441ad2df8bb16f037e2e9251559ea6b37b4057aef39c06c3"
 PAYLOADS = ["download-manager-native-host.exe", "download-manager-setup.exe",
             "firefox-download-manager.xpi", "INSTALL.md", "SECURITY.md",
-            "THIRD-PARTY-NOTICES.txt", "BUILD-INFO.json"]
+            "THIRD-PARTY-NOTICES.txt", "BUILD-INFO.json", "LICENSE.txt"]
 EXTENSION = {"background.js", "background.js.map", "manager.js", "manager.js.map",
-             "manifest.json", "manager.html", "manager.css"}
+             "manifest.json", "manager.html", "manager.css", "LICENSE.txt", "THIRD-PARTY-NOTICES.txt"}
 SYSTEM_DLLS = {"advapi32.dll", "bcrypt.dll", "bcryptprimitives.dll", "crypt32.dll", "dbghelp.dll", "gdi32.dll",
                "iphlpapi.dll", "kernel32.dll", "mswsock.dll", "ncrypt.dll", "ntdll.dll",
                "ole32.dll", "oleaut32.dll", "secur32.dll", "shell32.dll", "userenv.dll",
@@ -140,7 +140,7 @@ def notices():
         pending.extend(dep["pkg"] for dep in nodes[key]["deps"]
                        if any(kind["kind"] != "dev" for kind in dep["dep_kinds"]))
     text = ["Firefox Download Manager — third-party notices\n",
-            "First-party license: not specified. These notices do not select one.\n",
+            "First-party license: MIT; see LICENSE.txt. Third-party terms below remain independent.\n",
             "Dependency runtime/build closure for the Windows x64 helper and setup follows.\n"]
     inventory = []
     for item in sorted((packages[key] for key in seen), key=lambda p: (p["name"], p["version"])):
@@ -181,7 +181,10 @@ def notices():
 
 
 def build(binary_dir, output, development=False):
-    version = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))["version"]
+    project = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    if project.get("license") != "MIT":
+        raise ValueError("first-party license metadata requires deliberate review")
+    version = project["version"]
     if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[A-Za-z0-9.-]+)?", version):
         raise ValueError("unsafe version")
     dirty = bool(command("git", "status", "--porcelain", "--untracked-files=normal"))
@@ -195,7 +198,7 @@ def build(binary_dir, output, development=False):
     out = safe_output(output)
     epoch = int(command("git", "show", "-s", "--format=%ct", "HEAD"))
     info = {"repository": "HalcyonXP/firefox-download-manager", "commit": command("git", "rev-parse", "HEAD"),
-            "package_version": version, "target": "x86_64-pc-windows-gnullvm", "source_dirty": dirty,
+            "package_version": version, "first_party_license": "MIT", "target": "x86_64-pc-windows-gnullvm", "source_dirty": dirty,
             "development": development, "qualification": "Not asserted by builder; see release notes for this exact checksum.",
             "recipe": "development-unqualified" if development else "windows-x64-llvm-ucrt-v1", "rustc": command("rustc", "-V"), "cargo": command("cargo", "-V"),
             "node": command("node", "--version"),
@@ -218,6 +221,13 @@ def build(binary_dir, output, development=False):
     manifest = json.loads(ordinary(ext / "manifest.json").read_text(encoding="utf-8"))
     if manifest["version"] != version or manifest["browser_specific_settings"]["gecko"]["strict_min_version"] != "156.0":
         raise ValueError("mixed extension version/policy")
+    license_text = ordinary(ROOT / "LICENSE").read_text(encoding="utf-8")
+    if ordinary(ext / "LICENSE.txt").read_text(encoding="utf-8") != license_text:
+        raise ValueError("extension first-party license differs from source")
+    esbuild_license = ordinary(ROOT / "node_modules/esbuild/LICENSE.md").read_text(encoding="utf-8")
+    if esbuild_license not in ordinary(ext / "THIRD-PARTY-NOTICES.txt").read_text(encoding="utf-8"):
+        raise ValueError("extension lacks reviewed esbuild attribution")
+    (out / "LICENSE.txt").write_text(license_text, encoding="utf-8", newline="\n")
     archive(out / PAYLOADS[2], {name: ext / name for name in EXTENSION}, epoch)
     for source, target in [("INSTALLATION.md", "INSTALL.md"), ("PACKAGE_SECURITY.md", "SECURITY.md")]:
         # A clean Git worktree can still have CRLF before index normalization.

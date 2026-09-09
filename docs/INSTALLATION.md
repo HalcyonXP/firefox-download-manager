@@ -1,10 +1,10 @@
 # Windows 11 / Firefox Developer Edition installation
 
-Use a qualified release from **https://github.com/HalcyonXP/firefox-download-manager/releases**. CI candidates and development builds are not release approval. The release notes identify the tested ZIP checksum and limitations. First-party licensing is not specified; third-party notices are included separately.
+Use a qualified release from **https://github.com/HalcyonXP/firefox-download-manager/releases**. CI candidates and development builds are not release approval. The release notes identify the tested ZIP checksum and limitations. First-party code is MIT licensed (`LICENSE.txt`); third-party notices are included separately. Retain the applicable license/notices when redistributing. A FOSS license does not authenticate a download.
 
 ## Prerequisites
 
-- Windows 11, x64 package; Firefox Developer Edition **156 or later**. Only the explicitly recorded browser/OS configurations are qualified.
+- Windows 11, x64 package; Firefox Developer Edition **156 or later**. Only the explicitly recorded browser/OS configurations are qualified. The first personal release is tested on the owner's existing native Windows 11 x64 computer with isolated profiles/state, not a separately provisioned clean OS. Development tools remain installed on that test machine; a clean-machine test is unavailable.
 - No administrator elevation, Rust, Node.js or Python is required to run the packaged setup/helper. The release recipe statically links reviewed LLVM/MinGW support and uses Windows’ built-in UCRT; inspect `BUILD-INFO.json` for imported Windows DLLs and build provenance.
 - Close Firefox and running native helpers before install, upgrade, cleanup, uninstall, repair or recovery. Setup refuses them; it does not terminate them. It does not change execution policy, firewall, routing, VPN, certificate trust, signing preferences, or any browser profile.
 - The helper and XPI are **unsigned**. Obtain them from the canonical repository, compare the ZIP's SHA-256 against the release's `PACKAGE-SHA256SUMS.txt`, and review any Windows security warning yourself. Checksums detect inconsistent bytes, not a compromised publisher or malicious package with matching edited metadata. Do not disable system protections to force an install.

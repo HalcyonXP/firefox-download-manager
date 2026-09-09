@@ -137,7 +137,7 @@ def test(package, report):
         evidence["checks"].append("actual-install-and-isolated-helper-hello")
         broken = parent / "Broken Package With Spaces"
         broken.mkdir()
-        leaves = ["download-manager-native-host.exe", "download-manager-setup.exe", "firefox-download-manager.xpi", "INSTALL.md", "SECURITY.md", "THIRD-PARTY-NOTICES.txt", "BUILD-INFO.json", "package.json"]
+        leaves = ["download-manager-native-host.exe", "download-manager-setup.exe", "firefox-download-manager.xpi", "INSTALL.md", "SECURITY.md", "THIRD-PARTY-NOTICES.txt", "BUILD-INFO.json", "LICENSE.txt", "package.json"]
         for name in leaves:
             shutil.copyfile(package / name, broken / name)
         (broken / "download-manager-native-host.exe").write_bytes(b"synthetic invalid executable")

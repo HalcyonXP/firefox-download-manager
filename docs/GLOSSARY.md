@@ -111,3 +111,11 @@ The review found a real wildcard-pattern construction edge case, not an observed
 - **Owned-process resource observation**: helper working set/private usage, CPU, aggregate I/O and event counts for identified inputs. OS cache/kernel/other-process memory and physical-device/Internet performance are not inferred from those fields.
 
 [FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) preserves the probe-gate correction, independently reproduced peer-reset boundary, actual browser successes and remaining gaps. The old prototype's manual registration/signing override/tree cleanup was not reused.
+
+## Owner clarification (#28, ADR 0011)
+
+- **Permissive FOSS / MIT**: the owner authorized broad FOSS reuse; MIT is our implementation choice, not a claim that the owner specified that identifier. Copy, modify, redistribute or sell with its copyright/permission notice; third-party terms remain independent.
+- **Existing-machine qualification**: real native Windows 11 x64 / Developer Edition tests in owned isolated application/profile domains on the owner's only computer. Not a clean OS or just an API mock. It replaces the first release's separate clean-machine gate, without marking that unavailable test passed.
+- **Unavailable versus failing coverage**: clean-machine evidence is unavailable under the revised plan and must be disclosed; an actual failing correctness/security test still blocks release. A user-authorized environment change is not permission to relax assertions or manufacture a green run.
+
+See [ADR 0011](decisions/0011-license-and-available-qualification.md). Historical no-license/clean-machine prerequisites are superseded; artifact/source identity, native-x64 intent and safety boundaries are retained.

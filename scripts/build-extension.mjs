@@ -1,4 +1,5 @@
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { extensionLicenses } from "./extension-licenses.mjs";
 
 import { build } from "esbuild";
 
@@ -20,3 +21,6 @@ await copyFile("extension/src/manifest.json", "extension/dist/manifest.json");
 
 for (const asset of ["manager.html", "manager.css"])
   await copyFile(`extension/src/${asset}`, `extension/dist/${asset}`);
+
+for (const [name, text] of Object.entries(await extensionLicenses()))
+  await writeFile(`extension/dist/${name}`, text, "utf8");

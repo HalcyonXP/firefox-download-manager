@@ -16,6 +16,10 @@ Twenty-two regular issues were transferred with their states and comment history
 
 Implementation includes #23 authenticated handoff, #24 shared polite request admission, and #25 integrity/SHA-256. #32/#33 resolved the cancellation-observation baseline and actual public CI passed; that temporary gate is no longer active. The #26 security review is recorded; #27 remediated its packaging blockers within the documented ownership/fault model and merged. #39/#41 baseline corrections also merged and main CI passed. Qualification/release #28 is In Progress (draft PR #43), not approved. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
 
+## Owner clarification: FOSS and the available computer (2026-09-09)
+
+The owner explicitly wants permissive FOSS and has only this computer. MIT is the implementation selected for first-party code; third-party terms stay intact. Qualification will use the existing native Windows 11 x64 / Firefox Developer Edition installation with isolated owned test domains. No new machine/OS/account or protection change is requested. Clean-machine coverage is declared unavailable, not passed. [ADR 0011](decisions/0011-license-and-available-qualification.md) records the scope change, licensing meaning and remaining gates. Earlier checkpoint references to unresolved licensing/required clean-machine coverage are historical and superseded by this decision.
+
 ## Product goal
 
 Create a trustworthy local download manager for Firefox Developer Edition that can improve throughput when an HTTP(S) server limits individual connections and supports byte-range requests.
@@ -128,7 +132,7 @@ Review, package, document, and qualify the first local release.
 - [#27 Windows installation and removal](https://github.com/HalcyonXP/firefox-download-manager/issues/27)
 - [#28 End-to-end qualification and first release](https://github.com/HalcyonXP/firefox-download-manager/issues/28)
 
-**Exit condition:** a clean Windows 11 environment can install, use, upgrade, and remove the extension/helper through documented steps, and GitHub provides checksummed release artifacts.
+**Exit condition (revised 2026-09-09):** the exact package can install, run with Firefox Developer Edition, upgrade and uninstall on the owner's existing native Windows 11 x64 computer using isolated test profiles/application state, and GitHub provides checksummed release artifacts. A separate clean-machine test is unavailable and is not required for this personal release; release notes must say so. This replaces—not satisfies—the former clean-machine criterion. See [ADR 0011](decisions/0011-license-and-available-qualification.md).
 
 ## Critical path
 

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { validateExtensionPolicy } from "./extension-policy.mjs";
+import { extensionLicenses } from "./extension-licenses.mjs";
 import { access, readFile } from "node:fs/promises";
 
 const source = JSON.parse(await readFile("extension/src/manifest.json", "utf8"));
@@ -13,4 +14,11 @@ for (const script of source.background?.scripts ?? []) {
   await access(`extension/dist/${script}`);
 }
 
-console.log("Validated built Manifest V3 extension and referenced assets.");
+for (const [name, text] of Object.entries(await extensionLicenses()))
+  assert.equal(
+    await readFile(`extension/dist/${name}`, "utf8"),
+    text,
+    `missing or changed ${name}`,
+  );
+
+console.log("Validated built Manifest V3 extension, referenced assets and license notices.");

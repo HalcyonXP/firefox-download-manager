@@ -2,6 +2,10 @@
 
 This record complements automated lockfile, license, advisory, ban, and source checks. It documents deliberate direct dependency choices and exceptional transitive licenses; generated release notices remain a packaging requirement.
 
+## First-party licensing boundary
+
+The owner's 2026-09-09 FOSS clarification is implemented as the [MIT license](../LICENSE); see [ADR 0011](decisions/0011-license-and-available-qualification.md). This does not relicense any dependency. The eight-leaf package includes `LICENSE.txt` and full native/runtime/toolchain notices. The nine-leaf XPI/standalone extension build includes the MIT license and reviewed esbuild notice, including when distributed without the helper ZIP. No third-party implementation dependency was added for this change. The prior MSVC distribution-recipe decision is unaffected.
+
 ## Runtime Rust dependencies
 
 | Dependency | Purpose | Version policy | License | Rationale |
@@ -54,4 +58,4 @@ The selected build-only archive is `llvm-mingw-20260826-ucrt-x86_64.zip`, SHA-25
 - Cargo notices include the locked non-dev dependency closure and nested/vendored LICENSE/COPYING/NOTICE/COPYRIGHT files (including AWS-LC material), not just top-level Cargo license expressions. Rust library attribution covers multiple platforms and is labeled accordingly. esbuild attribution is retained. No third-party implementation source is copied into this repository.
 - CI `actions/download-artifact` v4 is pinned to `d3f86a106a0bac45b974a628896c90dbdf5c8093`; its full MIT license was read before incorporation. It is build infrastructure, not runtime behavior.
 
-The non-Cargo compiler/runtime review is explicit, not represented as something `cargo deny` alone checks. Package consistency/provenance and these third-party notices do not select a first-party license or constitute a publisher signature.
+The non-Cargo compiler/runtime review is explicit, not represented as something `cargo deny` alone checks. First-party code is now MIT licensed under the owner's later FOSS direction; third-party terms remain independent. Package consistency/provenance, MIT licensing and these notices do not constitute a publisher signature.

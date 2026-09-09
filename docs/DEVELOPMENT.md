@@ -95,7 +95,7 @@ Read [INSTALLATION.md](INSTALLATION.md) for user-facing commands. Old `install-n
 
 Production candidates require a clean canonical checkout. Each output directory must be new, beneath `artifacts`. The reviewed SHA-256-pinned LLVM/MinGW build toolchain is fetched beneath ignored `target` (no system installation). Rust target `x86_64-pc-windows-gnullvm`, static compiler/MinGW support with system UCRT, path remapping and disabled linker timestamps are used; deterministic ZIP order/timestamps are tested. Build provenance records actual compiler/runtime imports. Repeat measurements determine binary reproducibility—flags alone do not prove it.
 
-The package builder copies only fixed payload leaves and the exact extension build allowlist, not checkout history, profiles, test-server executables, private audit inputs or arbitrary directories. Notices include the locked runtime/build dependency closure, Rust library attribution, vendored native notices, LLVM/MinGW runtime notices and esbuild attribution. No first-party license is selected.
+The package builder copies only fixed payload leaves and the exact extension build allowlist, not checkout history, profiles, test-server executables, private audit inputs or arbitrary directories. Notices include the locked runtime/build dependency closure, Rust library attribution, vendored native notices, LLVM/MinGW runtime notices and esbuild attribution. First-party code is MIT licensed. The package and XPI carry `LICENSE.txt`; the XPI also carries reviewed esbuild attribution. The package retains the full native/toolchain third-party notices.
 
 **Only on a disposable current-user environment with no Firefox/helper process or existing registration:**
 

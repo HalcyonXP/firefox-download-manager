@@ -66,9 +66,9 @@ The manager page includes helper-owned destination, worker/request caps, retry, 
 - Credentials and sensitive URLs are not written to ordinary logs.
 - Everything remains local; no analytics, telemetry, or remote updater.
 
-## License status
+## License
 
-This transition did not select a first-party project license. Public visibility is not a new license grant; reviewed third-party attribution remains in [docs/THIRD_PARTY.md](docs/THIRD_PARTY.md).
+First-party code is free and open-source under the [MIT license](LICENSE). Use, modify, redistribute or sell it with the copyright/permission notice retained. Third-party components keep their own licenses and [required notices](docs/THIRD_PARTY.md). [ADR 0011](docs/decisions/0011-license-and-available-qualification.md) records the owner's FOSS direction and our permissive-license choice; GitHub visibility alone had not selected one.
 
 ## Optional authenticated downloads
 

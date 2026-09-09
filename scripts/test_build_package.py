@@ -1,8 +1,10 @@
 """Pure package-policy tests; no registry, browser, native launch or full package build."""
 import importlib.util
+import json
 from pathlib import Path
 import struct
 import tempfile
+import tomllib
 import unittest
 import zipfile
 
@@ -12,6 +14,27 @@ SPEC.loader.exec_module(BUILDER)
 
 
 class PackagePolicy(unittest.TestCase):
+    def test_first_party_license_metadata_and_distribution_assets_agree(self):
+        root = BUILDER.ROOT
+        text = (root / "LICENSE").read_bytes()
+        self.assertTrue(text.startswith(b"MIT License\n"))
+        self.assertIn(b"Copyright (c) 2026 HalcyonXP", text)
+        self.assertIn(b"Permission is hereby granted, free of charge", text)
+        self.assertEqual(json.loads((root / "package.json").read_text(encoding="utf-8"))["license"], "MIT")
+        self.assertEqual(json.loads((root / "package-lock.json").read_text(encoding="utf-8"))["packages"][""]["license"], "MIT")
+        workspace = tomllib.loads((root / "Cargo.toml").read_text(encoding="utf-8"))
+        self.assertEqual(workspace["workspace"]["package"]["license"], "MIT")
+        for member in workspace["workspace"]["members"]:
+            package = tomllib.loads((root / member / "Cargo.toml").read_text(encoding="utf-8"))["package"]
+            self.assertEqual(package["license"], {"workspace": True})
+        self.assertEqual(BUILDER.PAYLOADS.count("LICENSE.txt"), 1)
+        self.assertTrue({"LICENSE.txt", "THIRD-PARTY-NOTICES.txt"} <= BUILDER.EXTENSION)
+        with tempfile.TemporaryDirectory(prefix="dm license ") as directory:
+            target = Path(directory) / "licensed.zip"
+            BUILDER.archive(target, {"LICENSE.txt": root / "LICENSE"}, 1700000000)
+            with zipfile.ZipFile(target) as archive:
+                self.assertEqual(archive.read("LICENSE.txt"), text)
+
     def test_archives_are_deterministic_and_ignore_file_timestamps(self):
         with tempfile.TemporaryDirectory(prefix="dm zip ") as directory:
             root = Path(directory)
