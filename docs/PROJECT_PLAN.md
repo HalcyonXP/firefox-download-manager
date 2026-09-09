@@ -314,6 +314,10 @@ PR56's initial d88e7b7 CI34391997304 passed all three jobs. New unintegrated IPC
 
 Before engine integration, the initial 64 KiB IPC draft was reconciled with the existing Rust/Firefox 1 MiB native-message contract. IPC now shares the native constant and tests a decoder-valid maximum-size body; metadata/log bounds are unchanged. See LOCAL_IPC.md. This is an explicit draft refinement, not a delivered bridge or a change to v0.1.0.
 
+## Installation scope
+
+Target local Firefox Developer Edition installations on Windows 11. A public AMO listing is not required. Signing and listing are distinct: unlisted signing involves Mozilla submission without a public listing. Preserve browser protections and verify persistent installation/restart behavior using exact artifact bytes. See ADR0013.
+
 ## #50 first engine/IPC integration (2026-09-10)
 
 The previous multi-client coordinator was a proposal. The selected first bridge preserves one active browser controller and one engine/settings owner; further connections cannot dispatch while it is active. The transport's four reservations do not imply four engine controllers. [COMPANION_DESIGN.md](COMPANION_DESIGN.md) records the trade-off and bounded async session design. The opt-in `local-bridge` native-host API and preview worker now serve wire2 over authenticated pipes without letting client loss stop the engine. Actual pipe/engine tests are separate from Firefox, native stdio forwarding, installed private authority and package qualification, which remain unfinished. Do not close #50 or promote #51 based on this increment. Current-head validation and new preview evidence are required; old reports remain version-specific.

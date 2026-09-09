@@ -43,6 +43,10 @@ Automatic capture means a supported HTTP(S) file download initiated by an ordina
 
 Unsupported/unsafe cases remain in Firefox with clear feedback. Test GET downloads with redirects, query/signed targets and attachment responses without filename extensions, as well as ordinary navigation. Private/container/POST/blob/session-bound cases must not be guessed into the supported set. Preserve the existing explicit opt-in session path; automatic capture is not authorization to harvest or persist credentials. Already transmitted network bytes cannot be retracted; claim one owned task/output, not zero probe/overlapping in-flight network traffic.
 
+### Signing versus listing
+
+No public AMO listing is required. Mozilla signing and marketplace listing are separate operations: unlisted signing requires submission to Mozilla but does not create a publicly discoverable/installable AMO listing. Developer Edition's unsigned persistent-install exception requires changing signature enforcement; it is not equivalent to installation with protections unchanged. Verify actual artifact signing and persistent installation behavior rather than inferring either from repository visibility or the `.xpi` file extension.
+
 ### Persistent installation requires a real distribution path
 
 Use Mozilla-signed self-distribution or another deliberately reviewed Mozilla-supported persistent path with signing protection unchanged. Do not use temporary-addon reloads, profile injection, enterprise-policy bypasses or `xpinstall.signatures.required` changes as the solution.
