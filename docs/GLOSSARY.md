@@ -152,3 +152,6 @@ See [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) for the demonstrated corr
 [FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) records the corrected assumptions, independent mutation baselines and exact candidate scopes.
 
 - **Candidate acceptance versus final publication (#28 → #46)**: PR43 may satisfy #28's mapped implementation/candidate gates, but #46 must separately qualify exact final-main inputs and publish before M4/the owner-facing release is complete. This resolves the merge-before-main-CI/publication ordering conflict without waiving publication or relabeling a PR candidate as merged-main evidence. See ADR0012 and `RELEASE_MATRIX.md`.
+
+
+- **Publication auditor versus product/test source (#46)**: the remote metadata auditor can have a newer identified revision than the frozen product artifact and its test drivers. Its issue/PR coverage uses independent full-PR reads and GraphQL totals, not an assumption that an issues response includes every PR. A newer auditor/documentation commit is not an untested rebuild to substitute for the qualified product tag.

@@ -4,7 +4,11 @@ import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { allowedEmail, inspectText, sensitivePath } from "./privacy-policy.mjs";
-import { originalCommitAbsent, outsideCheckout } from "./publication-policy.mjs";
+import {
+  originalCommitAbsent,
+  outsideCheckout,
+  platformRecordCounts,
+} from "./publication-policy.mjs";
 import { repository as target } from "./repository-policy.mjs";
 
 const maxBuffer = 64 * 1024 * 1024;
@@ -50,6 +54,8 @@ async function main() {
   requireCondition(args.length === 2 || (args.length === 3 && args[2] === "--metadata-only"));
   const metadataOnly = args[2] === "--metadata-only";
   const checkout = await realpath(command("git", ["rev-parse", "--show-toplevel"]).trim());
+  const auditorRevision = command("git", ["rev-parse", "HEAD"]).trim();
+  const auditorWorktreeDirty = Boolean(command("git", ["status", "--porcelain"]).trim());
   for (const path of args.slice(0, 2))
     requireCondition(outsideCheckout(checkout, await realpath(path)));
   const { emails, archiveRepository: source } = JSON.parse(await readFile(args[0], "utf8"));
@@ -144,6 +150,7 @@ async function main() {
     stage = "platform-surfaces";
     const surfaces = {
       issues: pages(`repos/${target}/issues?state=all`),
+      pulls: pages(`repos/${target}/pulls?state=all`),
       comments: pages(`repos/${target}/issues/comments`),
       reviewComments: pages(`repos/${target}/pulls/comments`),
       commitComments: pages(`repos/${target}/comments`),
@@ -157,6 +164,22 @@ async function main() {
       artifacts: pages(`repos/${target}/actions/artifacts`, "artifacts"),
       caches: pages(`repos/${target}/actions/caches`, "actions_caches"),
     };
+    stage = "issue-and-pull-coverage";
+    const [owner, name] = target.split("/");
+    const totalResponse = JSON.parse(
+      command("gh", [
+        "api",
+        "graphql",
+        "-f",
+        `query=query { repository(owner:"${owner}",name:"${name}") { issues { totalCount } pullRequests { totalCount } } }`,
+      ]),
+    );
+    requireCondition(!totalResponse.errors);
+    const totalRepository = totalResponse.data?.repository;
+    const platformCounts = platformRecordCounts(surfaces.issues, surfaces.pulls, {
+      issues: totalRepository?.issues?.totalCount,
+      pullRequests: totalRepository?.pullRequests?.totalCount,
+    });
     stage = "unstarted-jobs";
     surfaces.jobs = surfaces.runs.flatMap((run) =>
       pages(`repos/${target}/actions/runs/${run.id}/jobs?filter=all`, "jobs"),
@@ -183,12 +206,14 @@ async function main() {
           checkedAt: new Date().toISOString(),
           repository: target,
           head,
+          auditorRevision,
+          auditorWorktreeDirty,
           privateArchiveVerified: true,
           visibility: targetMetadata.private ? "private" : "public",
           independentNonFork: true,
           refs: refs.length,
           commits: commits.length,
-          issueAndPRRecords: surfaces.issues.length,
+          ...platformCounts,
           historicalBlobs: blobs.length,
           historicalPaths: paths.size,
           originalCommitLookupsRejected: originals.length,

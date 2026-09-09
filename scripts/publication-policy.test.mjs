@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { originalCommitAbsent, outsideCheckout } from "./publication-policy.mjs";
+import {
+  originalCommitAbsent,
+  outsideCheckout,
+  platformRecordCounts,
+} from "./publication-policy.mjs";
 
 test("comparison inputs must be outside the checkout, not merely dot-prefixed", () => {
   const checkout = join(tmpdir(), "synthetic-checkout");
@@ -10,6 +14,33 @@ test("comparison inputs must be outside the checkout, not merely dot-prefixed", 
   assert.equal(outsideCheckout(checkout, join(checkout, "..private.json")), false);
   assert.equal(outsideCheckout(checkout, checkout), false);
   assert.equal(outsideCheckout(checkout, join(tmpdir(), "synthetic-audit", "private.json")), true);
+});
+
+test("independent pull metadata and totals cover an issues-only response without double counting", () => {
+  const issue = { number: 1 };
+  const pull = { number: 2 };
+  const thinPull = { number: 2, pull_request: {} };
+  const totals = { issues: 1, pullRequests: 1 };
+  const expected = { issues: 1, pullRequests: 1, issueAndPRRecords: 2 };
+  assert.deepEqual(platformRecordCounts([issue], [pull], totals), expected);
+  assert.deepEqual(platformRecordCounts([issue, thinPull], [pull], totals), expected);
+  for (const [issues, pulls, counts] of [
+    [[issue], [], totals],
+    [[], [pull], totals],
+    [[issue, issue], [pull], totals],
+    [[issue], [pull, pull], totals],
+    [[issue], [{ number: 1 }], totals],
+    [[issue, { number: 3, pull_request: {} }], [pull], totals],
+    [[{ number: true }], [pull], totals],
+    [[{ number: 0 }], [pull], totals],
+    [null, [pull], totals],
+    [[issue], null, totals],
+    [[issue], [pull], undefined],
+    [[issue], [pull], { issues: "1", pullRequests: 1 }],
+    [[issue], [pull], { issues: 1, pullRequests: 2 }],
+  ]) {
+    assert.throws(() => platformRecordCounts(issues, pulls, counts), /coverage is incomplete/u);
+  }
 });
 
 test("only an exact missing-commit response proves a tested original is absent", () => {
