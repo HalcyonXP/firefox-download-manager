@@ -15,7 +15,7 @@ use download_manager_engine::scheduler::{
 use download_manager_engine::storage::{FileRange, PartialFile};
 use download_manager_engine::task::{
     CancelPartialPolicy, RetryPolicy, TaskEngine, TaskEngineError, TaskEngineOptions,
-    TaskEventKind, TaskFailureKind,
+    TaskEventKind, TaskFailureKind, TaskSubscription,
 };
 use download_manager_test_server::{
     BadRange, ByteRange, Fault, FaultRule, Fixture, RequestSelector, ServerConfig, TestServer,
@@ -705,17 +705,95 @@ async fn routine_progress_eventually_flushes_deferred_ranges_during_a_stall() {
     assert_eq!(paused.state(), TaskState::Paused);
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
-    let fixture = Fixture {
-        len: 8 * MIB,
-        seed: 105,
-    };
+fn progress_fixture(seed: u8) -> (Fixture, TestServer) {
+    let fixture = Fixture { len: 8 * MIB, seed };
     let server = TestServer::start(ServerConfig {
         fixture: fixture.clone(),
         rules: Vec::new(),
     })
-    .expect("start progress server");
+    .expect("start progress fixture");
+    (fixture, server)
+}
+
+// Read the independently published watch snapshot, not the managed-state mutex:
+// a slow critical checkpoint may still own that mutex when a deadline fires.
+// No URL, filename, path, validator, task ID or credential is formatted here.
+fn progress_observation(subscription: &TaskSubscription, started: Instant) -> String {
+    let snapshot = subscription.latest();
+    format!(
+        "elapsed_ms={} published_state={:?} bytes={} expected={:?} active={} speed={:?} failure={:?}",
+        started.elapsed().as_millis(),
+        snapshot.state(),
+        snapshot.bytes_completed(),
+        snapshot.expected_size(),
+        snapshot.active_workers(),
+        snapshot.speed_bytes_per_second(),
+        snapshot
+            .failure()
+            .map(download_manager_engine::task::TaskFailure::kind),
+    )
+}
+
+#[test]
+fn progress_diagnostics_omit_sensitive_snapshot_fields() {
+    let directories = TestDirectories::new("diagnostic-canary44");
+    let engine = TaskEngine::open(directories.state(), TaskEngineOptions::default())
+        .expect("open diagnostic fixture");
+    let task = engine
+        .create_task_default(
+            "https://diagnostic44.example.test/private-path?token=synthetic44",
+            directories.destination(),
+            "private-name44.bin",
+        )
+        .expect("create diagnostic task without starting network");
+    let subscription = engine.subscribe(task.task_id()).expect("subscribe");
+    let text = progress_observation(&subscription, Instant::now());
+    assert!(text.len() <= 256);
+    assert!(
+        text.contains(
+            "published_state=Queued bytes=0 expected=None active=0 speed=None failure=None"
+        )
+    );
+    for forbidden in [
+        "diagnostic44",
+        "private-path",
+        "synthetic44",
+        "private-name44",
+        "diagnostic-canary44",
+        &task.task_id().to_string(),
+        &directories.root.to_string_lossy(),
+    ] {
+        assert!(!text.contains(forbidden));
+    }
+}
+
+fn assert_progress_samples(
+    progress_events: &[(TimestampMillis, download_manager_engine::task::TaskProgress)],
+    size: u64,
+    elapsed: Duration,
+) {
+    assert!(
+        progress_events
+            .windows(2)
+            .all(|samples| samples[0].1.bytes_completed() <= samples[1].1.bytes_completed())
+    );
+    let ordinary: Vec<_> = progress_events
+        .iter()
+        .filter(|(_, sample)| sample.bytes_completed() < size)
+        .collect();
+    assert!(
+        ordinary
+            .windows(2)
+            .all(|samples| { samples[1].0.get().saturating_sub(samples[0].0.get()) >= 80 })
+    );
+    let generous_maximum =
+        usize::try_from(elapsed.as_millis() / 100).expect("test duration fits usize") + 3;
+    assert!(progress_events.len() <= generous_maximum);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
+    let (fixture, server) = progress_fixture(105);
     // Withhold the second assignment, not an assumed number of wall-clock ticks.
     // The first assignment still exercises real networking, disk and snapshots.
     let pause = server
@@ -742,19 +820,26 @@ async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
             WorkerCount::One,
         )
         .expect("create task");
-    let started = std::time::Instant::now();
+    let subscription = engine
+        .subscribe(task.task_id())
+        .expect("diagnostic subscription");
+    let started = Instant::now();
     engine.start(task.task_id()).expect("start task");
 
     let mut pause = Some(pause);
     let mut held_samples = 0;
+    let mut first_prefix_ms = None;
+    let mut released_ms = None;
+    let mut last_transition = None;
     let mut progress_events = Vec::new();
-    tokio::time::timeout(Duration::from_secs(10), async {
+    let completion = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let event = engine.next_event().await.expect("next task event");
             match event.kind() {
                 TaskEventKind::Progress(progress) => {
                     progress_events.push((event.emitted_at(), *progress));
                     if pause.is_some() && progress.bytes_completed() == 2 * MIB {
+                        first_prefix_ms.get_or_insert_with(|| started.elapsed().as_millis());
                         held_samples += 1;
                         // Observe an actual estimator window too; do not assume the
                         // fixture takes long enough to produce a speed estimate.
@@ -764,40 +849,46 @@ async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
                                 .as_ref()
                                 .is_some_and(|guard| guard.wait_for_pending(1, Duration::ZERO))
                         {
+                            released_ms = Some(started.elapsed().as_millis());
                             drop(pause.take());
                         }
                     }
                 }
                 TaskEventKind::Completed(_) => break,
-                _ => {}
+                TaskEventKind::StateChanged { task, .. } => {
+                    last_transition = Some((task.state(), started.elapsed().as_millis()));
+                }
+                TaskEventKind::Failed { failure, .. } => panic!(
+                    "progress fixture failed: {:?}; {}",
+                    failure.kind(),
+                    progress_observation(&subscription, started),
+                ),
+                TaskEventKind::RetryScheduled(_) => {}
             }
         }
     })
-    .await
-    .expect("event completion timeout");
+    .await;
+    let gate_pending = pause
+        .as_ref()
+        .is_some_and(|guard| guard.wait_for_pending(1, Duration::ZERO));
+    let observation = format!(
+        "{} events={} held_samples={held_samples} first_prefix_ms={first_prefix_ms:?} \
+         released_ms={released_ms:?} gate_pending={gate_pending} last_transition={last_transition:?}",
+        progress_observation(&subscription, started),
+        progress_events.len(),
+    );
+    assert!(
+        completion.is_ok(),
+        "event completion timeout; {observation}"
+    );
+    eprintln!("progress cadence observation: {observation}");
 
     assert!(
         pause.is_none(),
         "completion must follow explicit response release"
     );
     assert!(held_samples >= 4);
-    assert!(
-        progress_events
-            .windows(2)
-            .all(|samples| samples[0].1.bytes_completed() <= samples[1].1.bytes_completed())
-    );
-    let ordinary: Vec<_> = progress_events
-        .iter()
-        .filter(|(_, sample)| sample.bytes_completed() < fixture.len)
-        .collect();
-    assert!(
-        ordinary
-            .windows(2)
-            .all(|samples| { samples[1].0.get().saturating_sub(samples[0].0.get()) >= 80 })
-    );
-    let generous_maximum =
-        usize::try_from(started.elapsed().as_millis() / 100).expect("test duration fits usize") + 3;
-    assert!(progress_events.len() <= generous_maximum);
+    assert_progress_samples(&progress_events, fixture.len, started.elapsed());
 
     let snapshot = engine.snapshot(task.task_id()).expect("latest snapshot");
     assert_eq!(snapshot.state(), TaskState::Completed);
@@ -813,15 +904,7 @@ async fn progress_events_are_rate_limited_while_snapshots_remain_complete() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn progress_events_coalesce_for_a_late_consumer_without_losing_final_state() {
-    let fixture = Fixture {
-        len: 8 * MIB,
-        seed: 139,
-    };
-    let server = TestServer::start(ServerConfig {
-        fixture: fixture.clone(),
-        rules: Vec::new(),
-    })
-    .expect("start coalescing server");
+    let (fixture, server) = progress_fixture(139);
     let directories = TestDirectories::new("late-progress-consumer");
     let engine = TaskEngine::open(directories.state(), TaskEngineOptions::default())
         .expect("open task engine");
@@ -832,6 +915,10 @@ async fn progress_events_coalesce_for_a_late_consumer_without_losing_final_state
             "coalesced.bin",
         )
         .expect("create task");
+    let subscription = engine
+        .subscribe(task.task_id())
+        .expect("diagnostic subscription");
+    let started = Instant::now();
     engine.start(task.task_id()).expect("start task");
     // Deliberately consume no events until the task completes. Snapshot watching
     // is a separate channel, so this deterministically exercises a late consumer.
@@ -840,8 +927,17 @@ async fn progress_events_coalesce_for_a_late_consumer_without_losing_final_state
         engine.wait_until_inactive(task.task_id()),
     )
     .await
-    .expect("task timeout")
+    .unwrap_or_else(|_| {
+        panic!(
+            "late consumer task timeout; {}",
+            progress_observation(&subscription, started)
+        )
+    })
     .expect("wait for task");
+    eprintln!(
+        "late consumer completion: {}",
+        progress_observation(&subscription, started)
+    );
     assert_eq!(completed.state(), TaskState::Completed);
     assert_eq!(completed.bytes_completed(), fixture.len);
     let mut samples = Vec::new();
@@ -860,7 +956,13 @@ async fn progress_events_coalesce_for_a_late_consumer_without_losing_final_state
         }
     })
     .await
-    .expect("completion event timeout");
+    .unwrap_or_else(|_| {
+        panic!(
+            "late consumer event timeout; samples={}; {}",
+            samples.len(),
+            progress_observation(&subscription, started)
+        )
+    });
     // A minimum of four observed events is not the coalescing contract.
     assert!(samples.len() <= 1);
     for sample in samples {
