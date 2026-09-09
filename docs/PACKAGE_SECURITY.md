@@ -2,7 +2,7 @@
 
 Canonical source and review: https://github.com/HalcyonXP/firefox-download-manager/tree/main/docs
 
-This package contains local code, not an updater or authenticated publisher verification system. Download it from the canonical release and compare the published ZIP SHA-256. A hash alone cannot authenticate malicious bytes accompanied by an edited descriptor. First-party licensing is unspecified; third-party notices are included.
+This package contains local code, not an updater or authenticated publisher verification system. Download it from the canonical release and compare the published ZIP SHA-256. A hash alone cannot authenticate malicious bytes accompanied by an edited descriptor. First-party code is MIT licensed (`LICENSE.txt`); third-party notices retain their own terms. Licensing is not a publisher signature or a qualification result.
 
 Setup is current-user only, requires closed Firefox/helpers before mutation, and never changes a browser profile, elevation/security policy, routes, firewall or VPN. Its directory leases and fixed-file receipts reject ordinary reparse/traversal/collision/foreign-registration mistakes; they are not a sandbox against a compromised account. Installation uses verified immutable generations and a bounded recovery journal. Unknown or inconsistent files are preserved, not swept. Registry and filesystem durability are not an atomic power-loss transaction. Follow INSTALL.md recovery guidance.
 

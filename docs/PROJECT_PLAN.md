@@ -14,7 +14,17 @@ The user explicitly authorized public visibility and requested that all document
 
 Twenty-two regular issues were transferred with their states and comment history. Current documentation uses their new numbers; [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) records the mapping and links historical implementations to cleaned public commits. The owner-private planning board retains the corresponding work statuses. The predecessor stays private solely as an archive, not an alternative source of truth.
 
-Implementation includes #23 authenticated handoff, #24 shared polite request admission, and #25 integrity/SHA-256. #32/#33 resolved the cancellation-observation baseline and actual public CI passed; that temporary gate is no longer active. The #26 security review is recorded with explicit packaging blockers; packaging #27 and qualification/release #28 remain required. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
+Implementation includes #23 authenticated handoff, #24 shared polite request admission, and #25 integrity/SHA-256. #32/#33 resolved the cancellation-observation baseline and actual public CI passed; that temporary gate is no longer active. The #26 security review is recorded; #27 remediated its packaging blockers within the documented ownership/fault model and merged. #39/#41 baseline corrections also merged and main CI passed. Candidate qualification #28 is In Progress (draft PR #43), not yet accepted; dependent #46 retains final-main qualification and publication under ADR0012. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
+
+## Owner clarification: FOSS and the available computer (2026-09-09)
+
+The owner explicitly wants permissive FOSS and has only this computer. MIT is the implementation selected for first-party code; third-party terms stay intact. Qualification will use the existing native Windows 11 x64 / Firefox Developer Edition installation with isolated owned test domains. No new machine/OS/account or protection change is requested. Clean-machine coverage is declared unavailable, not passed. [ADR 0011](decisions/0011-license-and-available-qualification.md) records the scope change, licensing meaning and remaining gates. Earlier checkpoint references to unresolved licensing/required clean-machine coverage are historical and superseded by this decision.
+
+## Candidate acceptance and publication ordering (ADR0012)
+
+The earlier single-issue sequence conflicted: #28 included publication, the guide requires acceptance before merge, and publication requires authoritative merged-main CI. [ADR0012](decisions/0012-qualification-publication-sequence.md) explicitly transfers the final-main/artifact/tag/privacy/publication criteria to dependent #46, without waiving any release or M4 exit gate. #28/PR43 can close only after its mapped candidate criteria and current PR CI pass; #46 becomes Ready only after that merge and successful main CI. A candidate or a Done #28 is not an install-ready release.
+
+[RELEASE_MATRIX.md](RELEASE_MATRIX.md) records the layered critical-adversary coverage and support/resource limits. CI34351352220 and clean8b3 actual native26/2GiB, Firefox20 and native-Windows11-x64 installer runs passed against the exact source50c1c99295b7a0447b102c82b1d61d8100de88ad candidate. Final-main bytes must be identified and requalified by #46. This administrative split implements the owner's existing authorized outcome; the owner did not specifically request or name the split.
 
 ## Product goal
 
@@ -126,9 +136,10 @@ Review, package, document, and qualify the first local release.
 
 - [#26 Permission and native-helper security review](https://github.com/HalcyonXP/firefox-download-manager/issues/26)
 - [#27 Windows installation and removal](https://github.com/HalcyonXP/firefox-download-manager/issues/27)
-- [#28 End-to-end qualification and first release](https://github.com/HalcyonXP/firefox-download-manager/issues/28)
+- [#28 End-to-end candidate qualification](https://github.com/HalcyonXP/firefox-download-manager/issues/28)
+- [#46 Final-main artifact qualification and first release publication](https://github.com/HalcyonXP/firefox-download-manager/issues/46)
 
-**Exit condition:** a clean Windows 11 environment can install, use, upgrade, and remove the extension/helper through documented steps, and GitHub provides checksummed release artifacts.
+**Exit condition (revised 2026-09-09):** the exact package can install, run with Firefox Developer Edition, upgrade and uninstall on the owner's existing native Windows 11 x64 computer using isolated test profiles/application state, and GitHub provides checksummed release artifacts. A separate clean-machine test is unavailable and is not required for this personal release; release notes must say so. This replaces—not satisfies—the former clean-machine criterion. See [ADR 0011](decisions/0011-license-and-available-qualification.md).
 
 ## Critical path
 
@@ -139,7 +150,7 @@ Review, package, document, and qualify the first local release.
 #13 + #14 + #15 -> #16 -> #17 -> #18 -> #19/#20 -> #21
 #13 + #15 + #17 -> #22/#24/#25
 #18 + #19 + #22 -> #23
-M2 + M3 -> #26 -> #27 -> #28
+M2 + M3 -> #26 -> #27 -> #28 -> successful merged-main CI -> #46
 ```
 
 Some work may proceed in parallel, but issue acceptance criteria define completion—not code presence alone.
@@ -224,6 +235,12 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 
 #41 / PR #42 subsequently merged as `78a92ea` after CI `34286434188` passed all three jobs. #39 is now updated onto that main and its full combined gate must pass; merged-main CI `34287899024` was still pending at this integration checkpoint. #28 stays blocked until the current baseline is verified. A successful Dependabot Updates run is not the CI workflow and is never used as that gate.
 
+## Pre-#44 checkpoint: artifact slices, not release approval
+
+The preceding #39/#41 integration notes are historical: merged-main CI `34287899024` passed, combined #39 PR CI `34288270754` passed, #39 merged as `01a49d0`, and main CI `34289550859` passed all three jobs. #28 resumed; draft PR #43 foundation `0ccc6ea` passed CI `34292916341` with native candidate/2-GiB evidence as well as existing package lifecycles.
+
+A clean-driver native Windows 11 x64 main-artifact run passed. A later dirty-driver real Firefox 156/aurora packaged-XPI slice passed settings, checksum success/mismatch, pause/resume, actual optional cookie/site permission plus revocation, session-loss restart refusal and owned upgrade/removal. Fixture regressions correct last-byte probe classification and expected peer resets; no product behavior or release criteria were weakened. [QUALIFICATION_PLAN.md](QUALIFICATION_PLAN.md) and [FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) distinguish inputs, old narrower evidence, successes and remaining gates. No live profile was used, unowned process terminated, signing preference overridden, OS feature enabled or qualified release published.
+
 ## New progress-deadline investigation (#44)
 
 The owner has renewed autonomous execution through install readiness; no further approval is needed within the established scope. #28's MIT and existing-machine decisions are preserved in draft PR #43 (not reverted on this independent main-based correction branch). A second computer or clean OS is not required; safety, privacy, ownership and exact-artifact gates remain.
@@ -233,3 +250,17 @@ CI `34321346203` at #28 tip `26e302b` failed two existing release-target progres
 #44's diagnostics-only CI `34325455523` passed, but that alone did not meet acceptance. Real connected-probe counterexamples now demonstrate valid preparation outlasting the old aggregate ten-second bound. The correction retains ten-second active-cadence and five-second drain watchdogs, introduces explicit whole-workflow containment, and preserves all output/spacing/coalescing assertions. Phase-clock, missing-event and keyed-coalescing mutations fail as intended. Final combined gates remain required; the unavailable original trace is not replaced with a speculative cause.
 
 CI `34327670669` then exposed the inherited mandatory-terminal-rate assertion in a controlled delayed case, not a repeated deadline failure. #44 explicitly reconciles that predicate with the nullable rate/sliding-window contract: retain the observed active-window rate requirement and phase-history equality, but do not invent `Some` at completion after insufficient recent sampling. A deterministic stale-window unit and history-clearing mutation cover this correction; production behavior and final-state/bytes/ETA/output requirements remain unchanged.
+
+## #28 resumed after #44 merge (2026-09-09)
+
+#44 / PR #45 merged as `6482a17892fb2e532077b08ce451a1bf0929de62` after final PR CI `34331518837` passed all three jobs. Merged-main CI `34333682602` is pending at this checkpoint and remains an authoritative gate. #28 is In Progress again on its preserved branch/draft PR #43. The merge retains both the qualification/licensing vocabulary and #44's phase/rate decisions, rather than choosing one side of the documentation conflicts. MIT/eight-payload packaging/nine-leaf XPI and ADR 0011 remain intact.
+
+The latest license-bearing local `26e302b` package passed twelve native checks and 2 GiB from a clean harness. The last actual Firefox run remains the clean pre-license `5ce837c` candidate slice, not a license-bearing rerun. Fresh count-only observation found nineteen unowned Firefox processes; none was stopped or its profile accessed. Native/harness work continues independently. Remaining actual controls/security/restart and artifact/adversary/report-safety/publication work is recorded in #28. The owner requires autonomous completion through install readiness, without additional in-scope approval requests; established safety/privacy/ownership constraints still apply.
+
+Merged-main CI `34333682602` subsequently passed all three jobs, as did integrated #28 CI `34334123810` at `f90f04c`. The expanded native artifact matrix passed 26 cases/2 GiB with a dirty identified driver. [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) preserves scope and the report-sink, constructor, adaptive-prefix and fixture-error corrections; clean-driver/new-tip qualification is still pending. The latest browser count is twelve, not authority to terminate or inspect those processes. #28 remains In Progress/draft, with no tag/release.
+
+Clean driver `520f029` subsequently passed all 26 native cases/2 GiB on the same licensed CI candidate. Installer-driver review then extended the shared report/metadata/cleanup policy; twenty local harness tests passed, with actual lifecycle CI pending at that checkpoint.
+
+CI `34341064343` at `37c5ed2` subsequently passed all three jobs, including the hardened installer and exact candidate native26/2GiB. Clean37 locally passed native26/2GiB against the downloaded licensed artifact. The owner confirmed both Firefox editions closed and would use Edge; fresh preflights passed and clean37 reran the original nine actual Firefox checks on the MIT-bearing bytes. A later dirty, source-hashed driver expands that to twenty actual checks, with a separate native26/2GiB and actual setup lifecycle pass on the existing native Windows11 x64 machine. Twenty-six policy tests and baseline-verified mutations pass separately.
+
+[FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) records toolbar/menu/controls/CSP, private capability denial (not static-document blocking), validating-phase cancellation, durable-prefix restart and renewed-session Add, plus failed assumptions and an interrupted driver install with preserved evidence/reviewed setup-only recovery. No product behavior/protection, live profile, licensing or environment scope was changed. Clean1a8 subsequently passed all three local exact-candidate drivers. CI34349940646 failed two new policy tests because their `artifacts` parent did not exist before packaging; its later lifecycle executable lookup also failed because the build was skipped, without running lifecycle tests. A fresh source-only reproduction, per-test container setup and missing-setup mutation now pass the twenty-seven-test policy gate. Corrected new-tip/final-artifact gates, mapped adversarial/support/resource acceptance and full publication review remain. #28/PR43 stays In Progress/draft; no release/tag exists.

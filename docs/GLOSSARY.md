@@ -101,6 +101,25 @@ The review found a real wildcard-pattern construction edge case, not an observed
 - **Retry cancellation readiness**: the retry wait becomes ready for a cancellation signal without requiring its timer to expire. It is distinct from when the executor schedules that ready future.
 - **Durable control acknowledgement**: the pause/cancel/shutdown result follows safe owned-work stopping and the critical checkpoint. A test deadlock-containment deadline is not a product latency SLO or permission to abandon blocking filesystem work.
 
+## Qualification vocabulary and learning (#28)
+
+- **Artifact slice**: an explicit subset exercised against identified real package bytes. Real Firefox/native transport does not make a manager-page slice the full release/support matrix.
+- **Clean driver revision**: committed harness files with a clean Git worktree, not a factory-clean Windows image. Reports bind source revision and file hashes; a dirty driver is recorded, never silently qualified.
+- **Boundary probes versus workers**: the helper verifies the first and last resource bytes before scheduling. The Python fixture initially misclassified the last-byte probe as a worker; the selector was corrected, preserving older reports as probe-stage evidence only.
+- **Worker-body gate**: test-owned hold after headers for non-probe slow responses. It makes an active UI control observable without assuming a transfer lasts long enough; it does not prove retained nonempty coverage.
+- **Expected peer disconnect versus fixture failure**: cancellation/navigation can reset a socket before headers or during a body. Typed connection errors/timeouts are expected; unknown exceptions or unjoined owned handlers invalidate the report.
+- **Owned-process resource observation**: helper working set/private usage, CPU, aggregate I/O and event counts for identified inputs. OS cache/kernel/other-process memory and physical-device/Internet performance are not inferred from those fields.
+
+[FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) preserves the probe-gate correction, independently reproduced peer-reset boundary, actual browser successes and remaining gaps. The old prototype's manual registration/signing override/tree cleanup was not reused.
+
+## Owner clarification (#28, ADR 0011)
+
+- **Permissive FOSS / MIT**: the owner authorized broad FOSS reuse; MIT is our implementation choice, not a claim that the owner specified that identifier. Copy, modify, redistribute or sell with its copyright/permission notice; third-party terms remain independent.
+- **Existing-machine qualification**: real native Windows 11 x64 / Developer Edition tests in owned isolated application/profile domains on the owner's only computer. Not a clean OS or just an API mock. It replaces the first release's separate clean-machine gate, without marking that unavailable test passed.
+- **Unavailable versus failing coverage**: clean-machine evidence is unavailable under the revised plan and must be disclosed; an actual failing correctness/security test still blocks release. A user-authorized environment change is not permission to relax assertions or manufacture a green run.
+
+See [ADR 0011](decisions/0011-license-and-available-qualification.md). Historical no-license/clean-machine prerequisites are superseded; artifact/source identity, native-x64 intent and safety boundaries are retained.
+
 ## Progress-test deadlines (#44)
 
 - **Preparation readiness**: the independently published 2 MiB prefix and selected response-barrier arrival, before consuming cadence samples. Not a guarantee of durable retained-range metadata.
@@ -111,3 +130,25 @@ The review found a real wildcard-pattern construction edge case, not an observed
 See [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md). First-party licensing and existing-machine qualification are preserved separately in #28/PR43; this correction does not require another computer or alter safety constraints.
 
 - **Available rate versus retained transfer history (#44)**: an actual rate must be observed in the controlled active window. A later final sample may have insufficient recent history and legitimately yield `None`; the nullable rate at `Validating` entry is retained through promotion/completion, not forcibly cleared or required to be `Some`. Zero terminal ETA and exact joined bytes remain independent requirements. The CI follow-up and deterministic stale-window counterexample are in [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md).
+
+## Expanded native qualification (#28)
+
+- **Durable retained prefix**: joined control acknowledgement plus actual persisted, bounded disjoint half-open coverage and an independent disk-prefix hash. Aggregate received bytes alone do not establish it; adjacent ranges need not be stored as one entry.
+- **Retained gate waiter**: an observed server handler held after headers beyond the prefix. Cancelled remote waiters can outlive local worker joins; their count is not the helper's worker/admission count.
+- **Evidence sink**: a new bounded report under ordinary owned artifact ancestors, staged and published without replacing a destination. Narrow ASCII report spelling is not the product's download-filename policy. Metadata-only Windows handles do not provide the read-access sharing lease proven by the rename regression.
+- **Qualified component versus qualified release**: exact native bytes can pass 26 cases/2 GiB while actual Firefox, source/tag and publication gates remain incomplete. No earlier artifact, dirty driver or unavailable clean-machine test is silently upgraded.
+
+See [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) for the demonstrated corrections and remaining uncertainty.
+
+- **Recorded binding versus plausible path**: a verified generation's exact registration can establish bounded test ownership; an unrecorded value is not adopted for deletion from its location/addon ID alone. Preserve unresolved installation authority for reviewed recovery, with no success report.
+
+## Actual Firefox expansion (#28)
+
+- **Private capability denial, not document denial**: Firefox156 withholds extension APIs in the real private window and disables toolbar/link capture; the manager HTML can still render. Qualification also requires actual form non-submission, no new task/network work/output. `incognito: not_allowed` is not a static-document ACL.
+- **Validating-phase UI observation**: observe the real rendered phase, Cancel present/Pause absent, then exercise the real control/confirmation/native acknowledgement and no-publication boundary. A 2 GiB fixture makes this observable in the tested run; it is not a promised hashing duration or scheduling SLO.
+- **UI-port reconnect versus helper crash**: reattaching the manager UI must preserve task identity without replaying Add. It does not prove termination/recovery of a helper; native retained-handle crash tests and real Firefox/helper restart tests provide separate evidence.
+- **Pre-allocation ownership record**: private source/artifact/domain context written before fixture/setup mutation, supplementing the exact binding recorded after a verified install. It is neither automatic cleanup authority for an unknown registration nor a qualification report. Interrupted driver setup and explicit reviewed recovery remain failed-run history.
+
+[FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) records the corrected assumptions, independent mutation baselines and exact candidate scopes.
+
+- **Candidate acceptance versus final publication (#28 → #46)**: PR43 may satisfy #28's mapped implementation/candidate gates, but #46 must separately qualify exact final-main inputs and publish before M4/the owner-facing release is complete. This resolves the merge-before-main-CI/publication ordering conflict without waiving publication or relabeling a PR candidate as merged-main evidence. See ADR0012 and `RELEASE_MATRIX.md`.

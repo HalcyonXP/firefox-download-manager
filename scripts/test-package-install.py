@@ -10,7 +10,12 @@ import platform
 import shutil
 import subprocess
 import tempfile
+import uuid
 import winreg
+
+from qualification.native import evidence_identity
+from qualification.installation import verified_binding
+from qualification.support import bounded_json, new_report, write_report
 
 KEY = r"Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager"
 VIEW = winreg.KEY_WOW64_64KEY
@@ -44,7 +49,18 @@ def key_absent():
         return True
 
 
+def all_views_absent():
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY):
+            try:
+                with winreg.OpenKey(hive, KEY, 0, winreg.KEY_READ | view):
+                    raise RuntimeError("existing registration; no test changes authorized")
+            except FileNotFoundError:
+                pass
+
+
 def delete_owned_registration(expected):
+    closed_apps()
     with winreg.OpenKey(winreg.HKEY_CURRENT_USER, KEY, 0, winreg.KEY_READ | VIEW) as key:
         subkeys, values, _ = winreg.QueryInfoKey(key)
         value, kind = winreg.QueryValueEx(key, "")
@@ -54,6 +70,8 @@ def delete_owned_registration(expected):
 
 
 def refused_shape(setup, environment, root, values):
+    closed_apps()
+    all_views_absent()
     if not key_absent():
         raise RuntimeError("foreign test cannot adopt an existing key")
     with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, KEY, 0, winreg.KEY_WRITE | VIEW) as key:
@@ -80,6 +98,7 @@ def sha(path):
 
 
 def run(setup, action, environment, root, success=True):
+    closed_apps()
     result = subprocess.run([str(setup), action, "--root", str(root)], env=environment,
                             capture_output=True, timeout=90)
     if (result.returncode == 0) != success:
@@ -88,12 +107,31 @@ def run(setup, action, environment, root, success=True):
     return result
 
 
-def test(package, report):
+def cleanup_owned(parent, owned_values):
     closed_apps()
-    if not key_absent():
-        raise RuntimeError("existing registration; no test changes authorized")
+    value = registration()
+    if value is not None:
+        if value not in owned_values:
+            # Location and addon ID alone never establish ownership of a new binding.
+            raise RuntimeError("unrecorded registration; preserving domain for reviewed recovery")
+        delete_owned_registration(value)
+    all_views_absent()
+    shutil.rmtree(parent)
+
+
+def test(package, report):
+    if not __debug__:
+        raise RuntimeError("qualification requires enabled assertions")
+    report = new_report(report)
+    closed_apps()
+    all_views_absent()
     package = package.resolve()
     setup = package / "download-manager-setup.exe"
+    subprocess.run([str(setup), "verify"], capture_output=True, check=True, timeout=30)
+    def identity():
+        return {**evidence_identity(package), "installer_harness_sha256": sha(Path(__file__)),
+                "installation_checks_sha256": sha(Path(__file__).with_name("qualification") / "installation.py")}
+    artifact = identity()
     parent = Path(tempfile.mkdtemp(prefix="dm27 ")).resolve()
     local = parent / "Local Data"
     local.mkdir()
@@ -110,14 +148,16 @@ def test(package, report):
     before = (sha(task), sha(download))
     owned_values = set()
     foreign = str(parent / "Synthetic Foreign Host.json")
-    evidence = {"descriptor_sha256": sha(package / "package.json"), "os": platform.platform(),
+    evidence = {**artifact, "os": platform.platform(),
                 "process_machine": platform.machine(), "native_architecture": os.environ.get("PROCESSOR_ARCHITEW6432", os.environ.get("PROCESSOR_ARCHITECTURE")),
                 "kind": "actual package/native registry lifecycle, not Firefox UI qualification", "checks": []}
     try:
         for values in [[], [("", b"synthetic invalid type", winreg.REG_BINARY)], [("", "", winreg.REG_SZ)], [("Unexpected", "synthetic value", winreg.REG_SZ)]]:
             refused_shape(setup, environment, root, values)
         evidence["checks"].append("empty-malformed-and-named-registration-entries-refused")
-        # An entirely test-owned foreign entry must be refused and preserved.
+        # Adversarial test-only key shapes are not an installation mechanism/fallback.
+        closed_apps()
+        all_views_absent()
         with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, KEY, 0, winreg.KEY_WRITE | VIEW) as key:
             winreg.SetValueEx(key, "", 0, winreg.REG_SZ, foreign)
         owned_values.add(foreign)
@@ -127,21 +167,16 @@ def test(package, report):
         evidence["checks"].append("foreign-registration-refused")
         run(setup, "install", environment, root)
         first = registration()
-        assert first and Path(first).resolve().is_relative_to(root.resolve())
+        first_generation = verified_binding(root, package, first)
         owned_values.add(first)
-        receipt = json.loads((root / "installation.json").read_text())
-        first_generation = receipt["current"]
-        manifest = json.loads(Path(first).read_text())
-        assert manifest["allowed_extensions"] == ["download-manager@halcyonxp.local"]
-        assert sha(Path(manifest["path"])) == sha(package / "download-manager-native-host.exe")
         evidence["checks"].append("actual-install-and-isolated-helper-hello")
         broken = parent / "Broken Package With Spaces"
         broken.mkdir()
-        leaves = ["download-manager-native-host.exe", "download-manager-setup.exe", "firefox-download-manager.xpi", "INSTALL.md", "SECURITY.md", "THIRD-PARTY-NOTICES.txt", "BUILD-INFO.json", "package.json"]
+        leaves = ["download-manager-native-host.exe", "download-manager-setup.exe", "firefox-download-manager.xpi", "INSTALL.md", "SECURITY.md", "THIRD-PARTY-NOTICES.txt", "BUILD-INFO.json", "LICENSE.txt", "package.json"]
         for name in leaves:
             shutil.copyfile(package / name, broken / name)
         (broken / "download-manager-native-host.exe").write_bytes(b"synthetic invalid executable")
-        descriptor = json.loads((broken / "package.json").read_text())
+        descriptor = bounded_json(broken / "package.json")
         descriptor["files"]["download-manager-native-host.exe"] = sha(broken / "download-manager-native-host.exe")
         (broken / "package.json").write_text(json.dumps(descriptor))
         old_receipt = (root / "installation.json").read_bytes()
@@ -152,7 +187,8 @@ def test(package, report):
         evidence["checks"].append("actual-invalid-executable-launch-rollback")
         run(setup, "install", environment, root)
         second = registration()
-        assert second and second != first
+        verified_binding(root, package, second)
+        assert second != first
         owned_values.add(second)
         assert (sha(task), sha(download)) == before
         evidence["checks"].append("same-version-upgrade-preserves-state-and-downloads")
@@ -169,25 +205,17 @@ def test(package, report):
         assert (sha(task), sha(download)) == before
         assert note.read_bytes() == b"unknown user note"
         evidence["checks"].append("actual-uninstall-keeps-state-downloads-unknown-files")
-        report.parent.mkdir(parents=True, exist_ok=True)
-        report.write_text(json.dumps(evidence, indent=2)+"\n", encoding="utf-8")
+        if identity() != artifact:
+            raise RuntimeError("installer artifact or harness changed during qualification")
     finally:
-        # Guard cleanup by provenance: never delete an unrelated registration.
-        value = registration()
-        if value is not None:
-            if value not in owned_values:
-                # A setup failure might have activated a journaled test generation.
-                path = Path(value)
-                if not path.resolve().is_relative_to(root.resolve()) or not path.is_file():
-                    raise RuntimeError("unexpected registry ownership; preserving for inspection")
-                manifest = json.loads(path.read_text())
-                if manifest.get("allowed_extensions") != ["download-manager@halcyonxp.local"]:
-                    raise RuntimeError("unexpected manifest; preserving for inspection")
-            closed_apps()
-            delete_owned_registration(value)
-        if not key_absent():
-            raise RuntimeError("registration cleanup did not complete")
-        shutil.rmtree(parent)
+        try:
+            cleanup_owned(parent, owned_values)
+        except BaseException:
+            ticket = Path(__file__).resolve().parents[1] / ".git" / f"install28-recovery-{uuid.uuid4()}.private.json"
+            with ticket.open("x", encoding="utf-8") as recovery:
+                json.dump({"owned_domain": str(parent), "installation_root": str(root)}, recovery)
+            raise RuntimeError("owned installation domain preserved; no success report authorized") from None
+    write_report(report, evidence)  # Only after every cleanup/identity gate, never overwriting a report.
     print("Actual isolated package install/upgrade/cleanup/uninstall passed; state/downloads preserved.")
 
 

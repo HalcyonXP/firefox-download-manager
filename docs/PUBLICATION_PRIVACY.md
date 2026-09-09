@@ -50,6 +50,6 @@ The first local JSON contains the private `emails` array and the `archiveReposit
 
 ## Retained attribution and local handling
 
-GitHub handles, noreply identities, fixed extension/native-host principals, and reviewed third-party notices remain attributable. This is not an anonymity promise or a detector for arbitrary identifying prose. Synthetic path/URL/authentication fixtures are not real user data. No first-party project license was selected by the visibility change.
+GitHub handles, noreply identities, fixed extension/native-host principals, and reviewed third-party notices remain attributable. This is not an anonymity promise or a detector for arbitrary identifying prose. Synthetic path/URL/authentication fixtures are not real user data. No first-party project license was selected by the visibility change. The owner subsequently clarified permissive FOSS intent; [ADR 0011](decisions/0011-license-and-available-qualification.md) records the later MIT decision, without changing privacy/attribution rules.
 
 Private comparison inputs, Support draft, and original recovery bundle remain outside the checkout. Never upload `.git`, audit kits, browser profiles/screenshots, settings/state, diagnostics, cookies, authorization values, signed URLs, or downloaded partials. Prefer a fresh canonical clone; privately preserve and reapply uncommitted work rather than merging pre-scrub branches. The runtime application remains local-only, with no telemetry, cloud synchronization, or remote updater.

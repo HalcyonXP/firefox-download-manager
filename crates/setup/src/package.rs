@@ -10,7 +10,7 @@ use sha2::{Digest, Sha256};
 use crate::{EXTENSION_FILE, HELPER_FILE, SETUP_FILE, SetupError};
 
 /// Only these fixed leaf files can be consumed from a candidate package.
-pub const PACKAGE_FILES: [&str; 7] = [
+pub const PACKAGE_FILES: [&str; 8] = [
     HELPER_FILE,
     SETUP_FILE,
     EXTENSION_FILE,
@@ -18,6 +18,7 @@ pub const PACKAGE_FILES: [&str; 7] = [
     "SECURITY.md",
     "THIRD-PARTY-NOTICES.txt",
     "BUILD-INFO.json",
+    "LICENSE.txt",
 ];
 const DESCRIPTOR_LIMIT: u64 = 64 * 1024;
 const FILE_LIMIT: u64 = 256 * 1024 * 1024;
@@ -300,6 +301,9 @@ mod tests {
                     .is_valid()
             );
         }
+        let mut unlicensed = descriptor();
+        unlicensed.files.remove("LICENSE.txt");
+        assert!(!unlicensed.is_valid());
         let mut bad = descriptor();
         bad.files.remove(HELPER_FILE);
         bad.files.insert("../outside.exe".into(), "a".repeat(64));
