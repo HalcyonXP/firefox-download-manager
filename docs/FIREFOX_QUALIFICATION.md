@@ -1,5 +1,13 @@
 # Actual Firefox artifact qualification — #28 (not release approval)
 
+## Clean expansion and fresh-workspace CI follow-up
+
+Clean committed driver `1a8ed778e6fc34d6f4e2aead60c4bc5391e08d98` subsequently passed all twenty Firefox checks, native26/default2GiB and the actual native-Windows11-x64 installer lifecycle on the same CI34341064343 candidate. Reports are `firefox28-ci37-clean1a8.json`, `native28-ci37-clean1a8.json` and `install28-native-x64-clean1a8.json`. This supersedes the draft-driver status for those bytes, not final-source/publication gates.
+
+CI `34349940646` then failed two new policy tests because they tried creating a temporary child beneath a nonexistent `artifacts` directory. The populated local checkout had hidden that prerequisite. A fresh source-only fixture with an initially absent container reproduced both errors without browser/registry use. Every policy test now initializes its container; a nested fresh-workspace regression proves the two ownership tests run before packaging. Its unchanged baseline passes and removal of initialization fails the intended assertion. All twenty-seven policy tests pass after restoration.
+
+That CI's package build was skipped. The unconditional lifecycle-observation step also failed to find an unbuilt test executable; **no release lifecycle test ran and no new candidate was produced**. Rust dependency policy passed and ARM lifecycle skipped. This is not a recurrence or reconstruction of #44's progress failure. The failed run remains preserved; the corrected new tip must pass CI before acceptance.
+
 ## Current MIT-bearing checkpoint (2026-09-09)
 
 The owner confirmed both Firefox editions were closed and would use only Edge during testing. Fresh closed-process/all-four-view absent-registration checks passed. Clean `37c5ed2` reran the original nine checks against CI `34341064343`'s licensed package: source `3e8ae17644da1f75f9612bb49db9bef9424eeacd`, descriptor `f77548a3b61d9382ed934d74e8360ea991ff4e6b95def07aeb9f81f05e59dcc6`, ZIP `e274bcc5d7b7ba98f804ce5da858e6fb5f64d64a224e7c75d7ddba2e13c88b57`. Report `artifacts/firefox28-licensed-clean.json` resolves the licensed rerun gap **for that original slice**.

@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import struct
 import subprocess
@@ -23,6 +24,26 @@ from qualification.support import ARTIFACTS, LIMIT, bounded_json, leased_parent,
 
 
 class QualificationPolicy(unittest.TestCase):
+    def setUp(self):
+        # Tests must also work before any package/report has created this container.
+        ARTIFACTS.mkdir(exist_ok=True)
+
+    @unittest.skipUnless(os.name == "nt", "Windows source-only policy fixture; no browser/registry use")
+    def test_fresh_workspace_does_not_require_a_preexisting_artifact_container(self):
+        with tempfile.TemporaryDirectory(prefix="dm28 fresh policy ") as temporary:
+            root = Path(temporary)
+            (root / ".git").mkdir()  # Synthetic private-ticket sink, not a repository/release input.
+            (root / "scripts/qualification").mkdir(parents=True)
+            sources = [Path("scripts/test_qualification.py"), Path("scripts/test-package-install.py"), *Path("scripts/qualification").glob("*.py")]
+            for source in sources:
+                shutil.copyfile(source, root / source)
+            self.assertFalse((root / "artifacts").exists())
+            result = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "scripts", "-p", "test_qualification.py",
+                                     "-k", "test_browser_cleanup_", "-k", "test_browser_owner_"], cwd=root, capture_output=True, timeout=30)
+            self.assertIn(b"Ran 2 tests", result.stderr)
+            self.assertEqual(result.returncode, 0, "fresh source-only policy fixture failed")
+            self.assertTrue((root / "artifacts").is_dir())
+
     def test_browser_creation_order_capture_preservation_and_private_capability_contract(self):
         from qualification.browser_cases import creation_values, require_private_api_denial
         values = creation_values("http://127.0.0.1/range", "explicit.bin", Path("owned"), "f" * 64)
