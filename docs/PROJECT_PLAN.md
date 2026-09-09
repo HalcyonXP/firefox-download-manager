@@ -8,6 +8,14 @@ Current protocol: v2 (paired helper/extension upgrade, #20); v1 remains archived
 
 Project vocabulary and autonomous handoff decisions: [GLOSSARY.md](GLOSSARY.md).
 
+## Current owner workflow correction (2026-09-10)
+
+The owner reports that an ordinary GGUF click used Firefox's built-in downloader after installing the XPI/restarting. They explicitly require **setup.exe → visible tray companion → install XPI once → restart Firefox → ordinary download click automatically starts in Manager**, and short instructions. v0.1.0's manual capture/no-tray/temporary-XPI qualification did not prove that experience. Do not present that older workflow as the requested solution or diagnose an absent extension without evidence.
+
+[ADR0013](decisions/0013-install-restart-click.md) accepts this next-release direction, superseding manual-only capture/temporary user installation and the browser-owned engine lifetime for M5, while preserving v0.1.0's immutable source/assets and historical evidence. [USER_WORKFLOW.md](USER_WORKFLOW.md) is the short target acceptance script, not instructions that make v0.1.0 behave differently. Independent companion lifetime is our implementation choice; automatic Windows-logon startup is not requested or authorized.
+
+Persistent signing authority/approval and safe browser handoff are unresolved implementation gates. No weaker signing setting, temporary-addon reload, manual Add or mocked transport may substitute for the required restart/click test. The owner is using Firefox again; actual browser/setup tests require fresh consent and ownership/closed-app preflights, never inspection of their normal profile. Existing networking/storage/credential/VPN/privacy boundaries remain.
+
 ## Public, authoritative repository (2026-09-08)
 
 The user explicitly authorized public visibility and requested that all documentation refer to **[HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager)**. #8 supersedes the temporary two-repository arrangement. This public repository now owns code, work issues, milestones, CI, and future releases. `origin` points here; there is no publication-remote synchronization step.
@@ -34,7 +42,7 @@ The Firefox extension captures user intent and displays state. A Rust native hel
 
 ## Scope
 
-### Initial scope
+### Released v0.1.0 scope (historical; next workflow below)
 
 - Windows 11
 - Firefox Developer Edition
@@ -51,7 +59,7 @@ The Firefox extension captures user intent and displays state. A Rust native hel
 
 - VPN detection, configuration, IP rotation, or route management
 - Torrent, magnet, FTP, SFTP, or media-extraction support
-- Automatic interception of every built-in Firefox download in the first release
+- Blanket interception of every browser request/download. The historical first release is manual-only; M5 adds safe supported ordinary-click capture, not arbitrary POST/blob/private/auth replay.
 - Circumventing account, subscription, or application-level access controls
 - Cloud accounts, synchronization, telemetry, analytics, or a remote updater
 - Cross-platform packaging in the first release
@@ -141,7 +149,27 @@ Review, package, document, and qualify the first local release.
 
 **Exit condition (revised 2026-09-09):** the exact package can install, run with Firefox Developer Edition, upgrade and uninstall on the owner's existing native Windows 11 x64 computer using isolated test profiles/application state, and GitHub provides checksummed release artifacts. A separate clean-machine test is unavailable and is not required for this personal release; release notes must say so. This replaces—not satisfies—the former clean-machine criterion. See [ADR 0011](decisions/0011-license-and-available-qualification.md).
 
-## Critical path
+### [M5 — Install, restart, click](https://github.com/HalcyonXP/firefox-download-manager/milestone/6)
+
+The earlier milestones describe the completed scoped v0.1.0 release, not completion of the owner's newly confirmed workflow.
+
+- [#48 Reconcile the owner workflow, architecture and acceptance](https://github.com/HalcyonXP/firefox-download-manager/issues/48)
+- [#49 Prove persistent signing/install and safe Firefox handoff](https://github.com/HalcyonXP/firefox-download-manager/issues/49)
+- [#50 Visible Rust tray companion, authenticated bridge and setup.exe](https://github.com/HalcyonXP/firefox-download-manager/issues/50)
+- [#51 Automatic supported ordinary-click capture](https://github.com/HalcyonXP/firefox-download-manager/issues/51)
+- [#52 Signed packaging and concise installation](https://github.com/HalcyonXP/firefox-download-manager/issues/52)
+- [#53 Exact final-main owner-flow qualification/publication](https://github.com/HalcyonXP/firefox-download-manager/issues/53)
+
+**Exit condition:** ordinary setup installation, real tray visibility, normal persistent signed-XPI installation, Firefox restart and an ordinary GGUF click produce one automatically running task and correct output in the native manager, without a competing browser output, temporary-loading API, manual Add/menu substitution or protection downgrade. Safe fallback, IPC/tray/setup/recovery/adversary/privacy/resource gates and new exact-artifact release verification must also pass. Signing/account authority and browser mechanism are gates, not assumed available. Working version target0.2.0 is an implementation choice, not a published promise.
+
+```text
+#48 -> #49 / #50 (independent work)
+#49 + #50 -> #51
+#49 + #50 + #51 -> #52
+merged #49–#52 + authoritative main CI -> #53
+```
+
+## Historical initial-release critical path
 
 ```text
 #9 -> #10 -> #11 -> #12
