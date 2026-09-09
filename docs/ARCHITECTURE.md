@@ -1,8 +1,14 @@
 # Architecture
 
-Status: accepted baseline for the initial local release
+Status: v0.1.0 baseline retained; next-release direction superseded in part by ADR0013
 
-Last updated: 2026-09-04
+## Next-release boundary change (2026-09-10)
+
+The owner requires an ordinary setup.exe, visible tray companion, install-once XPI, browser restart and automatic supported download-link capture. [ADR0013](decisions/0013-install-restart-click.md) supersedes this document's manual-only capture, temporary user-installation and browser-owned engine lifetime for M5. A per-user visible Rust companion will own the engine; a bounded authenticated native bridge will connect Firefox. Exact IPC/capture/signing implementation requires #49/#50 evidence and review, not an unsafe detach or unauthenticated local server. No service, silent Windows-logon startup or protection downgrade is authorized.
+
+The rest of this document describes the **released v0.1.0** baseline unless explicitly updated; it is not a claim that the M5 workflow already exists. Network/storage/recovery/correctness invariants remain applicable.
+
+Baseline last updated: 2026-09-04
 
 ## Purpose
 

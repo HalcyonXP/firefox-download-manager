@@ -5,8 +5,12 @@
 - **Canonical repository / `origin`**: [HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager), public and authoritative for code, issues, CI, and future releases. There is no publication-mirror workflow.
 - **Private predecessor / archive**: retained original review/Git records, not an alternative development repository. It must remain private; its sensitive original refs must never be imported.
 - **Current issue number**: an issue in the canonical repository. [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) maps historical numbers and implementation commits; old commit messages retain their historical namespace.
-- **Manager**: the Firefox UI plus its on-demand Rust native helper, not Firefox's built-in downloads.
-- **Explicit capture**: a link context-menu action or pasted direct HTTP(S) URL; never automatic interception.
+- **Manager**: v0.1.0 is the Firefox UI plus its on-demand Rust helper. M5 targets Firefox integration plus a visible persistent Rust companion; neither means Firefox's built-in downloader. See ADR0013.
+- **Manual capture** (v0.1.0's “explicit capture”): context-menu action or pasted URL followed by Add. Retained as an alternative, not M5's primary acceptance path.
+- **Ordinary-click / automatic capture** (M5): route a supported HTTP(S) file download initiated by a normal user click to one automatically started Manager task. The click supplies user intent; routing is automatic. This is not navigation hijacking, replay of every download as GET, or implicit credential collection.
+- **Companion** (M5): visible per-user Rust application owning the single engine/state root, with tray status and deliberate Quit. Independent lifetime across browser restart is our implementation choice; Windows-logon autorun is not implied.
+- **Native bridge** (M5): bounded authenticated/local-user-confined connection between Firefox Native Messaging and the companion, not a second engine or unauthenticated local web server.
+- **Persistent XPI installation** (M5): normal supported installation of the signed add-on that remains installed across Firefox restart. Reinstalling a temporary add-on after restart, including automatically from a harness, does not satisfy it.
 - **Proposed filename**: a Windows-safe name derived from the URL or entered by the user. #19 resolves this before submission; server metadata cannot choose a path. Collision suffixes are selected safely at final promotion.
 - **Worker**: one transfer lane (1/2/4/8), not permission to exceed the separate global/per-host request caps.
 - **Partial**: helper-managed, unvalidated download storage; not final output.
@@ -14,7 +18,7 @@
 - **Snapshot**: the helper's authoritative task projection; cached UI state is explicitly stale when disconnected.
 - **Promotion**: no-overwrite publication only after complete coverage and validation.
 - **Strong resource identity** (#22): equal final URL, size, mode and validators, including a strong ETag; weak tags and dates alone never justify combining persisted/request byte ranges.
-- **Ready to install**: versioned, checksummed artifacts and documented setup with release gates passed. It does not imply installation into the user's existing Firefox profile.
+- **Ready to install**: version-specific release gates passed, not automatic installation into the user's normal profile. v0.1.0 qualified its manual/development scope only. M5 additionally requires actual setup/tray/persistent-XPI/restart/ordinary-click acceptance; code presence, short instructions or the older release do not establish that.
 - **Qualification gap**: a release criterion for which evidence is missing. Code presence or a mock test is not end-to-end evidence.
 
 ## Privacy meanings

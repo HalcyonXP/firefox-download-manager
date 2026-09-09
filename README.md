@@ -2,6 +2,10 @@
 
 A local download manager for Firefox Developer Edition on Windows 11. It is intended to improve throughput on servers that support HTTP byte ranges by downloading validated file segments concurrently.
 
+## Current workflow limitation
+
+**v0.1.0 does not automatically capture ordinary download clicks, provide a tray companion, or support the requested install-once/restart workflow.** The owner has requested **setup.exe → tray icon → install XPI → restart Firefox → click to download in Manager**. That replacement is being developed in [M5](https://github.com/HalcyonXP/firefox-download-manager/milestone/6); see the [short target workflow](docs/USER_WORKFLOW.md). It is not delivered by changing a setting or following the old temporary-addon instructions.
+
 ## Repository and privacy status
 
 **[HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager)** is the public, authoritative repository for code, issues, CI, and releases. Use this repository directly; there is no publication mirror to synchronize.
@@ -43,9 +47,9 @@ The initial product targets direct HTTP(S) downloads selected explicitly by the 
 
 The native helper uses the operating system's normal network route, whether a VPN is connected or not.
 
-## Install v0.1.0
+## Existing v0.1.0 — manual/development workflow
 
-**[Download the qualified Windows-x64 personal release](https://github.com/HalcyonXP/firefox-download-manager/releases/tag/v0.1.0).** Follow its notes and [installation instructions](docs/INSTALLATION.md), using the original `PACKAGE-SHA256SUMS.txt` to verify the ZIP. The [release record](docs/releases/v0.1.0.md) binds the exact main-d03 source, tested bytes, evidence and support limits. Later CI candidates are not replacements for that release.
+**[Download the previously qualified Windows-x64 manual release](https://github.com/HalcyonXP/firefox-download-manager/releases/tag/v0.1.0).** Follow its notes and [installation instructions](docs/INSTALLATION.md), using the original `PACKAGE-SHA256SUMS.txt` to verify the ZIP. The [release record](docs/releases/v0.1.0.md) binds the exact main-d03 source, tested bytes, evidence and support limits. Later CI candidates are not replacements for that release.
 
 Qualification used the existing native Windows11 x64 computer and Developer Edition156.0, not a separate clean OS. The helper and temporary XPI are unsigned; do not disable protections. Packaging/recovery design is in [PACKAGING_PLAN.md](docs/PACKAGING_PLAN.md).
 

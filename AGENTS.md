@@ -9,7 +9,7 @@ This repository contains a local download manager for Firefox Developer Edition 
 - Project plan: `docs/PROJECT_PLAN.md`
 - Work items and acceptance criteria: this repository's GitHub Issues.
 - `origin` must refer to the canonical repository for maintainer work. There is no publication mirror or synchronization workflow. The private predecessor is an archive, not a development target; never push its old history.
-- Start with the lowest-numbered issue in **Ready** status. Existing work was transferred, not restarted; see `docs/ISSUE_MIGRATION.md` for historical numbering. The next feature issue after public transition #8 is #23.
+- Start with the lowest-numbered issue in **Ready** status. Existing work was transferred, not restarted; see `docs/ISSUE_MIGRATION.md` for historical numbering. The released v0.1.0 work is complete. Owner feedback now drives M5/#48–#53; use the board for current Ready status, not historical handoff numbers.
 
 If code, documentation, and an issue disagree, stop and resolve the contradiction explicitly. Update the plan when scope changes.
 
@@ -18,11 +18,17 @@ If code, documentation, and an issue disagree, stop and resolve the contradictio
 - Use a Firefox WebExtension for capture, controls, and display.
 - Use a Rust native helper for networking, scheduling, direct disk writes, validation, and recovery.
 - Target Firefox Developer Edition and Windows 11 first.
-- Begin with explicit **Download with Manager** actions for direct HTTP(S) URLs.
+- v0.1.0 began with explicit **Download with Manager** actions. For the next release, the owner requires setup.exe → visible tray companion → install XPI once → restart Firefox → ordinary download click automatically starts in Manager. Follow ADR0013 and M5; this is not implemented by the released manual workflow.
 - Do not integrate with, inspect, configure, or route through Proton VPN. The helper uses the operating system's normal route.
 - Do not add torrent, media-extraction, telemetry, analytics, cloud-sync, or remote-update behavior.
-- Do not automatically intercept every Firefox download in the first release.
+- The immutable first release remains manual-only. M5 permits safe supported ordinary-click capture, not blanket interception/replay of every request, POST/blob/private/container/auth context or implicit credential harvesting.
+- Persistent installation must use an authorized Mozilla-supported signed path with protections unchanged, not temporary-addon reloads or profile injection. Signing/account authority is not assumed.
+- The owner is using Firefox again. Earlier closed-browser authorization is not current authority for new browser/registration tests; obtain fresh consent and preflights and use only owned isolated state.
 - Do not copy third-party implementation code unless its license and attribution requirements have been deliberately reviewed.
+
+## User-facing workflow
+
+Keep the quick start to run setup, see tray, install XPI, restart Firefox and click a download link. Keep maintainer/provenance/receipt commands in separate documentation. Do not claim that M5 is delivered or install-ready until that actual workflow passes, or replace it with the rejected right-click/temporary-addon workaround. Preserve version-specific v0.1.0 history rather than relabeling its qualification.
 
 ## Correctness and security invariants
 

@@ -6,7 +6,7 @@ Accepted ADRs define the baseline for the initial local release. Superseding a d
 | --- | --- | --- |
 | [0001](0001-component-boundaries.md) | Firefox WebExtension and Rust component boundaries | Accepted |
 | [0002](0002-firefox-manifest-v3.md) | Manifest V3 with a Firefox event page | Accepted |
-| [0003](0003-helper-lifecycle.md) | On-demand native-helper lifecycle | Accepted |
+| [0003](0003-helper-lifecycle.md) | On-demand native-helper lifecycle | v0.1.0 baseline; successor direction in 0013 |
 | [0004](0004-storage-and-recovery.md) | Partial-file and recoverable-state model | Accepted |
 | [0005](0005-http-segmentation.md) | Strictly validated HTTP segmentation | Accepted |
 | [0006](0006-third-party-code.md) | Original implementation and dependency provenance | Accepted |
@@ -16,5 +16,6 @@ Accepted ADRs define the baseline for the initial local release. Superseding a d
 | [0010](0010-minimal-session-handoff.md) | Explicit memory-only session handoff | Accepted |
 | [0011](0011-license-and-available-qualification.md) | Permissive licensing and available-machine qualification | Accepted |
 | [0012](0012-qualification-publication-sequence.md) | Candidate acceptance before final-main qualification/publication | Accepted |
+| [0013](0013-install-restart-click.md) | Install–restart–click workflow, visible companion and persistent Firefox integration | Accepted direction; mechanism/signing gates pending |
 
 Each record states its reversibility. Security and correctness invariants are not made optional merely because an implementation choice is reversible.
