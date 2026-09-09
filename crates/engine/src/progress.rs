@@ -338,6 +338,21 @@ mod tests {
     }
 
     #[test]
+    fn completed_sample_after_a_gap_can_have_no_recent_rate() {
+        let start = Instant::now();
+        let mut estimator = SpeedEstimator::new(Duration::from_secs(1)).expect("estimator");
+        let _ = estimator.sample_at(0, Some(256), start);
+        let _ = estimator.sample_at(64, Some(256), start + Duration::from_millis(250));
+        let active = estimator.sample_at(128, Some(256), start + Duration::from_millis(500));
+        assert!(active.speed_bytes_per_second().is_some());
+        // Final joined sampling may follow a scheduling or disk-checkpoint gap.
+        // Trimming keeps two endpoints, insufficient for the three-sample rule.
+        let completed = estimator.sample_at(256, Some(256), start + Duration::from_secs(2));
+        assert_eq!(completed.speed_bytes_per_second(), None);
+        assert_eq!(completed.eta_seconds(), Some(0));
+    }
+
+    #[test]
     fn completion_reports_zero_eta_without_inventing_a_rate() {
         let mut estimator = SpeedEstimator::new(Duration::from_secs(5)).expect("estimator");
         let complete = estimator.sample(0, Some(0));

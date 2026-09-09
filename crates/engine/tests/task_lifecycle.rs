@@ -873,7 +873,7 @@ async fn observe_active_cadence(
     pause: download_manager_test_server::ResponsePause,
     workflow_deadline: tokio::time::Instant,
     started: Instant,
-) {
+) -> Option<u64> {
     let observation_started = Instant::now();
     let cadence_deadline = tokio::time::Instant::now() + CADENCE_OBSERVATION_LIMIT;
     let mut pause = Some(pause);
@@ -881,6 +881,7 @@ async fn observe_active_cadence(
     let mut first_prefix_ms = None;
     let mut released_ms = None;
     let mut last_transition = None;
+    let mut validation_rate = None;
     let mut progress_events = Vec::new();
     let completion = tokio::time::timeout_at(workflow_deadline, async {
         loop {
@@ -912,8 +913,15 @@ async fn observe_active_cadence(
                         }
                     }
                 }
-                TaskEventKind::Completed(_) => break,
+                TaskEventKind::Completed(task) => {
+                    assert_eq!(Some(task.speed_bytes_per_second()), validation_rate,
+                        "validation/promotion must preserve the final transfer estimate, including None");
+                    break;
+                }
                 TaskEventKind::StateChanged { task, .. } => {
+                    if task.state() == TaskState::Validating {
+                        validation_rate = Some(task.speed_bytes_per_second());
+                    }
                     last_transition = Some((task.state(), started.elapsed().as_millis()));
                 }
                 TaskEventKind::Failed { failure, .. } => panic!(
@@ -947,6 +955,7 @@ async fn observe_active_cadence(
     assert!(held_samples >= 4);
     // Preparation time cannot inflate the permitted ordinary-event count.
     assert_progress_samples(&progress_events, 8 * MIB, observation_started.elapsed());
+    validation_rate.expect("validation phase must be observed")
 }
 
 async fn assert_cadence_fixture(delay_preparation: bool) {
@@ -985,18 +994,19 @@ async fn assert_cadence_fixture(delay_preparation: bool) {
     let started = Instant::now();
     let deadline = tokio::time::Instant::now() + PROGRESS_WORKFLOW_LIMIT;
     engine.start(task.task_id()).expect("start task");
-    tokio::join!(
+    let ((), final_rate) = tokio::join!(
         prove_preparation_outlasts_old_deadline(&engine, &delay_subscription, preparation, started),
         async {
             wait_for_cadence_readiness(&mut subscription, &pause, deadline, started).await;
-            observe_active_cadence(&engine, &subscription, pause, deadline, started).await;
+            observe_active_cadence(&engine, &subscription, pause, deadline, started).await
         },
     );
     let snapshot = engine.snapshot(task.task_id()).expect("latest snapshot");
     assert_eq!(snapshot.state(), TaskState::Completed);
     assert_eq!(snapshot.bytes_completed(), fixture.len);
     assert_eq!(snapshot.expected_size(), Some(fixture.len));
-    assert!(snapshot.speed_bytes_per_second().is_some());
+    assert_eq!(snapshot.speed_bytes_per_second(), final_rate);
+    assert_eq!(snapshot.active_workers(), 0);
     assert_eq!(snapshot.eta_seconds(), Some(0));
     assert_eq!(
         fs::read(directories.destination().join("progress.bin")).expect("read published bytes"),

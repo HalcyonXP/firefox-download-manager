@@ -109,3 +109,5 @@ The review found a real wildcard-pattern construction edge case, not an observed
 - **Controlled counterexample versus reconstruction**: holding a real accepted probe through the old ten-second deadline demonstrates an invalid aggregate test premise. It does not reconstruct the unavailable original CI schedule.
 
 See [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md). First-party licensing and existing-machine qualification are preserved separately in #28/PR43; this correction does not require another computer or alter safety constraints.
+
+- **Available rate versus retained transfer history (#44)**: an actual rate must be observed in the controlled active window. A later final sample may have insufficient recent history and legitimately yield `None`; the nullable rate at `Validating` entry is retained through promotion/completion, not forcibly cleared or required to be `Some`. Zero terminal ETA and exact joined bytes remain independent requirements. The CI follow-up and deterministic stale-window counterexample are in [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md).
