@@ -14,6 +14,8 @@ The owner reports that an ordinary GGUF click used Firefox's built-in downloader
 
 [ADR0013](decisions/0013-install-restart-click.md) accepts this next-release direction, superseding manual-only capture/temporary user installation and the browser-owned engine lifetime for M5, while preserving v0.1.0's immutable source/assets and historical evidence. [USER_WORKFLOW.md](USER_WORKFLOW.md) is the short target acceptance script, not instructions that make v0.1.0 behave differently. Independent companion lifetime is our implementation choice; automatic Windows-logon startup is not requested or authorized.
 
+The owner approved the user-facing infographic and said Proceed. #50 now develops the visible companion independently of #49: [COMPANION_DESIGN.md](COMPANION_DESIGN.md) records the engine-owner split, native preview, selected/rejected dependency approaches and remaining IPC/setup gates. Preview code/evidence is not an installed companion or a newly qualified release. The original GGUF URL is now known in #49; do not infer it remains unknown from the earlier direction snapshot.
+
 Persistent signing authority/approval and safe browser handoff are unresolved implementation gates. No weaker signing setting, temporary-addon reload, manual Add or mocked transport may substitute for the required restart/click test. The owner is using Firefox again; actual browser/setup tests require fresh consent and ownership/closed-app preflights, never inspection of their normal profile. Existing networking/storage/credential/VPN/privacy boundaries remain.
 
 ## Public, authoritative repository (2026-09-08)

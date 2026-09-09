@@ -121,23 +121,63 @@ where
         .build()
         .map_err(|_| HostError::Runtime)?;
     runtime.block_on(async move {
+        let mut owner = EngineOwner::open(&config)?;
+        let session_result =
+            run_session(reader, writer, &mut owner.engine, &mut owner.settings).await;
+        let shutdown_result = owner.shutdown().await;
+        shutdown_result.and(session_result)
+    })
+}
+
+/// Owns one state lock, settings store and task engine independently of any
+/// transport. Opening this object does not create a daemon or native bridge.
+/// Callers must cooperatively shut down and join their owning worker before
+/// dropping it; the legacy stdio entry point still shuts down on EOF.
+pub struct EngineOwner {
+    engine: TaskEngine,
+    settings: SettingsStore,
+}
+
+impl EngineOwner {
+    /// Opens the existing locked/recoverable engine in the caller's runtime.
+    ///
+    /// # Errors
+    /// Refuses invalid configuration, unowned/locked state or invalid settings.
+    pub fn open(config: &HostConfig) -> Result<Self, HostError> {
         let mut engine = TaskEngine::open(&config.state_root, TaskEngineOptions::default())?;
         let settings =
             SettingsStore::load(&config.state_root, config.default_destination.as_deref())?;
         let (options, scheduler) = engine_configuration(&settings.current)?;
         engine.reconfigure(options, scheduler)?;
         settings.log(Diagnostic::Started);
-        let session_result = run_session(reader, writer, &mut engine, settings).await;
-        let shutdown_result = engine.shutdown().await.map(|_| ()).map_err(HostError::from);
-        shutdown_result.and(session_result)
-    })
+        Ok(Self { engine, settings })
+    }
+
+    /// Borrows the single engine; no clone or second state owner is created.
+    #[must_use]
+    pub const fn engine(&self) -> &TaskEngine {
+        &self.engine
+    }
+
+    /// Checkpoints and joins active work. The state lock remains held until
+    /// this owner is dropped, so a caller cannot race a still-live owner.
+    ///
+    /// # Errors
+    /// Returns a sanitized engine error if joined shutdown cannot complete.
+    pub async fn shutdown(&self) -> Result<(), HostError> {
+        self.engine
+            .shutdown()
+            .await
+            .map(|_| ())
+            .map_err(HostError::from)
+    }
 }
 
 async fn run_session<R, W>(
     reader: R,
     writer: W,
     engine: &mut TaskEngine,
-    settings: SettingsStore,
+    settings: &mut SettingsStore,
 ) -> Result<(), HostError>
 where
     R: Read + Send + 'static,
@@ -159,7 +199,7 @@ where
 
 async fn negotiate<W: Write>(
     inbound: &mut mpsc::Receiver<Inbound>,
-    session: &mut Session<W>,
+    session: &mut Session<'_, W>,
     engine: &TaskEngine,
 ) -> Result<bool, HostError> {
     let mut errors = 0_u8;
@@ -226,7 +266,7 @@ async fn negotiate<W: Write>(
 
 async fn run_active_session<W: Write>(
     inbound: &mut mpsc::Receiver<Inbound>,
-    session: &mut Session<W>,
+    session: &mut Session<'_, W>,
     engine: &mut TaskEngine,
 ) -> Result<(), HostError> {
     loop {
@@ -297,16 +337,16 @@ fn read_input(mut reader: impl Read, sender: &mpsc::Sender<Inbound>) {
     }
 }
 
-struct Session<W> {
+struct Session<'a, W> {
     writer: Arc<Mutex<W>>,
     default_destination: Option<PathBuf>,
     sequence: u64,
     token: u64,
     list: Option<ListSession>,
-    settings: Option<SettingsStore>,
+    settings: Option<&'a mut SettingsStore>,
 }
 
-impl<W: Write> Session<W> {
+impl<W: Write> Session<'_, W> {
     fn new(writer: W, default_destination: Option<PathBuf>) -> Self {
         Self {
             writer: Arc::new(Mutex::new(writer)),

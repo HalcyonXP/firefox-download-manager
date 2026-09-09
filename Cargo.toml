@@ -5,6 +5,7 @@ members = [
     "crates/native-host",
     "crates/test-server",
     "crates/setup",
+    "crates/companion",
 ]
 resolver = "3"
 
@@ -28,6 +29,7 @@ thiserror = "=2.0.20"
 tokio = { version = "=1.53.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
 uuid = { version = "=1.26.0", features = ["v4"] }
 winreg = { version = "=0.56.0", default-features = false }
+winsafe = { version = "=0.0.29", default-features = false, features = ["gui", "shell"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

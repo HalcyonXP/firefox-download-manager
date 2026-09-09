@@ -1,0 +1,23 @@
+[package]
+name = "download-manager-companion"
+description = "Visible Windows companion shell and joined engine ownership (development preview)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+download-manager-native-host = { version = "=0.1.0", path = "../native-host" }
+tokio.workspace = true
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winsafe.workspace = true
+
+[dev-dependencies]
+download-manager-engine = { version = "=0.1.0", path = "../engine" }
+download-manager-test-server = { version = "=0.1.0", path = "../test-server" }
+
+[lints]
+workspace = true

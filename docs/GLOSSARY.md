@@ -20,6 +20,10 @@
 - **Strong resource identity** (#22): equal final URL, size, mode and validators, including a strong ETag; weak tags and dates alone never justify combining persisted/request byte ranges.
 - **Ready to install**: version-specific release gates passed, not automatic installation into the user's normal profile. v0.1.0 qualified its manual/development scope only. M5 additionally requires actual setup/tray/persistent-XPI/restart/ordinary-click acceptance; code presence, short instructions or the older release do not establish that.
 - **Qualification gap**: a release criterion for which evidence is missing. Code presence or a mock test is not end-to-end evidence.
+- **Tray registration** (#50): the shell has acknowledged this owned window/icon through Shell_NotifyIcon. It may be in Windows tray overflow. This is different from the persistent Native Messaging registry binding installed for Firefox.
+- **Engine owner** (#50): the Rust object retaining the one TaskEngine state lock and settings; client observers do not own its lifetime. The state lock remains held after shutdown acknowledgement until the owner is dropped.
+- **Joined Quit** (#50): cooperative engine shutdown followed by joining the retained worker handle before removing the icon/closing. Sending a stop request alone is not a successful Quit.
+- **Companion preview** (#50): a real native window/tray and real engine in a fresh temporary domain, clearly labelled unfinished. It has no browser bridge, capture or installer integration and is excluded from released package payloads. See [COMPANION_DESIGN.md](COMPANION_DESIGN.md).
 
 ## Privacy meanings
 
