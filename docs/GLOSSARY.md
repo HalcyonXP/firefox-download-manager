@@ -20,6 +20,8 @@
 - **Strong resource identity** (#22): equal final URL, size, mode and validators, including a strong ETag; weak tags and dates alone never justify combining persisted/request byte ranges.
 - **Ready to install**: version-specific release gates passed, not automatic installation into the user's normal profile. v0.1.0 qualified its manual/development scope only. M5 additionally requires actual setup/tray/persistent-XPI/restart/ordinary-click acceptance; code presence, short instructions or the older release do not establish that.
 - **Qualification gap**: a release criterion for which evidence is missing. Code presence or a mock test is not end-to-end evidence.
+- **Owner case** (#49): the owner-supplied public Hugging Face page and original download URL in [HANDOFF_FEASIBILITY.md](HANDOFF_FEASIBILITY.md), not a captured expiring CDN URL or a frozen resource identity.
+- **Live-site library probe** (#49): bounded development-engine first/last-byte HTTP validation without creating a task/file. Distinct from HEAD advertisement, full-file integrity, exact packaged-host execution and actual Firefox click/persistent-install evidence.
 
 ## Privacy meanings
 
