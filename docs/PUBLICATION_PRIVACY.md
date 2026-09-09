@@ -55,6 +55,10 @@ GitHub handles, noreply identities, fixed extension/native-host principals, and 
 Private comparison inputs, Support draft, and original recovery bundle remain outside the checkout. Never upload `.git`, audit kits, browser profiles/screenshots, settings/state, diagnostics, cookies, authorization values, signed URLs, or downloaded partials. Prefer a fresh canonical clone; privately preserve and reapply uncommitted work rather than merging pre-scrub branches. The runtime application remains local-only, with no telemetry, cloud synchronization, or remote updater.
 
 
+## Published v0.1.0 outcome
+
+The [release record](releases/v0.1.0.md) binds the frozen main-d03 product, separate clean-e24 auditor, completed archive/release-input reviews, eight inventoried cache deletions (not inspections), and anonymous four-asset/source/tag readback. Clean audits after completed CI/stable advertised refs and after tag/draft creation passed explicit28-issue/19-PR coverage. Initial checksum-attachment omission was corrected additively without replacing the qualified ZIP, tag or existing assets. The refusals and older pending checkpoints below remain historical; raw private audits/recovery material are not public inputs, and no snapshot clears future data or the retained private archive.
+
 ## Final-publication metadata coverage correction (#46)
 
 The pre-tag main-d03 audit at 2026-09-09T14:01:08Z reported28 issue/PR records, while independent REST reads and GraphQL totals showed28 regular issues plus18 PRs (46 distinct numbers). The original raw platform response was not retained; its omitted records and cause are not reconstructed. That snapshot is not accepted as complete PR-metadata coverage merely because its other checks passed.

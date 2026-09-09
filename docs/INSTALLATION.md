@@ -6,12 +6,12 @@ Use a qualified release from **https://github.com/HalcyonXP/firefox-download-man
 
 - Windows 11, x64 package; Firefox Developer Edition **156 or later**. Only the explicitly recorded browser/OS configurations are qualified. The first personal release is tested on the owner's existing native Windows 11 x64 computer with isolated profiles/state, not a separately provisioned clean OS. Development tools remain installed on that test machine; a clean-machine test is unavailable.
 - No administrator elevation, Rust, Node.js or Python is required to run the packaged setup/helper. The release recipe statically links reviewed LLVM/MinGW support and uses Windows’ built-in UCRT; inspect `BUILD-INFO.json` for imported Windows DLLs and build provenance.
-- Close **both standard Firefox and Firefox Developer Edition**, across all profiles, and running native helpers before install, upgrade, cleanup, uninstall, repair or recovery. Native-helper registration is shared across Firefox editions/profiles; Edge or Chrome can remain open. Setup refuses them; it does not terminate them. It does not change execution policy, firewall, routing, VPN, certificate trust, signing preferences, or any browser profile.
+- Close **both standard Firefox and Firefox Developer Edition**, across all profiles, and running native helpers before install, upgrade, cleanup, uninstall, repair or recovery. Native-helper registration is shared across Firefox editions/profiles; Edge or Chrome can remain open. Setup refuses mutation while Firefox/helpers are running; it does not terminate processes. It does not change execution policy, firewall, routing, VPN, certificate trust, signing preferences, or any browser profile.
 - The helper and XPI are **unsigned**. Obtain them from the canonical repository, compare the ZIP's SHA-256 against the release's `PACKAGE-SHA256SUMS.txt`, and review any Windows security warning yourself. Checksums detect inconsistent bytes, not a compromised publisher or malicious package with matching edited metadata. Do not disable system protections to force an install.
 
 ## Install
 
-1. Download the versioned Windows-x64 ZIP and its separate `PACKAGE-SHA256SUMS.txt`. In PowerShell, `Get-FileHash .\firefox-download-manager-0.1.0-windows-x64.zip -Algorithm SHA256` must match the release's value.
+1. Download the versioned Windows-x64 ZIP and its separate `PACKAGE-SHA256SUMS.txt`. The additional release-level `SHA256SUMS.txt` also covers the bounded qualification record; the similarly named file inside the ZIP instead covers extracted payloads. Keep those scopes distinct. In PowerShell, `Get-FileHash .\firefox-download-manager-0.1.0-windows-x64.zip -Algorithm SHA256` must match the release's value.
 2. Extract the ZIP into an ordinary local directory. Keep the extracted package for later uninstall/recovery. Do not run from inside the ZIP or a network/reparse directory.
 3. Open a terminal in that directory and run:
 

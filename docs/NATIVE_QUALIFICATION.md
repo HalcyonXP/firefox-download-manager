@@ -1,8 +1,12 @@
 # Native artifact qualification and harness boundaries — #28
 
-## Later clean/current-candidate evidence (2026-09-09)
+## Published final-main result
 
-CI `34341064343` at `37c5ed2` passed all three jobs, including the hardened installer driver. Current licensed candidate source is `3e8ae17644da1f75f9612bb49db9bef9424eeacd`, descriptor `f77548a3b61d9382ed934d74e8360ea991ff4e6b95def07aeb9f81f05e59dcc6`, ZIP `e274bcc5d7b7ba98f804ce5da858e6fb5f64d64a224e7c75d7ddba2e13c88b57`. Clean37 native26/default2GiB passed against those exact downloaded bytes on native Windows11 x64, separately from a clean37 local-source build.
+[v0.1.0](releases/v0.1.0.md) is the exact main-d03/CI34357070862 ZIP, not one of the older candidate/rebuild inputs below. Clean-d03 native26/default2GiB, installer7 and actualFirefox20 passed; cleanup and public source/tag/asset verification completed. The release record and bounded public qualification attachment identify final hashes, resource measurements and support/privacy limits. The following checkpoints retain their original inputs and are historical, including their then-pending statements.
+
+## Accepted clean37 candidate checkpoint (2026-09-09, historical)
+
+CI `34341064343` at `37c5ed2` passed all three jobs, including the hardened installer driver. That checkpoint's licensed candidate source is `3e8ae17644da1f75f9612bb49db9bef9424eeacd`, descriptor `f77548a3b61d9382ed934d74e8360ea991ff4e6b95def07aeb9f81f05e59dcc6`, ZIP `e274bcc5d7b7ba98f804ce5da858e6fb5f64d64a224e7c75d7ddba2e13c88b57`. Clean37 native26/default2GiB passed against those exact downloaded bytes on native Windows11 x64, separately from a clean37 local-source build.
 
 That exact-CI observation measured 2.522 s elapsed, 2.297 s helper CPU, 42,389,504-byte peak working set, 39,882,752-byte sampled private peak, 25 samples at 100 ms, 2,147,483,648-byte allocation and nine events / 5,175 bytes. Aggregate read/write I/O was 2,147,484,085 / 2,147,498,287 bytes, not disk-only traffic. Scope and unavailable clean-OS coverage remain unchanged.
 

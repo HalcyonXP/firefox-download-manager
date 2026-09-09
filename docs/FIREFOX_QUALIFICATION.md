@@ -1,10 +1,14 @@
 # Actual Firefox artifact qualification — #28 (not release approval)
 
-## Current clean candidate and publication handoff
+## Published final-main result
+
+[v0.1.0](releases/v0.1.0.md) uses exact main-d03/CI34357070862 bytes. Clean-d03 drivers passed all twenty actual Firefox checks, native26/default2GiB and installer7; cleanup completed before reports. Source/tag/assets and anonymous public readback were verified. The release record preserves the hashes, environment, privacy/publication history and support limits. No additional normal-profile mutation was performed or is required for closeout.
+
+## Accepted clean candidate and publication handoff (historical)
 
 Corrected CI `34351352220` at clean8b3 passed all three jobs and twenty-seven policy tests. Its exact source `50c1c99295b7a0447b102c82b1d61d8100de88ad` candidate (descriptor `56ee1a461e8481bca1afb5d26a053932ed540bd2255eb6623f35b3d19b3c7989`, ZIP `d0f49e2b3f5fda8c31a9cd062d053a9dcda98335e212266b8e9ac91723f3b4fe`) passed all twenty actual Firefox checks, native26/2GiB and the actual native-Windows11-x64 installer lifecycle locally with clean8b3. Reports `firefox28-ci8b3-native-clean.json`, `native28-ci8b3-native-clean.json` and `install28-ci8b3-native-clean.json` identify those new bytes; the earlier package reports below are not relabeled.
 
-[RELEASE_MATRIX.md](RELEASE_MATRIX.md) maps the layered adversaries/support limits. [ADR0012](decisions/0012-qualification-publication-sequence.md) assigns final-main artifact/source/tag reruns and publication to dependent #46 after candidate implementation acceptance in #28. No release exists yet; candidate success alone remains insufficient for publication.
+[RELEASE_MATRIX.md](RELEASE_MATRIX.md) maps the layered adversaries/support limits. [ADR0012](decisions/0012-qualification-publication-sequence.md) assigns final-main artifact/source/tag reruns and publication to dependent #46 after candidate implementation acceptance in #28. This candidate checkpoint preceded publication; candidate success alone was insufficient. The final-main release record above supersedes its then-pending status without relabeling these older inputs.
 
 ## Clean expansion and fresh-workspace CI follow-up
 
