@@ -15,5 +15,6 @@ Accepted ADRs define the baseline for the initial local release. Superseding a d
 | [0009](0009-public-authority.md) | One public authoritative repository | Accepted |
 | [0010](0010-minimal-session-handoff.md) | Explicit memory-only session handoff | Accepted |
 | [0011](0011-license-and-available-qualification.md) | Permissive licensing and available-machine qualification | Accepted |
+| [0012](0012-qualification-publication-sequence.md) | Candidate acceptance before final-main qualification/publication | Accepted |
 
 Each record states its reversibility. Security and correctness invariants are not made optional merely because an implementation choice is reversible.

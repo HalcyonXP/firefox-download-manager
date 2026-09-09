@@ -1,4 +1,10 @@
-# Final-artifact qualification — #28
+# Candidate and final-artifact qualification — #28 → #46
+
+## Acceptance/publication sequence
+
+[ADR0012](decisions/0012-qualification-publication-sequence.md) resolves the former merge/publication ordering conflict without removing a release gate. #28/PR43 qualifies the implementation/candidate; dependent #46 owns authoritative merged-main CI, final exact-input reruns, final privacy review and versioned publication. M4/the owner-facing release remain incomplete until #46 passes. Earlier “do not merge #28 before publication” wording is superseded by this explicit transfer, not permission to skip final-main qualification.
+
+[RELEASE_MATRIX.md](RELEASE_MATRIX.md) maps critical Rust, compiled-host, exact-artifact and actual-browser evidence and accepted support/resource limitations. Clean8b3/current CI34351352220 passed all three jobs; its exact source50c1c99295b7a0447b102c82b1d61d8100de88ad candidate locally passed native26/2GiB, Firefox20 and the actual native-Windows11-x64 installer lifecycle. Candidate acceptance does not publish those bytes or establish final-main identity.
 
 ## Current checkpoint (2026-09-09)
 
@@ -39,7 +45,7 @@ Use owned fresh profiles, application data and installation generations, plus Sy
 4. Firefox explicit creation, monitoring, permission consent/revoke, checksum success/failure/cancellation, settings, helper and Firefox restart, session-loss refusal and fresh Add. Test actual packaged CSP/private-window restrictions and no broad permission escalation. No signing-preference changes or live-profile installation.
 5. At least 2 GiB fixture with bounded server/helper state: independent final digest, exact size, observed helper working-set/CPU, logical/allocated output bytes, process aggregate I/O, event counts/rates and elapsed time. Windows process I/O includes networking/stdio and is **not disk-only traffic**; logical output throughput is not physical device throughput. Loopback results are not Internet/VPN performance claims.
 6. Installation/upgrade/removal and state preservation tied to the exact qualified artifact; repeat final publication-input review including separate log/artifact/cache contents. Include the MIT first-party license and required third-party notices. Existing temporary unsigned-XPI workflow is explicit, not permanent signed installation or publisher authentication.
-7. Publish only after required evidence passes and remaining support gaps are resolved. The release tag/source, tested artifact checksum, harness revision and release notes must identify the same inputs; do not assume a later rebuild is byte-identical.
+7. Publish only after required evidence passes and remaining support gaps are resolved. The release tag/source, tested artifact checksum, harness revision and release notes must identify the same inputs; do not assume a later rebuild is byte-identical. Final-main reruns/publication are the dependent #46 gate under ADR0012.
 
 ## Vocabulary
 

@@ -150,3 +150,5 @@ See [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) for the demonstrated corr
 - **Pre-allocation ownership record**: private source/artifact/domain context written before fixture/setup mutation, supplementing the exact binding recorded after a verified install. It is neither automatic cleanup authority for an unknown registration nor a qualification report. Interrupted driver setup and explicit reviewed recovery remain failed-run history.
 
 [FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) records the corrected assumptions, independent mutation baselines and exact candidate scopes.
+
+- **Candidate acceptance versus final publication (#28 → #46)**: PR43 may satisfy #28's mapped implementation/candidate gates, but #46 must separately qualify exact final-main inputs and publish before M4/the owner-facing release is complete. This resolves the merge-before-main-CI/publication ordering conflict without waiving publication or relabeling a PR candidate as merged-main evidence. See ADR0012 and `RELEASE_MATRIX.md`.

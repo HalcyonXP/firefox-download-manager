@@ -1,5 +1,11 @@
 # Actual Firefox artifact qualification — #28 (not release approval)
 
+## Current clean candidate and publication handoff
+
+Corrected CI `34351352220` at clean8b3 passed all three jobs and twenty-seven policy tests. Its exact source `50c1c99295b7a0447b102c82b1d61d8100de88ad` candidate (descriptor `56ee1a461e8481bca1afb5d26a053932ed540bd2255eb6623f35b3d19b3c7989`, ZIP `d0f49e2b3f5fda8c31a9cd062d053a9dcda98335e212266b8e9ac91723f3b4fe`) passed all twenty actual Firefox checks, native26/2GiB and the actual native-Windows11-x64 installer lifecycle locally with clean8b3. Reports `firefox28-ci8b3-native-clean.json`, `native28-ci8b3-native-clean.json` and `install28-ci8b3-native-clean.json` identify those new bytes; the earlier package reports below are not relabeled.
+
+[RELEASE_MATRIX.md](RELEASE_MATRIX.md) maps the layered adversaries/support limits. [ADR0012](decisions/0012-qualification-publication-sequence.md) assigns final-main artifact/source/tag reruns and publication to dependent #46 after candidate implementation acceptance in #28. No release exists yet; candidate success alone remains insufficient for publication.
+
 ## Clean expansion and fresh-workspace CI follow-up
 
 Clean committed driver `1a8ed778e6fc34d6f4e2aead60c4bc5391e08d98` subsequently passed all twenty Firefox checks, native26/default2GiB and the actual native-Windows11-x64 installer lifecycle on the same CI34341064343 candidate. Reports are `firefox28-ci37-clean1a8.json`, `native28-ci37-clean1a8.json` and `install28-native-x64-clean1a8.json`. This supersedes the draft-driver status for those bytes, not final-source/publication gates.
@@ -91,4 +97,4 @@ Seven harness policy/real-HTTP/transport tests passed at that checkpoint. The la
 
 ## Remaining gates
 
-The current twenty-case expansion resolves the listed browser boundaries for its identified draft driver/current candidate, not every possible restart, browser version or deployment environment. Require the committed clean driver, current-tip CI, mapped critical-adversary coverage, accepted support/resource limitations, final exact artifact/source/tag linkage and full public-input/log/artifact/cache review. Clean-machine evidence remains unavailable, not passed or required for this personal release. See [QUALIFICATION_PLAN.md](QUALIFICATION_PLAN.md). Do not merge #28 or publish solely on the strength of an intermediate candidate's browser result.
+The current twenty-case expansion resolves the listed browser boundaries for its identified draft driver/current candidate, not every possible restart, browser version or deployment environment. Require the committed clean driver, current-tip CI, mapped critical-adversary coverage, accepted support/resource limitations, final exact artifact/source/tag linkage and full public-input/log/artifact/cache review. Clean-machine evidence remains unavailable, not passed or required for this personal release. See [QUALIFICATION_PLAN.md](QUALIFICATION_PLAN.md). Do not accept #28 solely on an intermediate browser result: require its full mapped candidate gates and current PR CI. Under ADR0012, #46 still requires final-main exact-input qualification and publication review before any release.

@@ -14,11 +14,17 @@ The user explicitly authorized public visibility and requested that all document
 
 Twenty-two regular issues were transferred with their states and comment history. Current documentation uses their new numbers; [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) records the mapping and links historical implementations to cleaned public commits. The owner-private planning board retains the corresponding work statuses. The predecessor stays private solely as an archive, not an alternative source of truth.
 
-Implementation includes #23 authenticated handoff, #24 shared polite request admission, and #25 integrity/SHA-256. #32/#33 resolved the cancellation-observation baseline and actual public CI passed; that temporary gate is no longer active. The #26 security review is recorded; #27 remediated its packaging blockers within the documented ownership/fault model and merged. #39/#41 baseline corrections also merged and main CI passed. Qualification/release #28 is In Progress (draft PR #43), not approved. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
+Implementation includes #23 authenticated handoff, #24 shared polite request admission, and #25 integrity/SHA-256. #32/#33 resolved the cancellation-observation baseline and actual public CI passed; that temporary gate is no longer active. The #26 security review is recorded; #27 remediated its packaging blockers within the documented ownership/fault model and merged. #39/#41 baseline corrections also merged and main CI passed. Candidate qualification #28 is In Progress (draft PR #43), not yet accepted; dependent #46 retains final-main qualification and publication under ADR0012. Privacy work is recorded in #29 and #30. Public visibility is independently verified, but it does not waive hosted-CI, real Firefox, installation, performance, or release-artifact qualification. See [PUBLICATION_PRIVACY.md](PUBLICATION_PRIVACY.md) and [ADR 0009](decisions/0009-public-authority.md).
 
 ## Owner clarification: FOSS and the available computer (2026-09-09)
 
 The owner explicitly wants permissive FOSS and has only this computer. MIT is the implementation selected for first-party code; third-party terms stay intact. Qualification will use the existing native Windows 11 x64 / Firefox Developer Edition installation with isolated owned test domains. No new machine/OS/account or protection change is requested. Clean-machine coverage is declared unavailable, not passed. [ADR 0011](decisions/0011-license-and-available-qualification.md) records the scope change, licensing meaning and remaining gates. Earlier checkpoint references to unresolved licensing/required clean-machine coverage are historical and superseded by this decision.
+
+## Candidate acceptance and publication ordering (ADR0012)
+
+The earlier single-issue sequence conflicted: #28 included publication, the guide requires acceptance before merge, and publication requires authoritative merged-main CI. [ADR0012](decisions/0012-qualification-publication-sequence.md) explicitly transfers the final-main/artifact/tag/privacy/publication criteria to dependent #46, without waiving any release or M4 exit gate. #28/PR43 can close only after its mapped candidate criteria and current PR CI pass; #46 becomes Ready only after that merge and successful main CI. A candidate or a Done #28 is not an install-ready release.
+
+[RELEASE_MATRIX.md](RELEASE_MATRIX.md) records the layered critical-adversary coverage and support/resource limits. CI34351352220 and clean8b3 actual native26/2GiB, Firefox20 and native-Windows11-x64 installer runs passed against the exact source50c1c99295b7a0447b102c82b1d61d8100de88ad candidate. Final-main bytes must be identified and requalified by #46. This administrative split implements the owner's existing authorized outcome; the owner did not specifically request or name the split.
 
 ## Product goal
 
@@ -130,7 +136,8 @@ Review, package, document, and qualify the first local release.
 
 - [#26 Permission and native-helper security review](https://github.com/HalcyonXP/firefox-download-manager/issues/26)
 - [#27 Windows installation and removal](https://github.com/HalcyonXP/firefox-download-manager/issues/27)
-- [#28 End-to-end qualification and first release](https://github.com/HalcyonXP/firefox-download-manager/issues/28)
+- [#28 End-to-end candidate qualification](https://github.com/HalcyonXP/firefox-download-manager/issues/28)
+- [#46 Final-main artifact qualification and first release publication](https://github.com/HalcyonXP/firefox-download-manager/issues/46)
 
 **Exit condition (revised 2026-09-09):** the exact package can install, run with Firefox Developer Edition, upgrade and uninstall on the owner's existing native Windows 11 x64 computer using isolated test profiles/application state, and GitHub provides checksummed release artifacts. A separate clean-machine test is unavailable and is not required for this personal release; release notes must say so. This replaces—not satisfies—the former clean-machine criterion. See [ADR 0011](decisions/0011-license-and-available-qualification.md).
 
@@ -143,7 +150,7 @@ Review, package, document, and qualify the first local release.
 #13 + #14 + #15 -> #16 -> #17 -> #18 -> #19/#20 -> #21
 #13 + #15 + #17 -> #22/#24/#25
 #18 + #19 + #22 -> #23
-M2 + M3 -> #26 -> #27 -> #28
+M2 + M3 -> #26 -> #27 -> #28 -> successful merged-main CI -> #46
 ```
 
 Some work may proceed in parallel, but issue acceptance criteria define completion—not code presence alone.
