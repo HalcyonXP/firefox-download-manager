@@ -1,5 +1,13 @@
 # Final-artifact qualification — #28
 
+## Current checkpoint (2026-09-09)
+
+CI `34341064343` at `37c5ed2` passed all three jobs, including twenty policy tests, native26/default2GiB, repeat packages and the hardened Server-x64/Windows11-ARM64 x64-emulation installation drivers. Superseded `34339838251` was cancelled, not passed. The exact MIT-bearing candidate (`3e8ae17644da1f75f9612bb49db9bef9424eeacd`; descriptor `f77548a3b61d9382ed934d74e8360ea991ff4e6b95def07aeb9f81f05e59dcc6`) passed clean37 native26/2GiB locally.
+
+The owner then confirmed both Firefox editions closed. Fresh preflights passed; clean37 actual Firefox reran the original nine checks on those licensed bytes. A subsequent dirty, source-hashed expansion passes **twenty actual Firefox checks**, native26/2GiB and the actual setup adversarial lifecycle locally on native Windows11 x64. Twenty-six harness policy tests and corrected baseline-verified mutations pass separately. [FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) records precise new coverage, private API denial versus static-page rendering, failed driver assumptions, an interrupted driver installation and explicit reviewed recovery without relabeling that failure as success.
+
+Clean committed-driver/new-tip CI and final release-input reruns remain gates at this checkpoint. Map critical adversaries and support/resource limitations; freeze exact source/artifact/tag and complete full privacy/log/artifact/cache/publication review. A timed-out full archive review is not clearance. Earlier pending/closed-browser/licensing statements below are historical checkpoints, not current requests for another computer, licensing decision or repeated scope approval.
+
 ## Objective and established baseline
 
 The user-authorized outcome is a qualified, versioned, checksummed release ready for the personal Windows 11 / Firefox Developer Edition workflow. This is not permission to modify the live Firefox profile, weaken system protections or bypass a failed gate. No qualified release exists yet.

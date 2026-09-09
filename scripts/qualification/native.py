@@ -398,21 +398,29 @@ def exact_prefix(ranges):
 
 
 def retained_prefix(host, task_id):
-    task = owned_task(host, task_id)
+    return retained_file(owned_task(host, task_id), host.destination)
+
+
+def retained_file(task, destination):
+    """Shared native/Firefox proof over an already confined task record."""
     assert task["state"] == "paused"
     exact_prefix(task["completed_ranges"])
-    raw = task["partial_path"]
+    partial = owned_partial_path(task["partial_path"], destination)
+    with partial.open("rb") as source:
+        assert hashlib.sha256(source.read(PREFIX_SIZE)).hexdigest() == expected_sha256(PREFIX_SIZE)
+    return partial
+
+
+def owned_partial_path(raw, destination):
     # Rust canonicalize emits the extended local-drive prefix; Python resolve does not.
     # Strip only that spelling for this exact owned drive, never a UNC/device namespace.
-    extended = "\\\\?\\" + host.destination.drive + "\\"
+    extended = "\\\\?\\" + destination.drive + "\\"
     if raw.startswith(extended):
         raw = raw[4:]
     partial = Path(raw)
-    if (partial.parent != host.destination or ":" in partial.name or partial.name.endswith((".", " "))
+    if (partial.parent != destination or ":" in partial.name or partial.name.endswith((".", " "))
             or partial.is_symlink() or partial.is_junction() or partial.resolve() != partial or not partial.is_file()):
         raise RuntimeError("retained partial is not an ordinary owned file")
-    with partial.open("rb") as source:
-        assert hashlib.sha256(source.read(PREFIX_SIZE)).hexdigest() == expected_sha256(PREFIX_SIZE)
     return partial
 
 

@@ -141,3 +141,12 @@ See [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md). First-party licensing and ex
 See [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) for the demonstrated corrections and remaining uncertainty.
 
 - **Recorded binding versus plausible path**: a verified generation's exact registration can establish bounded test ownership; an unrecorded value is not adopted for deletion from its location/addon ID alone. Preserve unresolved installation authority for reviewed recovery, with no success report.
+
+## Actual Firefox expansion (#28)
+
+- **Private capability denial, not document denial**: Firefox156 withholds extension APIs in the real private window and disables toolbar/link capture; the manager HTML can still render. Qualification also requires actual form non-submission, no new task/network work/output. `incognito: not_allowed` is not a static-document ACL.
+- **Validating-phase UI observation**: observe the real rendered phase, Cancel present/Pause absent, then exercise the real control/confirmation/native acknowledgement and no-publication boundary. A 2 GiB fixture makes this observable in the tested run; it is not a promised hashing duration or scheduling SLO.
+- **UI-port reconnect versus helper crash**: reattaching the manager UI must preserve task identity without replaying Add. It does not prove termination/recovery of a helper; native retained-handle crash tests and real Firefox/helper restart tests provide separate evidence.
+- **Pre-allocation ownership record**: private source/artifact/domain context written before fixture/setup mutation, supplementing the exact binding recorded after a verified install. It is neither automatic cleanup authority for an unknown registration nor a qualification report. Interrupted driver setup and explicit reviewed recovery remain failed-run history.
+
+[FIREFOX_QUALIFICATION.md](FIREFOX_QUALIFICATION.md) records the corrected assumptions, independent mutation baselines and exact candidate scopes.

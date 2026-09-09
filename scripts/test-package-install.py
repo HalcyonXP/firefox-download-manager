@@ -14,6 +14,7 @@ import uuid
 import winreg
 
 from qualification.native import evidence_identity
+from qualification.installation import verified_binding
 from qualification.support import bounded_json, new_report, write_report
 
 KEY = r"Software\Mozilla\NativeMessagingHosts\com.halcyonxp.firefox_download_manager"
@@ -106,32 +107,6 @@ def run(setup, action, environment, root, success=True):
     return result
 
 
-def verified_binding(root, package, value):
-    receipt = bounded_json(root / "installation.json")
-    generation = receipt["current"]
-    if str(uuid.UUID(generation, version=4)) != generation:
-        raise RuntimeError("invalid installed generation")
-    folder = root / generation
-    manifest_path = folder / "com.halcyonxp.firefox_download_manager.json"
-    def local_path(raw):
-        extended = "\\\\?\\" + root.drive + "\\"
-        return Path(raw[4:] if raw.startswith(extended) else raw)
-    if not isinstance(value, str) or local_path(value) != manifest_path:
-        raise RuntimeError("unverified installed registration")
-    for path in (root, folder, manifest_path):
-        if path.is_symlink() or path.is_junction() or path.resolve() != path:
-            raise RuntimeError("installed generation has an unowned alias")
-    manifest = bounded_json(manifest_path)
-    if (manifest.get("allowed_extensions") != ["download-manager@halcyonxp.local"]
-            or local_path(manifest["path"]) != folder / "download-manager-native-host.exe"):
-        raise RuntimeError("unverified installed native authority")
-    for name in ("download-manager-native-host.exe", "firefox-download-manager.xpi"):
-        path = folder / name
-        if path.is_symlink() or path.is_junction() or path.resolve() != path or sha(path) != sha(package / name):
-            raise RuntimeError("installed payload differs from the artifact")
-    return generation
-
-
 def cleanup_owned(parent, owned_values):
     closed_apps()
     value = registration()
@@ -154,7 +129,8 @@ def test(package, report):
     setup = package / "download-manager-setup.exe"
     subprocess.run([str(setup), "verify"], capture_output=True, check=True, timeout=30)
     def identity():
-        return {**evidence_identity(package), "installer_harness_sha256": sha(Path(__file__))}
+        return {**evidence_identity(package), "installer_harness_sha256": sha(Path(__file__)),
+                "installation_checks_sha256": sha(Path(__file__).with_name("qualification") / "installation.py")}
     artifact = identity()
     parent = Path(tempfile.mkdtemp(prefix="dm27 ")).resolve()
     local = parent / "Local Data"

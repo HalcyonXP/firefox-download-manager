@@ -84,6 +84,8 @@ class Fixture:
         self.peak = 0
         self.slow_body = threading.Event()
         self.slow_body.set()
+        self.large_body = threading.Event()
+        self.large_body.set()
         self.retained_body = threading.Event()
         self.retained_body.set()
         self.retained_requests = {mode: [] for mode in RETAINED}
@@ -104,6 +106,7 @@ class Fixture:
 
     def close(self):
         self.slow_body.set()
+        self.large_body.set()
         self.retained_body.set()
         self.server.shutdown()
         self.thread.join(timeout=10)
@@ -184,7 +187,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Range", f"bytes {reported}-{reported_end}/{size}")
             self.end_headers()
             if body:
-                if mode == "slow" and not probe and not fixture.slow_body.wait(timeout=30):
+                gate = fixture.large_body if mode == "large" else fixture.slow_body
+                if mode in {"slow", "large"} and not probe and not gate.wait(timeout=30):
                     raise RuntimeError("owned response gate deadline")
                 if mode in RETAINED and not probe and start >= PREFIX_SIZE:
                     with fixture.lock:

@@ -23,6 +23,139 @@ from qualification.support import ARTIFACTS, LIMIT, bounded_json, leased_parent,
 
 
 class QualificationPolicy(unittest.TestCase):
+    def test_browser_creation_order_capture_preservation_and_private_capability_contract(self):
+        from qualification.browser_cases import creation_values, require_private_api_denial
+        values = creation_values("http://127.0.0.1/range", "explicit.bin", Path("owned"), "f" * 64)
+        self.assertEqual(list(values), ["url", "filename", "destination", "workers", "checksum"])
+        self.assertEqual(values["filename"], "explicit.bin")
+        self.assertNotIn("url", creation_values(None, "captured.bin", Path("owned"), ""))
+        inert = {"manager": True, "hasSubmit": True, "hasBrowser": False}
+        require_private_api_denial(inert)
+        for change in ({"hasBrowser": True}, {"manager": False}, {"hasSubmit": False}):
+            with self.assertRaisesRegex(RuntimeError, "capability"):
+                require_private_api_denial({**inert, **change})
+
+    @unittest.skipUnless(os.name == "nt", "Windows Firefox policy only; no browser launch")
+    def test_chrome_click_uses_full_pointer_sequence_and_errors_are_allowlisted(self):
+        from qualification.firefox import AutomationError, ELEMENT, Firefox
+        browser = Firefox(Path("not-executed"), Path("owned"), {})
+        browser.verified = True
+        calls = []
+        def command(name, arguments=None):
+            calls.append((name, arguments))
+            return {"value": {ELEMENT: "owned-element"}} if name == "WebDriver:FindElement" else None
+        browser.command = command
+        browser.click("#owned", chrome=True)
+        performed = [args["actions"][0] for name, args in calls if name == "WebDriver:PerformActions"]
+        self.assertEqual(len(performed), 1)
+        actions = performed[0]
+        self.assertEqual([action["type"] for action in actions["actions"]], ["pointerMove", "pointerDown", "pointerUp"])
+        self.assertNotIn("WebDriver:ElementClick", [name for name, _ in calls])
+        self.assertIn(("WebDriver:ReleaseActions", None), calls)
+        self.assertEqual(calls[-1], ("Marionette:SetContext", {"value": "content"}))
+        for detail in ({"error": "no such alert", "message": "synthetic-private-canary"}, {"error": "synthetic-private-canary"}, {"error": []}):
+            error = AutomationError("WebDriver:GetAlertText", detail)
+            self.assertNotIn("synthetic-private-canary", str(error))
+        self.assertEqual(AutomationError("owned", {"error": "no such alert"}).kind, "no such alert")
+
+    @unittest.skipUnless(os.name == "nt", "Windows fixture import; real synthetic HTTP only")
+    def test_browser_fixture_exact_link_target_and_renewed_session_cookie(self):
+        from qualification.firefox import BrowserFixture
+        fixture = BrowserFixture()
+        try:
+            cases = [("/range?capture=a%2Fb&x=1&x=2", {}, 206), ("/range?capture=a%2Fb&x=2&x=1", {}, 403)]
+            old = fixture.session_cookie
+            fixture.session_generation = 2
+            for cookie, status in ((old, 403), (fixture.session_cookie, 206)):
+                cases.append(("/session/file?sig=a%2Fb%2BC&x=2&x=1", {"Cookie": cookie, "Referer": fixture.url("session/page")}, status))
+            for target, headers, status in cases:
+                connection = http.client.HTTPConnection("127.0.0.1", fixture.server.server_port, timeout=3)
+                try:
+                    connection.request("GET", target, headers={**headers, "Range": "bytes=0-0"})
+                    response = connection.getresponse()
+                    self.assertEqual(response.status, status)
+                    data = response.read()
+                    if status == 206:
+                        self.assertEqual(data, b"\0")
+                finally:
+                    connection.close()
+            self.assertEqual((fixture.link_requests, fixture.link_rejections, fixture.session_requests, fixture.session_rejections), (2, 1, 2, 1))
+        finally:
+            fixture.close()
+
+    def test_large_body_gate_permits_both_boundary_probes_and_is_released_on_cleanup(self):
+        fixture = Fixture(large_size=SMALL_SIZE)
+        fixture.large_body.clear()
+        try:
+            for start in (0, SMALL_SIZE - 1):
+                connection = http.client.HTTPConnection("127.0.0.1", fixture.server.server_port, timeout=3)
+                try:
+                    connection.request("GET", "/large", headers={"Range": f"bytes={start}-{start}"})
+                    response = connection.getresponse()
+                    self.assertEqual(response.read(), bytes([start % 256]))
+                finally:
+                    connection.close()
+        finally:
+            fixture.close()
+        self.assertTrue(fixture.large_body.is_set())
+
+    @unittest.skipUnless(os.name == "nt", "Windows ownership policy; no registry mutation")
+    def test_browser_cleanup_preserves_unrecorded_binding_and_joins_fixture_before_domain_removal(self):
+        from qualification import firefox
+        tickets = set(Path(".git").glob("firefox28-recovery-*.private.json"))
+        try:
+            for failure in ("binding", "fixture"):
+                with tempfile.TemporaryDirectory(dir=ARTIFACTS) as temporary:
+                    parent = Path(temporary).resolve()
+                    root = parent / "host"
+                    fixture = mock.Mock()
+                    if failure == "fixture":
+                        fixture.close.side_effect = RuntimeError("synthetic fixture shutdown failure")
+                    with mock.patch.object(firefox, "closed_apps"), mock.patch.object(firefox, "absent_registration"), mock.patch.object(firefox, "binding_value", return_value="synthetic unrecorded"), mock.patch.object(firefox, "setup") as setup, mock.patch.object(firefox.shutil, "rmtree") as remove:
+                        with self.assertRaisesRegex(RuntimeError, "preserved; no success"):
+                            firefox.cleanup_domain(None, fixture, parent, root, {}, parent, failure == "binding", True, set())
+                        setup.assert_not_called()
+                        remove.assert_not_called()
+                        fixture.close.assert_called_once()
+                        self.assertTrue(parent.is_dir())
+        finally:
+            for ticket in set(Path(".git").glob("firefox28-recovery-*.private.json")) - tickets:
+                ticket.unlink()  # Only these recorded synthetic policy-test tickets.
+
+    @unittest.skipUnless(os.name == "nt", "Windows driver boundary; mocked setup is not lifecycle evidence")
+    def test_browser_owner_initialization_and_single_fixture_precede_first_install(self):
+        from qualification import firefox
+        owners = set(Path(".git").glob("firefox28-owner-*.private.json"))
+        recoveries = set(Path(".git").glob("firefox28-recovery-*.private.json"))
+        try:
+            with tempfile.TemporaryDirectory(dir=ARTIFACTS) as temporary:
+                outer = Path(temporary).resolve()
+                parent = outer / "owned-domain"
+                parent.mkdir()
+                report = outer / "not-published.json"
+                fixture = mock.Mock(requests={})
+                record_attempts = []
+                def verify(root, package, owned_values, record=False):
+                    self.assertEqual(owned_values, set())
+                    record_attempts.append(record)
+                    raise RuntimeError("synthetic post-install verification failure")
+                def setup(*_):
+                    new = set(Path(".git").glob("firefox28-owner-*.private.json")) - owners
+                    self.assertEqual(len(new), 1)
+                    self.assertEqual(bounded_json(next(iter(new)))["owned_domain"], str(parent))
+                with mock.patch.object(firefox, "closed_apps"), mock.patch.object(firefox, "absent_registration"), mock.patch.object(firefox, "evidence_identity", return_value={}), mock.patch.object(firefox, "file_sha256", return_value="a" * 64), mock.patch.object(firefox.subprocess, "run"), mock.patch.object(firefox.tempfile, "mkdtemp", return_value=str(parent)), mock.patch.object(firefox, "BrowserFixture", return_value=fixture) as construct, mock.patch.object(firefox, "setup", side_effect=setup), mock.patch.object(firefox, "installed_xpi", side_effect=verify):
+                    with self.assertRaisesRegex(RuntimeError, "preserved; no success"):
+                        firefox.qualify(outer, outer / "not-executed", report)
+                construct.assert_called_once()
+                fixture.close.assert_called_once()
+                self.assertEqual(record_attempts, [True, False])
+                self.assertTrue(parent.is_dir())
+                self.assertFalse(report.exists())
+        finally:
+            for before, pattern in ((owners, "firefox28-owner-*.private.json"), (recoveries, "firefox28-recovery-*.private.json")):
+                for ticket in set(Path(".git").glob(pattern)) - before:
+                    ticket.unlink()
+
     def test_fixture_digest_matches_independently_constructed_vectors(self):
         for size in (0, 1, 255, 256, 1024 * 1024 + 19, SMALL_SIZE):
             data = (bytes(range(256)) * (size // 256 + 1))[:size]
