@@ -24,5 +24,9 @@ uuid.workspace = true
 [dev-dependencies]
 download-manager-test-server = { version = "=0.1.0", path = "../test-server" }
 
+[[example]]
+name = "probe_metadata"
+test = true
+
 [lints]
 workspace = true

@@ -14,6 +14,8 @@ The owner reports that an ordinary GGUF click used Firefox's built-in downloader
 
 [ADR0013](decisions/0013-install-restart-click.md) accepts this next-release direction, superseding manual-only capture/temporary user installation and the browser-owned engine lifetime for M5, while preserving v0.1.0's immutable source/assets and historical evidence. [USER_WORKFLOW.md](USER_WORKFLOW.md) is the short target acceptance script, not instructions that make v0.1.0 behave differently. Independent companion lifetime is our implementation choice; automatic Windows-logon startup is not requested or authorized.
 
+The owner subsequently supplied the exact Hugging Face model URL. [HANDOFF_FEASIBILITY.md](HANDOFF_FEASIBILITY.md) records the public input, HEAD redirect/size observation, failed Python tiny-range attempt and successful development engine boundary probes separately. This resolves provider uncertainty, not automatic capture or full-file qualification.
+
 Persistent signing authority/approval and safe browser handoff are unresolved implementation gates. No weaker signing setting, temporary-addon reload, manual Add or mocked transport may substitute for the required restart/click test. The owner is using Firefox again; actual browser/setup tests require fresh consent and ownership/closed-app preflights, never inspection of their normal profile. Existing networking/storage/credential/VPN/privacy boundaries remain.
 
 ## Public, authoritative repository (2026-09-08)
