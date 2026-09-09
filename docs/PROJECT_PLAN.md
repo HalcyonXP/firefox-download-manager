@@ -223,3 +223,13 @@ Transferred issues retained their board statuses. Stale predecessor PR cards wer
 
 
 #41 / PR #42 subsequently merged as `78a92ea` after CI `34286434188` passed all three jobs. #39 is now updated onto that main and its full combined gate must pass; merged-main CI `34287899024` was still pending at this integration checkpoint. #28 stays blocked until the current baseline is verified. A successful Dependabot Updates run is not the CI workflow and is never used as that gate.
+
+## New progress-deadline investigation (#44)
+
+The owner has renewed autonomous execution through install readiness; no further approval is needed within the established scope. #28's MIT and existing-machine decisions are preserved in draft PR #43 (not reverted on this independent main-based correction branch). A second computer or clean OS is not required; safety, privacy, ownership and exact-artifact gates remain.
+
+CI `34321346203` at #28 tip `26e302b` failed two existing release-target progress deadlines, with 29 other lifecycle cases passing. #44 is In Progress from main `01a49d0`, whose engine/test source is identical to the failing tip. #28 is temporarily Backlog. The earlier #39/#41 successes remain historical; they do not waive this new failed gate. [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md) records observations, diagnostic intervention and unresolved cause. Do not merge a diagnostics-only passing rerun as an explanation or release approval.
+
+#44's diagnostics-only CI `34325455523` passed, but that alone did not meet acceptance. Real connected-probe counterexamples now demonstrate valid preparation outlasting the old aggregate ten-second bound. The correction retains ten-second active-cadence and five-second drain watchdogs, introduces explicit whole-workflow containment, and preserves all output/spacing/coalescing assertions. Phase-clock, missing-event and keyed-coalescing mutations fail as intended. Final combined gates remain required; the unavailable original trace is not replaced with a speculative cause.
+
+CI `34327670669` then exposed the inherited mandatory-terminal-rate assertion in a controlled delayed case, not a repeated deadline failure. #44 explicitly reconciles that predicate with the nullable rate/sliding-window contract: retain the observed active-window rate requirement and phase-history equality, but do not invent `Some` at completion after insufficient recent sampling. A deterministic stale-window unit and history-clearing mutation cover this correction; production behavior and final-state/bytes/ETA/output requirements remain unchanged.

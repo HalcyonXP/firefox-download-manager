@@ -100,3 +100,14 @@ The review found a real wildcard-pattern construction edge case, not an observed
 
 - **Retry cancellation readiness**: the retry wait becomes ready for a cancellation signal without requiring its timer to expire. It is distinct from when the executor schedules that ready future.
 - **Durable control acknowledgement**: the pause/cancel/shutdown result follows safe owned-work stopping and the critical checkpoint. A test deadlock-containment deadline is not a product latency SLO or permission to abandon blocking filesystem work.
+
+## Progress-test deadlines (#44)
+
+- **Preparation readiness**: the independently published 2 MiB prefix and selected response-barrier arrival, before consuming cadence samples. Not a guarantee of durable retained-range metadata.
+- **Active-cadence watchdog**: ten-second test containment for observing the held-prefix samples after readiness; not a product delivery-frequency SLO. Preparation cannot spend this clock.
+- **Workflow containment**: a separate, single sixty-second test bound covering preparation/transfer/validation/promotion; neither a product latency promise nor a Windows I/O upper bound. The five-second late-consumer drain bound remains distinct.
+- **Controlled counterexample versus reconstruction**: holding a real accepted probe through the old ten-second deadline demonstrates an invalid aggregate test premise. It does not reconstruct the unavailable original CI schedule.
+
+See [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md). First-party licensing and existing-machine qualification are preserved separately in #28/PR43; this correction does not require another computer or alter safety constraints.
+
+- **Available rate versus retained transfer history (#44)**: an actual rate must be observed in the controlled active window. A later final sample may have insufficient recent history and legitimately yield `None`; the nullable rate at `Validating` entry is retained through promotion/completion, not forcibly cleared or required to be `Some`. Zero terminal ETA and exact joined bytes remain independent requirements. The CI follow-up and deterministic stale-window counterexample are in [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md).
