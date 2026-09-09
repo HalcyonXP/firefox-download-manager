@@ -4,6 +4,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import hashlib
 import re
 import socket
+import sys
 import threading
 import time
 from urllib.parse import urlsplit
@@ -28,6 +29,7 @@ class BoundedServer(ThreadingHTTPServer):
         self.ownership = threading.Lock()
         self.handlers = []
         self.errors = 0
+        self.error_kinds = Counter()
 
     def process_request(self, request, address):
         with self.ownership:
@@ -46,8 +48,11 @@ class BoundedServer(ThreadingHTTPServer):
 
     def handle_error(self, *_):
         # Never print an unexpected request, header or exception chain.
+        failure = sys.exception()
+        kind = "peer-disconnect" if isinstance(failure, (ConnectionError, TimeoutError)) else "unexpected"
         with self.ownership:
-            self.errors += 1
+            self.errors += int(kind == "unexpected")
+            self.error_kinds[kind] += 1
 
     def join_owned_handlers(self):
         # Called after the accept loop joins: no new ownership can be added.
@@ -61,18 +66,21 @@ class BoundedServer(ThreadingHTTPServer):
         deadline = time.monotonic() + 10
         for thread, _ in handlers:
             thread.join(timeout=max(0, deadline - time.monotonic()))
-        if any(t.is_alive() for t, _ in handlers) or self.errors:
-            raise RuntimeError("owned fixture handler failed or did not join")
+        live = sum(t.is_alive() for t, _ in handlers)
+        if live or self.errors:
+            raise RuntimeError(f"owned fixture shutdown refused: live={live}, errors={dict(self.error_kinds)}")
 
 
 class Fixture:
-    def __init__(self, large_size=2 * 1024**3):
+    def __init__(self, large_size=2 * 1024**3, handler=None):
         self.large_size = large_size
         self.lock = threading.Lock()
         self.requests = Counter()
         self.active = 0
         self.peak = 0
-        self.server = BoundedServer(("127.0.0.1", 0), Handler)
+        self.slow_body = threading.Event()
+        self.slow_body.set()
+        self.server = BoundedServer(("127.0.0.1", 0), handler or Handler)
         self.server.daemon_threads = True
         self.server.fixture = self
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
@@ -82,10 +90,13 @@ class Fixture:
         return f"http://127.0.0.1:{self.server.server_port}/{mode}"
 
     def close(self):
+        self.slow_body.set()
         self.server.shutdown()
         self.thread.join(timeout=10)
-        self.server.join_owned_handlers()
-        self.server.server_close()
+        try:
+            self.server.join_owned_handlers()
+        finally:
+            self.server.server_close()
         if self.thread.is_alive() or self.active:
             raise RuntimeError("owned fixture did not finish its bounded shutdown")
 
@@ -128,7 +139,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             start, end = int(match[1]), int(match[2])
             ranged = True
-        probe = ranged and start == end == 0
+        # ProbeClient verifies both the first and last byte before scheduling.
+        probe = ranged and start == end and start in {0, size - 1}
         with fixture.lock:
             fixture.requests[(mode, self.command, "probe" if probe else "body")] += 1
             if body:
@@ -145,6 +157,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Range", f"bytes {reported}-{end}/{size}")
             self.end_headers()
             if body:
+                if mode == "slow" and not probe and not fixture.slow_body.wait(timeout=30):
+                    raise TimeoutError("owned response gate deadline")
                 limit = start + (end - start + 1) // 2 if mode == "truncate" and not probe else end + 1
                 while start < limit:
                     offset = start % len(BLOCK)

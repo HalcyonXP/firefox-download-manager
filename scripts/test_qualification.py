@@ -4,6 +4,7 @@ import http.client
 import os
 from pathlib import Path
 import socket
+import struct
 import tempfile
 import time
 import unittest
@@ -45,6 +46,25 @@ class QualificationPolicy(unittest.TestCase):
         finally:
             fixture.close()
 
+    def test_both_boundary_probes_bypass_worker_faults_and_body_gate(self):
+        fixture = Fixture()
+        fixture.slow_body.clear()
+        try:
+            for mode in ("bad-range", "change", "truncate", "slow"):
+                for offset in (0, SMALL_SIZE - 1):
+                    connection = http.client.HTTPConnection("127.0.0.1", fixture.server.server_port, timeout=3)
+                    try:
+                        connection.request("GET", "/" + mode, headers={"Range": f"bytes={offset}-{offset}"})
+                        response = connection.getresponse()
+                        self.assertEqual(response.status, 206)
+                        self.assertEqual(response.getheader("ETag"), '\"fixture-v1\"')
+                        self.assertEqual(response.getheader("Content-Range"), f"bytes {offset}-{offset}/{SMALL_SIZE}")
+                        self.assertEqual(response.read(), bytes([offset % 256]))
+                    finally:
+                        connection.close()
+        finally:
+            fixture.close()
+
     def test_incomplete_header_is_owned_and_joined_on_shutdown(self):
         fixture = Fixture()
         client = socket.create_connection(("127.0.0.1", fixture.server.server_port), timeout=3)
@@ -62,6 +82,55 @@ class QualificationPolicy(unittest.TestCase):
             client.close()
         self.assertFalse(fixture.thread.is_alive())
         self.assertTrue(all(not t.is_alive() for t, _ in fixture.server.handlers))
+
+    def test_real_peer_reset_before_headers_is_expected_but_unexpected_errors_refuse(self):
+        fixture = Fixture()
+        client = socket.create_connection(("127.0.0.1", fixture.server.server_port), timeout=3)
+        try:
+            deadline = time.monotonic() + 3
+            while not fixture.server.handlers:
+                self.assertLess(time.monotonic(), deadline, "request never entered ownership")
+                time.sleep(0.005)
+            client.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("hh" if os.name == "nt" else "ii", 1, 0))
+        finally:
+            client.close()
+            fixture.close()
+        self.assertEqual(fixture.server.error_kinds, {"peer-disconnect": 1})
+        self.assertEqual(fixture.server.errors, 0)
+        fixture = Fixture()
+        try:
+            raise ValueError("synthetic unexpected handler failure")
+        except ValueError:
+            fixture.server.handle_error()
+        with self.assertRaisesRegex(RuntimeError, "unexpected"):
+            fixture.close()
+        self.assertEqual(fixture.server.fileno(), -1)
+
+    @unittest.skipUnless(os.name == "nt", "Windows Firefox harness")
+    def test_automation_bounds_correlation_and_unowned_context_refusal(self):
+        from qualification.firefox import Firefox
+        class Stream:
+            def __init__(self, data):
+                self.data = data
+            def recv(self, count):
+                result, self.data = self.data[:count], self.data[count:]
+                return result
+            def sendall(self, _):
+                pass
+        driver = Firefox(Path("unused"), Path("unused"), {})
+        with self.assertRaisesRegex(RuntimeError, "no owned browser authority"):
+            driver.chrome("return true")
+        with self.assertRaisesRegex(RuntimeError, "no owned browser authority"):
+            driver.command("WebDriver:Navigate")
+        for encoded in (b":", b"0:", b"-1:", b"99999999:", b"2:{"):
+            driver.connection = Stream(encoded)
+            with self.assertRaises(RuntimeError):
+                driver.receive()
+        data = b"[1,99,null,{}]"
+        driver.connection = Stream(str(len(data)).encode() + b":" + data)
+        with self.assertRaisesRegex(RuntimeError, "uncorrelated"):
+            driver.command("WebDriver:NewSession")
+        driver.close()  # No process was started; does not inspect/stop any browser.
 
     @unittest.skipUnless(os.name == "nt", "Windows harness preflight")
     def test_reports_are_new_confined_and_refused_before_process_launch(self):
