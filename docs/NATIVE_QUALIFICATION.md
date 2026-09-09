@@ -59,3 +59,13 @@ Eighteen policy/real-HTTP/transport/owned-synthetic-child tests passed. Access-0
 ## Remaining work
 
 Commit and rerun the identified harness; require final-tip CI and final exact-artifact checks. The latest count-only check found twelve unowned Firefox processes, so no browser/registration mutation was attempted. Actual toolbar/link-menu, Cancel/Remove/validation controls, CSP/private-window enforcement, broader recovery/fresh-session paths, installation lifecycles, final artifact/tag linkage and publication review remain in [QUALIFICATION_PLAN.md](QUALIFICATION_PLAN.md). MIT and the existing-machine plan are settled, not current blockers.
+
+## Clean native rerun and installer-harness follow-up
+
+Committed clean driver `520f02992ba46dfd1511cb374d10e7dbd8035330` subsequently passed the same 26 cases/2 GiB against descriptor `b2baaa49606757f1242497deaeb4ec4075cf0f994631454d78b16ecff3962698`. Its separate resource observation was 2.625 s elapsed, 2.250 s CPU, 43,507,712-byte peak working set and 38,854,656-byte sampled private peak (26 samples). This supersedes the pending clean-rerun status for those bytes, not final artifact/Firefox approval.
+
+Review then found that the older installation test driver could overwrite a report, wrote it before final cleanup, and could adopt an unrecorded registration for deletion from its location/addon ID alone. This is a **qualification-driver** boundary, not a demonstrated production-setup defect. Previous successful CI lifecycles remain evidence of their completed runs, not proof that the old report writer rejected every failed cleanup.
+
+The installation driver now uses the same spelling/bounds/lease/no-replace reporter **after** cleanup, refuses optimized Python, checks all four registration views before fresh test authority, repeats closed-app checks, and binds unchanged artifact/driver identity. It verifies exact UUID generation/manifest/helper/XPI bytes before recording a normal installed binding. Unrecorded/changed registration or unresolved cleanup preserves the domain with a private `install28-recovery` ticket; it is never adopted merely because it looks like a test path. Existing synthetic malformed/foreign key fixtures remain deliberately test-only, under closed/absent preconditions—not an installation mechanism, browser harness or retired-script fallback.
+
+Twenty policy tests passed locally, including preflight ordering, no deletion for an unrecorded binding, optimized-Python refusal and synthetic generation/payload/namespace checks. These tests do not mutate registration or stand in for the next actual hosted/local lifecycle. The updated driver still requires its own CI and exact-package checks before release.

@@ -139,3 +139,5 @@ See [PROGRESS_DEADLINES.md](PROGRESS_DEADLINES.md). First-party licensing and ex
 - **Qualified component versus qualified release**: exact native bytes can pass 26 cases/2 GiB while actual Firefox, source/tag and publication gates remain incomplete. No earlier artifact, dirty driver or unavailable clean-machine test is silently upgraded.
 
 See [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) for the demonstrated corrections and remaining uncertainty.
+
+- **Recorded binding versus plausible path**: a verified generation's exact registration can establish bounded test ownership; an unrecorded value is not adopted for deletion from its location/addon ID alone. Preserve unresolved installation authority for reviewed recovery, with no success report.

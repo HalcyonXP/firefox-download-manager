@@ -1,6 +1,7 @@
 """Qualification-harness policies and real synthetic HTTP, not Firefox E2E."""
 import hashlib
 import http.client
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -266,6 +267,65 @@ class QualificationPolicy(unittest.TestCase):
                     fixture.close.assert_called_once_with()
                 finally:
                     ticket.unlink(missing_ok=True)  # Retained exact, unique test ticket only.
+
+    @staticmethod
+    def install_harness():
+        spec = importlib.util.spec_from_file_location("qualification_install_policy", ARTIFACTS.parent / "scripts/test-package-install.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @unittest.skipUnless(os.name == "nt", "Windows installer-harness boundary, no registry mutation")
+    def test_installer_report_preflight_and_unrecorded_binding_refuse_before_mutation(self):
+        module = self.install_harness()
+        with mock.patch.object(module, "closed_apps", side_effect=AssertionError("preflight order")):
+            with self.assertRaisesRegex(RuntimeError, "unsafe report spelling"):
+                module.test(Path("not-a-package"), ARTIFACTS / "install-ads:report.json")
+        with mock.patch.object(module, "closed_apps"), \
+             mock.patch.object(module, "registration", return_value="unrecorded test binding"), \
+             mock.patch.object(module, "delete_owned_registration") as delete, \
+             mock.patch.object(module, "all_views_absent") as absent, \
+             mock.patch.object(module.shutil, "rmtree") as remove:
+            with self.assertRaisesRegex(RuntimeError, "unrecorded registration"):
+                module.cleanup_owned(Path("unused"), {"known test binding"})
+            delete.assert_not_called()
+            absent.assert_not_called()
+            remove.assert_not_called()
+        code = ("import importlib.util;from pathlib import Path;"
+                "s=importlib.util.spec_from_file_location('install','scripts/test-package-install.py');"
+                "m=importlib.util.module_from_spec(s);s.loader.exec_module(m);"
+                "m.test(Path('not-a-package'),Path('artifacts/optimized-install.json'))")
+        result = subprocess.run([sys.executable, "-O", "-c", "import sys;sys.path.insert(0,'scripts');" + code],
+                                capture_output=True, timeout=15)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(b"qualification requires enabled assertions", result.stderr)
+
+    @unittest.skipUnless(os.name == "nt", "Windows installed-path proof with synthetic files only")
+    def test_installer_binding_requires_exact_generation_and_both_copied_payloads(self):
+        module = self.install_harness()
+        ARTIFACTS.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ARTIFACTS, prefix="qualification-policy-") as owned:
+            root, package = Path(owned) / "install", Path(owned) / "package"
+            generation = str(uuid.uuid4())
+            folder = root / generation
+            folder.mkdir(parents=True)
+            package.mkdir()
+            for name in ("download-manager-native-host.exe", "firefox-download-manager.xpi"):
+                (package / name).write_bytes(b"synthetic non-executable payload")
+                (folder / name).write_bytes((package / name).read_bytes())
+            (root / "installation.json").write_text(json.dumps({"current": generation}), encoding="utf-8")
+            manifest = folder / "com.halcyonxp.firefox_download_manager.json"
+            manifest.write_text(json.dumps({"path": str(folder / "download-manager-native-host.exe"),
+                                           "allowed_extensions": ["download-manager@halcyonxp.local"]}), encoding="utf-8")
+            self.assertEqual(module.verified_binding(root, package, str(manifest)), generation)
+            self.assertEqual(module.verified_binding(root, package, "\\\\?\\" + str(manifest)), generation)
+            # Reject namespaces lexically before they can trigger external path resolution.
+            with mock.patch.object(Path, "resolve", side_effect=AssertionError("unowned resolution")):
+                with self.assertRaisesRegex(RuntimeError, "unverified installed registration"):
+                    module.verified_binding(root, package, r"\\unowned-test-host\share\manifest.json")
+            (folder / "firefox-download-manager.xpi").write_bytes(b"changed synthetic payload")
+            with self.assertRaisesRegex(RuntimeError, "installed payload differs"):
+                module.verified_binding(root, package, str(manifest))
 
     def test_metadata_is_bounded_strict_and_does_not_echo_contents(self):
         with tempfile.TemporaryDirectory() as owned:
