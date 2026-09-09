@@ -243,7 +243,16 @@ fn preview_worker() -> Result<Worker, ()> {
     fs::create_dir(&root).map_err(|_| ())?;
     let destination = root.join("downloads");
     fs::create_dir(&destination).map_err(|_| ())?;
-    Worker::start(HostConfig::new(root.join("state"), Some(destination))).map_err(|_| ())
+    let endpoint = download_manager_local_ipc::Endpoint::generate().map_err(|_| ())?;
+    let key =
+        std::sync::Arc::new(download_manager_local_ipc::Capability::generate().map_err(|_| ())?);
+    // Memory-only explicit preview binding; no installed descriptor/registration.
+    Worker::start_local(
+        HostConfig::new(root.join("state"), Some(destination)),
+        endpoint,
+        key,
+    )
+    .map_err(|_| ())
 }
 
 /// Runs a visibly labelled isolated preview, not an installed companion.

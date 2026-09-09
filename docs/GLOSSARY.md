@@ -182,3 +182,6 @@ See [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) for the demonstrated corr
 See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed test premises and remaining installed-authority gaps.
 
 - **Native/IPC frame limit versus metadata/log limit (#50)**: IPC shares native wire2's 1 MiB body limit. The original 64 KiB IPC draft was incompatible with the Firefox client's exact hello check and was explicitly revised before integration; qualification metadata and ordinary-log bounds stay 64 KiB. Opaque framing still does not validate or authorize a native command.
+
+- **Controller session versus transport reservation (#50)**: the first engine bridge serves one active browser protocol controller against the retained owner; additional connections cannot dispatch until it retires. IPC's four reservations are a lower-level admission ceiling, not multi-controller support. This explicitly replaces the earlier multi-client coordinator proposal.
+- **Local session retirement versus engine shutdown (#50)**: retire both pipe directions and join the reader on controller loss; retain the engine and state lock. Explicit companion Quit additionally checkpoints/joins the engine and worker runtime. A cancellation request or a visible final file alone proves neither joined shutdown nor a durable Completed receipt.

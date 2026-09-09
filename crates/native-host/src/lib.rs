@@ -4,6 +4,10 @@
 //! bounded protocol-v2 frames on standard output. Paths and URLs are accepted
 //! only inside typed commands and never appear in ordinary diagnostics.
 
+#[cfg(all(windows, feature = "local-bridge"))]
+mod local_session;
+#[cfg(all(windows, feature = "local-bridge"))]
+pub use local_session::LocalSessionEnd;
 mod settings;
 use settings::{Diagnostic, SettingsStore, engine_configuration};
 
@@ -50,6 +54,10 @@ pub enum HostError {
     Configuration,
     #[error("native host runtime could not start")]
     Runtime,
+    #[error("native host local session failed")]
+    LocalSession,
+    #[error("native host local session retirement failed")]
+    LocalRetirement,
     #[error("native host input failed: {0}")]
     Input(#[from] FrameReadError),
     #[error("native host output failed: {0}")]
@@ -208,52 +216,60 @@ async fn negotiate<W: Write>(
             return Ok(false);
         };
         match item {
+            #[cfg(all(windows, feature = "local-bridge"))]
+            Inbound::LocalEnd => return Err(HostError::LocalSession),
             Inbound::End(result) => {
-                session.finish_input(result)?;
+                session.finish_input(result).await?;
                 return Ok(false);
             }
             Inbound::Body(body) => match decode_command(&body) {
                 Ok(message) => {
                     let (correlation_id, command) = message.into_parts();
                     let Command::Hello(payload) = command else {
-                        session.send_failure(
-                            correlation_id,
-                            response_command(&command),
-                            ErrorCode::ProtocolInvalidMessage,
-                        )?;
+                        session
+                            .send_failure(
+                                correlation_id,
+                                response_command(&command),
+                                ErrorCode::ProtocolInvalidMessage,
+                            )
+                            .await?;
                         return Ok(false);
                     };
                     if !payload.supported_versions().contains(&PROTOCOL_VERSION) {
-                        session.send_failure(
-                            correlation_id,
-                            ResponseCommand::Hello,
-                            ErrorCode::ProtocolUnsupportedVersion,
-                        )?;
+                        session
+                            .send_failure(
+                                correlation_id,
+                                ResponseCommand::Hello,
+                                ErrorCode::ProtocolUnsupportedVersion,
+                            )
+                            .await?;
                         return Ok(false);
                     }
                     let _ = (payload.client_name(), payload.client_version());
-                    session.send_success(
-                        correlation_id,
-                        ResponseCommand::Hello,
-                        &HelloResult {
-                            selected_version: PROTOCOL_VERSION,
-                            helper_version: HELPER_VERSION,
-                            capabilities: vec![
-                                "snapshots",
-                                "coalesced_progress",
-                                "authenticated_requests",
-                                "sha256",
-                            ],
-                            max_message_bytes: MAX_MESSAGE_BYTES,
-                        },
-                    )?;
-                    session.send_snapshot_events(&engine.snapshots())?;
-                    session.send_recovery_warnings(engine)?;
+                    session
+                        .send_success(
+                            correlation_id,
+                            ResponseCommand::Hello,
+                            &HelloResult {
+                                selected_version: PROTOCOL_VERSION,
+                                helper_version: HELPER_VERSION,
+                                capabilities: vec![
+                                    "snapshots",
+                                    "coalesced_progress",
+                                    "authenticated_requests",
+                                    "sha256",
+                                ],
+                                max_message_bytes: MAX_MESSAGE_BYTES,
+                            },
+                        )
+                        .await?;
+                    session.send_snapshot_events(&engine.snapshots()).await?;
+                    session.send_recovery_warnings(engine).await?;
                     return Ok(true);
                 }
                 Err(error) => {
                     let fatal = error.failure() == CommandDecodeFailure::UnsupportedVersion;
-                    session.send_decode_error(&error)?;
+                    session.send_decode_error(&error).await?;
                     errors = errors.saturating_add(1);
                     if fatal || errors >= MAX_NEGOTIATION_ERRORS {
                         return Ok(false);
@@ -271,7 +287,7 @@ async fn run_active_session<W: Write>(
 ) -> Result<(), HostError> {
     loop {
         if let Some(snapshots) = engine.take_overflow_snapshot() {
-            session.send_snapshot_events(&snapshots)?;
+            session.send_snapshot_events(&snapshots).await?;
         }
         tokio::select! {
             item = inbound.recv() => {
@@ -279,13 +295,15 @@ async fn run_active_session<W: Write>(
                     return Ok(());
                 };
                 match item {
-                    Inbound::End(result) => return session.finish_input(result),
+                    #[cfg(all(windows, feature = "local-bridge"))]
+                    Inbound::LocalEnd => return Err(HostError::LocalSession),
+                    Inbound::End(result) => return session.finish_input(result).await,
                     Inbound::Body(body) => {
                         let message = match decode_command(&body) {
                             Ok(message) => message,
                             Err(error) => {
                                 let fatal = error.failure() == CommandDecodeFailure::UnsupportedVersion;
-                                session.send_decode_error(&error)?;
+                                session.send_decode_error(&error).await?;
                                 if fatal {
                                     return Ok(());
                                 }
@@ -298,7 +316,7 @@ async fn run_active_session<W: Write>(
                                 correlation_id,
                                 ResponseCommand::Hello,
                                 ErrorCode::ProtocolInvalidMessage,
-                            )?;
+                            ).await?;
                             continue;
                         }
                         session.dispatch(engine, correlation_id, command).await?;
@@ -306,7 +324,7 @@ async fn run_active_session<W: Write>(
                 }
             }
             event = engine.next_event() => {
-                session.send_engine_event(&event?)?;
+                session.send_engine_event(&event?).await?;
             }
         }
     }
@@ -314,6 +332,8 @@ async fn run_active_session<W: Write>(
 
 enum Inbound {
     Body(Vec<u8>),
+    #[cfg(all(windows, feature = "local-bridge"))]
+    LocalEnd,
     End(Result<(), FrameReadError>),
 }
 
@@ -337,8 +357,20 @@ fn read_input(mut reader: impl Read, sender: &mpsc::Sender<Inbound>) {
     }
 }
 
+enum SessionOutput<W> {
+    Legacy(Arc<Mutex<W>>),
+    #[cfg(all(windows, feature = "local-bridge"))]
+    Local(
+        tokio::sync::Mutex<
+            download_manager_local_ipc::FrameWriter<
+                tokio::io::WriteHalf<download_manager_local_ipc::LocalPipe>,
+            >,
+        >,
+    ),
+}
+
 struct Session<'a, W> {
-    writer: Arc<Mutex<W>>,
+    writer: SessionOutput<W>,
     default_destination: Option<PathBuf>,
     sequence: u64,
     token: u64,
@@ -349,7 +381,7 @@ struct Session<'a, W> {
 impl<W: Write> Session<'_, W> {
     fn new(writer: W, default_destination: Option<PathBuf>) -> Self {
         Self {
-            writer: Arc::new(Mutex::new(writer)),
+            writer: SessionOutput::Legacy(Arc::new(Mutex::new(writer))),
             default_destination,
             sequence: 0,
             token: 0,
@@ -378,11 +410,13 @@ impl<W: Write> Session<'_, W> {
                     .map(PathBuf::from)
                     .or_else(|| self.default_destination.clone());
                 let Some(destination) = destination else {
-                    return self.send_failure(
-                        correlation_id,
-                        ResponseCommand::Add,
-                        ErrorCode::InvalidDestination,
-                    );
+                    return self
+                        .send_failure(
+                            correlation_id,
+                            ResponseCommand::Add,
+                            ErrorCode::InvalidDestination,
+                        )
+                        .await;
                 };
                 let workers = payload
                     .workers()
@@ -406,18 +440,20 @@ impl<W: Write> Session<'_, W> {
                 {
                     Ok(context) => context,
                     Err(error) => {
-                        return self.send_failure(
-                            correlation_id,
-                            ResponseCommand::Add,
-                            match error {
-                                download_manager_engine::auth::ContextError::Invalid => {
-                                    ErrorCode::ProtocolInvalidMessage
-                                }
-                                download_manager_engine::auth::ContextError::Expired => {
-                                    ErrorCode::AuthExpired
-                                }
-                            },
-                        );
+                        return self
+                            .send_failure(
+                                correlation_id,
+                                ResponseCommand::Add,
+                                match error {
+                                    download_manager_engine::auth::ContextError::Invalid => {
+                                        ErrorCode::ProtocolInvalidMessage
+                                    }
+                                    download_manager_engine::auth::ContextError::Expired => {
+                                        ErrorCode::AuthExpired
+                                    }
+                                },
+                            )
+                            .await;
                     }
                 };
                 let expected = match payload.expected_sha256() {
@@ -425,11 +461,13 @@ impl<W: Write> Session<'_, W> {
                         match download_manager_engine::integrity::ExpectedSha256::parse(value) {
                             Some(value) => Some(value),
                             None => {
-                                return self.send_failure(
-                                    correlation_id,
-                                    ResponseCommand::Add,
-                                    ErrorCode::ProtocolInvalidMessage,
-                                );
+                                return self
+                                    .send_failure(
+                                        correlation_id,
+                                        ResponseCommand::Add,
+                                        ErrorCode::ProtocolInvalidMessage,
+                                    )
+                                    .await;
                             }
                         }
                     }
@@ -445,50 +483,60 @@ impl<W: Write> Session<'_, W> {
                 ) {
                     Ok(task) => task,
                     Err(error) => {
-                        return self.send_engine_failure(
-                            correlation_id,
-                            ResponseCommand::Add,
-                            &error,
-                            None,
-                        );
+                        return self
+                            .send_engine_failure(correlation_id, ResponseCommand::Add, &error, None)
+                            .await;
                     }
                 };
                 let task_id = task.task_id();
                 let task = match engine.start(task_id) {
                     Ok(task) => task,
                     Err(error) => {
-                        return self.send_engine_failure(
-                            correlation_id,
-                            ResponseCommand::Add,
-                            &error,
-                            Some(task_id),
-                        );
+                        return self
+                            .send_engine_failure(
+                                correlation_id,
+                                ResponseCommand::Add,
+                                &error,
+                                Some(task_id),
+                            )
+                            .await;
                     }
                 };
                 self.send_task(correlation_id, ResponseCommand::Add, &task)
+                    .await
             }
             Command::Pause(payload) => {
                 let task_id = match parse_task_id(payload.task_id()) {
                     Ok(task_id) => task_id,
                     Err(error) => {
-                        return self.send_error(correlation_id, ResponseCommand::Pause, error);
+                        return self
+                            .send_error(correlation_id, ResponseCommand::Pause, error)
+                            .await;
                     }
                 };
                 match engine.pause(task_id).await {
-                    Ok(task) => self.send_task(correlation_id, ResponseCommand::Pause, &task),
-                    Err(error) => self.send_engine_failure(
-                        correlation_id,
-                        ResponseCommand::Pause,
-                        &error,
-                        Some(task_id),
-                    ),
+                    Ok(task) => {
+                        self.send_task(correlation_id, ResponseCommand::Pause, &task)
+                            .await
+                    }
+                    Err(error) => {
+                        self.send_engine_failure(
+                            correlation_id,
+                            ResponseCommand::Pause,
+                            &error,
+                            Some(task_id),
+                        )
+                        .await
+                    }
                 }
             }
             Command::Resume(payload) => {
                 let task_id = match parse_task_id(payload.task_id()) {
                     Ok(task_id) => task_id,
                     Err(error) => {
-                        return self.send_error(correlation_id, ResponseCommand::Resume, error);
+                        return self
+                            .send_error(correlation_id, ResponseCommand::Resume, error)
+                            .await;
                     }
                 };
                 let result = if engine
@@ -500,20 +548,28 @@ impl<W: Write> Session<'_, W> {
                     engine.resume(task_id).await
                 };
                 match result {
-                    Ok(task) => self.send_task(correlation_id, ResponseCommand::Resume, &task),
-                    Err(error) => self.send_engine_failure(
-                        correlation_id,
-                        ResponseCommand::Resume,
-                        &error,
-                        Some(task_id),
-                    ),
+                    Ok(task) => {
+                        self.send_task(correlation_id, ResponseCommand::Resume, &task)
+                            .await
+                    }
+                    Err(error) => {
+                        self.send_engine_failure(
+                            correlation_id,
+                            ResponseCommand::Resume,
+                            &error,
+                            Some(task_id),
+                        )
+                        .await
+                    }
                 }
             }
             Command::Cancel(payload) => {
                 let task_id = match parse_task_id(payload.task_id()) {
                     Ok(task_id) => task_id,
                     Err(error) => {
-                        return self.send_error(correlation_id, ResponseCommand::Cancel, error);
+                        return self
+                            .send_error(correlation_id, ResponseCommand::Cancel, error)
+                            .await;
                     }
                 };
                 let policy = match payload.partial_policy() {
@@ -521,80 +577,108 @@ impl<W: Write> Session<'_, W> {
                     CancelPartial::Delete => CancelPartialPolicy::Delete,
                 };
                 match engine.cancel(task_id, policy).await {
-                    Ok(task) => self.send_task(correlation_id, ResponseCommand::Cancel, &task),
-                    Err(error) => self.send_engine_failure(
-                        correlation_id,
-                        ResponseCommand::Cancel,
-                        &error,
-                        Some(task_id),
-                    ),
+                    Ok(task) => {
+                        self.send_task(correlation_id, ResponseCommand::Cancel, &task)
+                            .await
+                    }
+                    Err(error) => {
+                        self.send_engine_failure(
+                            correlation_id,
+                            ResponseCommand::Cancel,
+                            &error,
+                            Some(task_id),
+                        )
+                        .await
+                    }
                 }
             }
             Command::Remove(payload) => {
                 let task_id = match parse_task_id(payload.task_id()) {
                     Ok(task_id) => task_id,
                     Err(error) => {
-                        return self.send_error(correlation_id, ResponseCommand::Remove, error);
+                        return self
+                            .send_error(correlation_id, ResponseCommand::Remove, error)
+                            .await;
                     }
                 };
                 match engine.remove(task_id, payload.delete_partial()) {
-                    Ok(removed) => self.send_success(
-                        correlation_id,
-                        ResponseCommand::Remove,
-                        &RemoveResult {
-                            removed_task_id: removed.to_string(),
-                        },
-                    ),
-                    Err(error) => self.send_engine_failure(
-                        correlation_id,
-                        ResponseCommand::Remove,
-                        &error,
-                        Some(task_id),
-                    ),
+                    Ok(removed) => {
+                        self.send_success(
+                            correlation_id,
+                            ResponseCommand::Remove,
+                            &RemoveResult {
+                                removed_task_id: removed.to_string(),
+                            },
+                        )
+                        .await
+                    }
+                    Err(error) => {
+                        self.send_engine_failure(
+                            correlation_id,
+                            ResponseCommand::Remove,
+                            &error,
+                            Some(task_id),
+                        )
+                        .await
+                    }
                 }
             }
-            Command::List(payload) => self.send_list(engine, correlation_id, &payload),
+            Command::List(payload) => self.send_list(engine, correlation_id, &payload).await,
             Command::Get(payload) => {
                 let task_id = match parse_task_id(payload.task_id()) {
                     Ok(task_id) => task_id,
                     Err(error) => {
-                        return self.send_error(correlation_id, ResponseCommand::Get, error);
+                        return self
+                            .send_error(correlation_id, ResponseCommand::Get, error)
+                            .await;
                     }
                 };
                 match engine.snapshot(task_id) {
-                    Ok(task) => self.send_task(correlation_id, ResponseCommand::Get, &task),
-                    Err(error) => self.send_engine_failure(
-                        correlation_id,
-                        ResponseCommand::Get,
-                        &error,
-                        Some(task_id),
-                    ),
+                    Ok(task) => {
+                        self.send_task(correlation_id, ResponseCommand::Get, &task)
+                            .await
+                    }
+                    Err(error) => {
+                        self.send_engine_failure(
+                            correlation_id,
+                            ResponseCommand::Get,
+                            &error,
+                            Some(task_id),
+                        )
+                        .await
+                    }
                 }
             }
             Command::OpenFolder(payload) => {
                 let task_id = match parse_task_id(payload.task_id()) {
                     Ok(id) => id,
                     Err(error) => {
-                        return self.send_error(correlation_id, ResponseCommand::OpenFolder, error);
+                        return self
+                            .send_error(correlation_id, ResponseCommand::OpenFolder, error)
+                            .await;
                     }
                 };
                 let task = match engine.snapshot(task_id) {
                     Ok(task) => task,
                     Err(error) => {
-                        return self.send_engine_failure(
-                            correlation_id,
-                            ResponseCommand::OpenFolder,
-                            &error,
-                            Some(task_id),
-                        );
+                        return self
+                            .send_engine_failure(
+                                correlation_id,
+                                ResponseCommand::OpenFolder,
+                                &error,
+                                Some(task_id),
+                            )
+                            .await;
                     }
                 };
                 if open_folder(task.destination()).is_err() {
-                    return self.send_failure(
-                        correlation_id,
-                        ResponseCommand::OpenFolder,
-                        ErrorCode::InvalidDestination,
-                    );
+                    return self
+                        .send_failure(
+                            correlation_id,
+                            ResponseCommand::OpenFolder,
+                            ErrorCode::InvalidDestination,
+                        )
+                        .await;
                 }
                 self.send_success(
                     correlation_id,
@@ -603,6 +687,7 @@ impl<W: Write> Session<'_, W> {
                         opened_task_id: task_id.to_string(),
                     },
                 )
+                .await
             }
             Command::GetSettings(_) => {
                 let settings = self.settings.as_ref().ok_or(HostError::Configuration)?;
@@ -611,18 +696,23 @@ impl<W: Write> Session<'_, W> {
                     ResponseCommand::GetSettings,
                     &settings.current,
                 )
+                .await
             }
             Command::UpdateSettings(payload) => {
                 let result = self.apply_settings(engine, payload.settings());
                 match result {
                     Ok(value) => {
                         self.send_success(correlation_id, ResponseCommand::UpdateSettings, &value)
+                            .await
                     }
-                    Err(_) => self.send_failure(
-                        correlation_id,
-                        ResponseCommand::UpdateSettings,
-                        ErrorCode::InvalidSettings,
-                    ),
+                    Err(_) => {
+                        self.send_failure(
+                            correlation_id,
+                            ResponseCommand::UpdateSettings,
+                            ErrorCode::InvalidSettings,
+                        )
+                        .await
+                    }
                 }
             }
         }
@@ -646,7 +736,7 @@ impl<W: Write> Session<'_, W> {
         Ok(candidate)
     }
 
-    fn send_list(
+    async fn send_list(
         &mut self,
         engine: &TaskEngine,
         correlation_id: String,
@@ -679,11 +769,13 @@ impl<W: Write> Session<'_, W> {
                 .as_ref()
                 .is_some_and(|list| list.include_terminal != payload.include_terminal())
         {
-            return self.send_failure(
-                correlation_id,
-                ResponseCommand::List,
-                ErrorCode::ProtocolInvalidMessage,
-            );
+            return self
+                .send_failure(
+                    correlation_id,
+                    ResponseCommand::List,
+                    ErrorCode::ProtocolInvalidMessage,
+                )
+                .await;
         }
 
         let limit = usize::from(payload.limit()).min(PAGE_TASK_LIMIT);
@@ -714,46 +806,48 @@ impl<W: Write> Session<'_, W> {
         list.offset = end;
         list.page_index = list.page_index.saturating_add(1);
         list.expected_cursor = next_cursor;
-        self.send_success(correlation_id, ResponseCommand::List, &page)?;
+        self.send_success(correlation_id, ResponseCommand::List, &page)
+            .await?;
         if complete {
             self.list = None;
         }
         Ok(())
     }
 
-    fn send_task(
+    async fn send_task(
         &self,
         correlation_id: String,
         command: ResponseCommand,
         task: &TaskSnapshot,
     ) -> Result<(), HostError> {
         self.send_success(correlation_id, command, &task_description(task)?)
+            .await
     }
 
-    fn send_snapshot_events(&mut self, snapshots: &[TaskSnapshot]) -> Result<(), HostError> {
+    async fn send_snapshot_events(&mut self, snapshots: &[TaskSnapshot]) -> Result<(), HostError> {
         let snapshot_id = self.next_token("snapshot")?;
-        let tasks = snapshots
-            .iter()
-            .map(task_description)
-            .collect::<Result<Vec<_>, _>>()?;
-        let page_count = tasks.len().div_ceil(PAGE_TASK_LIMIT).max(1);
+        let page_count = snapshots.len().div_ceil(PAGE_TASK_LIMIT).max(1);
         for page_index in 0..page_count {
             let start = page_index * PAGE_TASK_LIMIT;
-            let end = start.saturating_add(PAGE_TASK_LIMIT).min(tasks.len());
+            let end = start.saturating_add(PAGE_TASK_LIMIT).min(snapshots.len());
             let complete = page_index + 1 == page_count;
             let page = SnapshotPage {
                 snapshot_id: snapshot_id.clone(),
                 page_index: u64::try_from(page_index).map_err(|_| HostError::Projection)?,
-                tasks: tasks[start..end].to_vec(),
+                tasks: snapshots[start..end]
+                    .iter()
+                    .map(task_description)
+                    .collect::<Result<Vec<_>, _>>()?,
                 next_cursor: (!complete).then(|| format!("{snapshot_id}-{end}")),
                 complete,
             };
-            self.send_event(EventName::Snapshot, TimestampMillis::now()?, &page)?;
+            self.send_event(EventName::Snapshot, TimestampMillis::now()?, &page)
+                .await?;
         }
         Ok(())
     }
 
-    fn send_recovery_warnings(&mut self, engine: &TaskEngine) -> Result<(), HostError> {
+    async fn send_recovery_warnings(&mut self, engine: &TaskEngine) -> Result<(), HostError> {
         for failure in engine.recovery_report().failures() {
             let task_id = failure.task_id().map(|task_id| task_id.to_string());
             let context = task_id
@@ -768,35 +862,45 @@ impl<W: Write> Session<'_, W> {
                     task_id,
                     warning: ProtocolError::new(ErrorCode::StateCorrupt, context),
                 },
-            )?;
+            )
+            .await?;
         }
         Ok(())
     }
 
-    fn send_engine_event(&mut self, event: &TaskEvent) -> Result<(), HostError> {
+    async fn send_engine_event(&mut self, event: &TaskEvent) -> Result<(), HostError> {
         match event.kind() {
             TaskEventKind::RetryScheduled(_) => Ok(()),
             TaskEventKind::StateChanged {
                 task,
                 previous_state,
-            } => self.send_event(
-                EventName::StateChanged,
-                event.emitted_at(),
-                &StateChangedData {
-                    task: task_description(task)?,
-                    previous_state: task_state(*previous_state),
-                },
-            ),
-            TaskEventKind::Progress(progress) => self.send_event(
-                EventName::Progress,
-                event.emitted_at(),
-                &progress_description(*progress),
-            ),
-            TaskEventKind::Completed(task) => self.send_event(
-                EventName::Completed,
-                event.emitted_at(),
-                &task_description(task)?,
-            ),
+            } => {
+                self.send_event(
+                    EventName::StateChanged,
+                    event.emitted_at(),
+                    &StateChangedData {
+                        task: task_description(task)?,
+                        previous_state: task_state(*previous_state),
+                    },
+                )
+                .await
+            }
+            TaskEventKind::Progress(progress) => {
+                self.send_event(
+                    EventName::Progress,
+                    event.emitted_at(),
+                    &progress_description(*progress),
+                )
+                .await
+            }
+            TaskEventKind::Completed(task) => {
+                self.send_event(
+                    EventName::Completed,
+                    event.emitted_at(),
+                    &task_description(task)?,
+                )
+                .await
+            }
             TaskEventKind::Failed { task, failure } => {
                 if let Some(settings) = &self.settings {
                     settings.log(Diagnostic::Failed);
@@ -810,11 +914,12 @@ impl<W: Write> Session<'_, W> {
                         error,
                     },
                 )
+                .await
             }
         }
     }
 
-    fn finish_input(&mut self, result: Result<(), FrameReadError>) -> Result<(), HostError> {
+    async fn finish_input(&mut self, result: Result<(), FrameReadError>) -> Result<(), HostError> {
         match result {
             Ok(()) => Ok(()),
             Err(FrameReadError::MessageTooLarge { .. }) => {
@@ -824,12 +929,13 @@ impl<W: Write> Session<'_, W> {
                     ResponseCommand::Protocol,
                     ErrorCode::ProtocolMessageTooLarge,
                 )
+                .await
             }
             Err(error) => Err(error.into()),
         }
     }
 
-    fn send_decode_error(
+    async fn send_decode_error(
         &mut self,
         error: &download_manager_protocol::CommandDecodeError,
     ) -> Result<(), HostError> {
@@ -843,10 +949,10 @@ impl<W: Write> Session<'_, W> {
             CommandDecodeFailure::UnsupportedVersion => ErrorCode::ProtocolUnsupportedVersion,
             CommandDecodeFailure::UnknownCommand => ErrorCode::ProtocolUnknownCommand,
         };
-        self.send_failure(correlation_id, command, code)
+        self.send_failure(correlation_id, command, code).await
     }
 
-    fn send_engine_failure(
+    async fn send_engine_failure(
         &self,
         correlation_id: String,
         command: ResponseCommand,
@@ -854,9 +960,10 @@ impl<W: Write> Session<'_, W> {
         task_id: Option<TaskId>,
     ) -> Result<(), HostError> {
         self.send_error(correlation_id, command, task_engine_error(error, task_id))
+            .await
     }
 
-    fn send_failure(
+    async fn send_failure(
         &self,
         correlation_id: String,
         command: ResponseCommand,
@@ -867,27 +974,30 @@ impl<W: Write> Session<'_, W> {
             command,
             ProtocolError::without_context(code),
         )
+        .await
     }
 
-    fn send_error(
+    async fn send_error(
         &self,
         correlation_id: String,
         command: ResponseCommand,
         error: ProtocolError,
     ) -> Result<(), HostError> {
         self.write(&ResponseMessage::failure(correlation_id, command, error))
+            .await
     }
 
-    fn send_success(
+    async fn send_success(
         &self,
         correlation_id: String,
         command: ResponseCommand,
         result: &impl serde::Serialize,
     ) -> Result<(), HostError> {
         self.write(&ResponseMessage::success(correlation_id, command, result)?)
+            .await
     }
 
-    fn send_event(
+    async fn send_event(
         &mut self,
         event: EventName,
         emitted_at: TimestampMillis,
@@ -902,11 +1012,31 @@ impl<W: Write> Session<'_, W> {
             timestamp_rfc3339(emitted_at),
             data,
         )?;
-        self.write(&message)
+        self.write(&message).await
     }
 
-    fn write(&self, message: &impl serde::Serialize) -> Result<(), HostError> {
-        write_frame(&mut *lock(&self.writer), message).map_err(HostError::from)
+    // A uniform awaitable sink keeps the legacy entry point synchronous at the
+    // actual stdio write, while the opt-in local sink awaits bounded transport I/O.
+    #[cfg_attr(
+        not(all(windows, feature = "local-bridge")),
+        allow(clippy::unused_async)
+    )]
+    async fn write(&self, message: &impl serde::Serialize) -> Result<(), HostError> {
+        match &self.writer {
+            SessionOutput::Legacy(writer) => {
+                write_frame(&mut *lock(writer), message).map_err(HostError::from)
+            }
+            #[cfg(all(windows, feature = "local-bridge"))]
+            SessionOutput::Local(writer) => {
+                let body = download_manager_protocol::encode_frame_body(message)?;
+                writer
+                    .lock()
+                    .await
+                    .write(&body)
+                    .await
+                    .map_err(|_| HostError::LocalSession)
+            }
+        }
     }
 
     fn next_sequence(&mut self) -> Result<u64, HostError> {
@@ -1463,6 +1593,7 @@ mod tests {
         );
         session
             .send_snapshot_events(&engine.snapshots())
+            .await
             .expect("snapshot");
         let output = serde_json::to_string(&messages(&writer)).expect("output");
         assert!(!output.contains("not-a-real-session"));
@@ -1507,6 +1638,7 @@ mod tests {
         engine.wait_until_inactive(id).await.expect("finished");
         session
             .send_snapshot_events(&engine.snapshots())
+            .await
             .expect("snapshot");
         let output = messages(&writer);
         let snapshot = output
@@ -1570,8 +1702,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn list_cursors_page_one_consistent_bounded_snapshot() {
+    #[tokio::test]
+    async fn list_cursors_page_one_consistent_bounded_snapshot() {
         let directories = Directories::new("list-pages");
         let engine = TaskEngine::open(&directories.state, TaskEngineOptions::default())
             .expect("open list engine");
@@ -1603,6 +1735,7 @@ mod tests {
         };
         session
             .send_list(&engine, "list-0".to_owned(), &first)
+            .await
             .expect("send first list page");
         let first_output = messages(&writer);
         assert_eq!(
@@ -1636,6 +1769,7 @@ mod tests {
         };
         session
             .send_list(&engine, "list-1".to_owned(), &second)
+            .await
             .expect("send second list page");
         let output = messages(&writer);
         assert_eq!(output[1]["result"]["snapshot_id"], snapshot_id);

@@ -1,6 +1,6 @@
 # Local transport foundation — #50
 
-Status: development library and isolated tests, **not an installed/native-messaging bridge**. `crates/local-ipc` is not yet connected to the companion engine, setup or released host. Its workspace version does not make it part of immutable v0.1.0. This is an engineering implementation of the visible, browser-independent companion requirement; the owner did not specify these mechanisms.
+Status: development transport plus opt-in companion-engine integration and isolated tests, **not an installed/native-messaging bridge**. The preview companion now serves one controller over IPC; setup, installed authority and native stdio forwarding remain unfinished. Its workspace version does not make it part of immutable v0.1.0. This is an engineering implementation of the visible, browser-independent companion requirement; the owner did not specify these mechanisms.
 
 ## Boundaries and vocabulary
 
@@ -53,9 +53,9 @@ Only `crates/windows-io` has a function-local FFI exception for `CancelIoEx`, us
 
 ## Integration still required
 
-Private endpoint/capability publication and ACL/receipt readback; installed per-user singleton authority and migration; engine/session actor and bounded queues; native stdio forwarding and coordinated cancellation/join; reconnect/uncertain-command semantics; ordinary setup UI/shortcuts/upgrade/uninstall; actual Firefox lifetime/capture and signed XPI; final exact-package qualification/publication. Do not close #50 or claim install readiness from this library's tests.
+Private endpoint/capability publication and ACL/receipt readback; installed per-user singleton authority and migration; complete lifecycle qualification of the new one-controller engine session; native stdio forwarding and coordinated cancellation/join; reconnect/uncertain-command semantics; ordinary setup UI/shortcuts/upgrade/uninstall; actual Firefox lifetime/capture and signed XPI; final exact-package qualification/publication. Do not close #50 or claim install readiness from this library's tests.
 
-## Current local validation checkpoint
+## Initial transport validation checkpoint (historical)
 
 The restored source passes 17 local-IPC unit tests, one retained cross-process integration test and one Windows-boundary error-path test. Endpoint-binding and preallocation-length mutations fail their intended assertions; the omitted-cancellation mutation separately fails native peer closure. Full workspace Clippy and tests/build, JavaScript checks and reviewed dependency policy have run; authoritative new-head CI remains required.
 
@@ -68,3 +68,21 @@ The initial 44d6e1d transport chose 64 KiB, while `crates/protocol/src/lib.rs` a
 A native-decoder-valid hello padded with legal JSON whitespace to exactly 1 MiB now crosses the transport byte-for-byte; empty/oversize input still fails before body allocation, and deadlines/cancellation are unchanged. The 64 KiB limits for qualification metadata/ordinary logs are separate contracts and are not enlarged. At most four admitted sessions remains unchanged; future coordinator queues need explicit byte budgets as well as frame counts before integration. The initial 19 checks/44d CI are historical input evidence; the revised frame limit needs its own new-head validation.
 
 The revised limit passes 18 IPC unit tests, one retained cross-process test and one boundary error-path test (20 total), full workspace tests/build/Clippy with one Cargo build job, npm check, dependency policy and privacy206. Restoring the old 64 KiB value fails the new native-compatibility assertion. New-head CI remains required; none of this qualifies the installed bridge.
+
+## First engine integration: evidence scope and learning
+
+The opt-in native-host `local-bridge` feature now lets the preview companion's retained worker serve ONE browser protocol controller against its owner. This is not native stdio forwarding or installed endpoint discovery. The released default stdio entry point retains EOF shutdown. Input uses an eight-frame queue: 8 MiB queued, one body awaiting delivery, and one body under dispatch (10 MiB input bodies maximum). Output awaits one encoded frame at a time rather than collecting history into an output queue. Snapshot pages remain ordered before deltas; only each page is projected, while captured history/list memory still scales with task history. Encoded/decoded structures and wrapper/kernel buffers are additional memory, not hidden inside that input-body count.
+
+The initial real-pipe tests failed because the fixture expected event sequence 1; the unchanged native session starts at 0. Corrected the fixture to the existing protocol, and corrected a latent Add-field typo to `suggested_filename` before that path ran. The next run passed the 80-task history/second-controller/refused-peer reconnect case, but observed `promoting` after the correct final file appeared. Engine source promotes before persisting Completed; the test now separately waits for a Get Completed receipt, without changing that transition, loosening output checks or inferring completion from file presence. These failures and their private domains remain retained.
+
+The restored tests exercise a real 64 KiB fixture transfer continuing after pipe disconnect, one-task reconnect and byte-for-byte independent fixture comparison; 80-task incremental history and second-controller refusal/reconnect; and an 800-task nonreading peer with observed pending client output, joined Quit, real closure, state-lock release and endpoint rebind. They do not identify a kernel buffer byte count or prove Firefox capture, signed install, cross-account ACL enforcement or installed generation authority. Final checks/mutation evidence and current-head CI remain separate gates.
+
+
+Additional actual-pipe checks cover refused URL commands/current settings across reconnect and idle-controller Quit (five engine/pipe tests total). The first omitted-output-drop mutation failed at a generic observation deadline, not its intended Quit assertion; this was retained and the observer now names its stage. The nonreading-write variant then survived that mutation: cancelling the in-progress write had already retired the output direction, so that fixture could not prove explicit idle-output drop. The new idle-controller fixture rejects the omission at `retained companion worker must join successfully`. Making controller loss shut down the owner separately fails `owned engine/IPC observation deadline: final file promotion`. Both final mutations use exact retained executable handles, join before recording their rejected result, and restore source; neither required forced termination. Earlier mismatched/surviving attempts are not sensitivity evidence.
+
+The preview GUI now starts this explicit memory-only binding only after its existing visible-tray gate. It publishes no key/endpoint file and changes no native registration. Default stdio remains legacy; the bridge feature is selected by the companion only. Workspace metadata/notices may conservatively include the newly reachable optional dependency closure; that does not qualify new package bytes. The final server cancellation-failure readback also covers a pending unauthenticated accept retired by Quit. No additional FFI allowance is introduced.
+
+After the earlier Windows commit-capacity failure, the Windows CI quality job now also uses one Cargo build job. Test concurrency, assertions, individual deadlines and the 30-minute job deadline are unchanged. The preceding a3a7917 CI34402091393 passed; its success does not cover this engine increment.
+
+
+Restored-source workspace tests/build/Clippy passed with one Cargo build job; the existing optional hedging measurement remains ignored, not newly qualified. Default-feature native-host Clippy also passed. npm check and dependency policy passed. The new native preview report `artifacts/companion50-engine-ipc-preview.json` passed six owned Windows x64 checks on a dirty identified development tree; it is not inherited from d88e7b7, an installed bridge report or physical tray input. Tracked-file privacy screening and current-head CI must be checked for the final staged/committed source.

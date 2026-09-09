@@ -8,14 +8,16 @@ publish.workspace = true
 license.workspace = true
 
 [dependencies]
-download-manager-native-host = { version = "=0.1.0", path = "../native-host" }
+download-manager-native-host = { version = "=0.1.0", path = "../native-host", features = ["local-bridge"] }
 tokio.workspace = true
 uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+download-manager-local-ipc = { version = "=0.1.0", path = "../local-ipc" }
 winsafe.workspace = true
 
 [dev-dependencies]
+serde_json.workspace = true
 download-manager-engine = { version = "=0.1.0", path = "../engine" }
 download-manager-test-server = { version = "=0.1.0", path = "../test-server" }
 

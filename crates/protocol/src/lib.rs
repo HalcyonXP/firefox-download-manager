@@ -8,7 +8,7 @@ mod framing;
 mod strict_json;
 mod v2;
 
-pub use framing::{FrameReadError, FrameWriteError, read_frame, write_frame};
+pub use framing::{FrameReadError, FrameWriteError, encode_frame_body, read_frame, write_frame};
 pub use v2::{
     AddPayload, AuthorizationInput, CancelPartial, CancelPayload, Command, CommandDecodeError,
     CommandDecodeFailure, CommandMessage, CookieInput, CredentialsInput, ErrorCode, ErrorContext,
