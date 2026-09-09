@@ -338,6 +338,28 @@ mod tests {
     }
 
     #[test]
+    fn sparse_observations_need_a_window_covering_the_observation_period() {
+        let start = Instant::now();
+        let mut narrow = SpeedEstimator::new(Duration::from_secs(1)).expect("narrow window");
+        let mut covering = SpeedEstimator::new(Duration::from_secs(10)).expect("covering window");
+        for second in [0, 2, 4, 6] {
+            let instant = start + Duration::from_secs(second);
+            // Four samples in ten seconds do not imply three samples within
+            // one second. A minimum event spacing is not a maximum spacing.
+            assert_eq!(
+                narrow
+                    .sample_at(128, Some(256), instant)
+                    .speed_bytes_per_second(),
+                None
+            );
+            let estimate = covering.sample_at(128, Some(256), instant);
+            if second >= 4 {
+                assert_eq!(estimate.speed_bytes_per_second(), Some(0));
+            }
+        }
+    }
+
+    #[test]
     fn completed_sample_after_a_gap_can_have_no_recent_rate() {
         let start = Instant::now();
         let mut estimator = SpeedEstimator::new(Duration::from_secs(1)).expect("estimator");

@@ -972,7 +972,9 @@ async fn assert_cadence_fixture(delay_preparation: bool) {
         })
         .expect("pause second response");
     let directories = TestDirectories::new("progress-events");
-    let progress = ProgressPolicy::new(Duration::from_millis(100), Duration::from_secs(1))
+    // Keep observed active samples eligible throughout this test's watchdog.
+    // The one-second stale-window semantics have independent deterministic tests.
+    let progress = ProgressPolicy::new(Duration::from_millis(100), CADENCE_OBSERVATION_LIMIT)
         .expect("progress policy");
     let options = TaskEngineOptions::new(WorkerCount::One, RetryPolicy::default(), progress, 256)
         .expect("task options");
