@@ -148,3 +148,7 @@ The helper must reserve standard output for Native Messaging frames. Local diagn
 `.github/workflows/ci.yml` runs extension/protocol/manifest checks and the full Rust format/lint/test/build sequence. The `windows-latest` job installs the built helper into a temporary path containing spaces, verifies its HKCU registration and live framed hello/snapshot exchange, and removes it in a `finally` block. Dependency policy runs on Linux because `cargo-deny` is platform-independent. CI uploads the generated extension directory for inspection but does not publish a release.
 
 For repeatability measurements, `build-package.ps1 -Rebuild` explicitly cleans only its dedicated `target/package-build` Cargo cache before compilation. Compare new output directories with `scripts/compare-packages.py`; do not treat a cached no-op build or a same-environment match as cross-machine proof. Final-artifact qualification uses exact candidate/release checksums, not an assumed rebuild identity.
+
+## M5 owned Windows I/O boundary
+
+[ADR0015](decisions/0015-owned-windows-io-cancellation.md) explicitly permits one function-local CancelIoEx call in a separate boundary crate after the selected safe wrappers proved insufficient for pending-write cancellation. Existing crates retain workspace unsafe-forbid. [LOCAL_IPC.md](LOCAL_IPC.md) separates authenticated transport, cancellation requests, actual completion and the still-unimplemented installed engine/bridge authority. This is not shipped v0.1.0 behavior.

@@ -26,7 +26,7 @@
     "privacy:test": "node --test scripts/privacy-policy.test.mjs scripts/publication-policy.test.mjs",
     "privacy:publication": "node scripts/verify-publication.mjs",
     "repository:check": "node scripts/check-repository.mjs",
-    "repository:test": "node --test scripts/repository-policy.test.mjs",
+    "repository:test": "node --test scripts/repository-policy.test.mjs scripts/windows-io-policy.test.mjs",
     "security:test": "node --test scripts/extension-policy.test.mjs"
   },
   "devDependencies": {

@@ -25,6 +25,11 @@
 - **Joined Quit** (#50): cooperative engine shutdown followed by joining the retained worker handle before removing the icon/closing. Sending a stop request alone is not a successful Quit.
 - **Companion preview** (#50): a real native window/tray and real engine in a fresh temporary domain, clearly labelled unfinished. It has no browser bridge, capture or installer integration and is excluded from released package payloads. See [COMPANION_DESIGN.md](COMPANION_DESIGN.md).
 
+## Autonomous completion authority (ADR0014)
+
+- **Standing authority**: the owner's explicit instruction to complete the agreed project through GitHub without routine approval requests, including owned isolated tests and reviewed distribution work. It does not supply absent credentials or waive acceptance/security gates.
+- **Operational preflight**: an established condition such as closed Firefox processes before shared-registration mutation. It is not another request for permission; never fake it or terminate unowned processes to satisfy it.
+
 ## Privacy meanings
 
 - **Writable-history cleanup** (#29): removal from editable branches/tags and tracked content; it does not imply erasure from GitHub caches or closed-PR refs.
@@ -165,3 +170,13 @@ See [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) for the demonstrated corr
 - **Checksum scopes (v0.1.0)**: the release's `PACKAGE-SHA256SUMS.txt` is the original builder ZIP checksum named by installed instructions; its additional release-level `SHA256SUMS.txt` covers ZIP plus qualification record. The `SHA256SUMS.txt` inside the extracted package instead covers payloads. Adding an aggregate manifest must not omit the name promised by the installed guide.
 
 - **Publication auditor versus product/test source (#46)**: the remote metadata auditor can have a newer identified revision than the frozen product artifact and its test drivers. Its issue/PR coverage uses independent full-PR reads and GraphQL totals, not an assumption that an issues response includes every PR. A newer auditor/documentation commit is not an untested rebuild to substitute for the qualified product tag.
+
+## Local transport (#50, ADR0015)
+
+- **IPC capability**: a 32-byte private shared key, distinct from Firefox permissions and the wire protocol's advertised capability strings.
+- **IPC endpoint**: a canonical UUIDv4-derived local named-pipe address, not an HTTP endpoint or installation authority.
+- **Transport authentication**: mutual key-possession proof on one connection; not signing, add-on identity, delivery, commit acknowledgement or safe replay.
+- **Cancellation request / peer closure / joined shutdown**: separate observations. CancelIoEx acceptance is not I/O completion; a successful write can merely enqueue bytes. Retain failure observations and join workers before reporting shutdown.
+- **Narrow FFI exception**: ADR0015 permits only the reviewed borrowed-handle CancelIoEx call in `crates/windows-io`; existing crates still inherit unsafe-forbid. Not a Windows/TLS/Firefox protection change.
+
+See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed test premises and remaining installed-authority gaps.

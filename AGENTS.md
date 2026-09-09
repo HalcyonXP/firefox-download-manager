@@ -23,7 +23,7 @@ If code, documentation, and an issue disagree, stop and resolve the contradictio
 - Do not add torrent, media-extraction, telemetry, analytics, cloud-sync, or remote-update behavior.
 - The immutable first release remains manual-only. M5 permits safe supported ordinary-click capture, not blanket interception/replay of every request, POST/blob/private/container/auth context or implicit credential harvesting.
 - Persistent installation must use an authorized Mozilla-supported signed path with protections unchanged, not temporary-addon reloads or profile injection. Signing/account authority is not assumed.
-- The owner is using Firefox again. Earlier closed-browser authorization is not current authority for new browser/registration tests; obtain fresh consent and preflights and use only owned isolated state.
+- The owner explicitly authorizes autonomous completion without further routine approvals (ADR0014). Use GitHub for the project and continue through qualified install readiness. Owned isolated tests and reviewed distribution work are authorized; operational ownership/closed-app checks, normal-profile protection and genuine external credential prerequisites remain. Never manufacture missing credentials or kill unowned browsers to pass a preflight.
 - Do not copy third-party implementation code unless its license and attribution requirements have been deliberately reviewed.
 
 ## User-facing workflow
@@ -70,3 +70,7 @@ Keep commits and pull requests scoped to one issue unless two work items are ins
 - #13 and #14 may then proceed in parallel
 
 The detailed dependency graph and milestone exit criteria are in `docs/PROJECT_PLAN.md`.
+
+## M5 Windows cancellation boundary
+
+ADR0015 permits one reviewed function-local CancelIoEx FFI call in `crates/windows-io`, which defaults to unsafe-deny. All existing crates retain workspace unsafe-forbid; do not spread that exception. A cancellation request, actual pipe closure and joined worker shutdown are separate observations. Keep the transport/authority/installer gaps in `docs/LOCAL_IPC.md` explicit; standalone IPC tests do not qualify the installed bridge.

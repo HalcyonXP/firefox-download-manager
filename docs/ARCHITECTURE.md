@@ -226,3 +226,7 @@ Probe bytes, redirected probe hops, and transfer workers share one admission dom
 ### Pre-packaging security checkpoint (#26)
 
 [SECURITY_REVIEW.md](SECURITY_REVIEW.md) inventories every permission and trust boundary. Selected-site permission construction now rejects wildcard hosts; remote ETags/If-Range are debug-sensitive; explicit CSP, no-private-window behavior and minimum Firefox 156 are guarded. No broader API compatibility or final-browser qualification is inferred from the earlier authentication slice. Development-installer root/ownership/upgrade findings explicitly block #27 delivery until fixed; #28 still qualifies final artifacts.
+
+## M5 owned Windows I/O boundary
+
+[ADR0015](decisions/0015-owned-windows-io-cancellation.md) explicitly permits one function-local CancelIoEx call in a separate boundary crate after the selected safe wrappers proved insufficient for pending-write cancellation. Existing crates retain workspace unsafe-forbid. [LOCAL_IPC.md](LOCAL_IPC.md) separates authenticated transport, cancellation requests, actual completion and the still-unimplemented installed engine/bridge authority. This is not shipped v0.1.0 behavior.

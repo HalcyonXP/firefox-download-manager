@@ -62,7 +62,7 @@ The actual returned signed XPI is a new artifact input. Review signing-added met
 
 Final qualification must execute setup → real tray → normal signed XPI install → Firefox restart → ordinary GGUF click → one automatically started native task → independent correct output. No temporary-addon API, manual Add/context-menu action or mocked transport may stand in for this path. Recheck setup/IPC lifecycle, shell restart, failure/uncertain handoff, existing adversaries, privacy and resource boundaries. A new release (working target0.2.0, our versioning choice) is not approved until these gates pass.
 
-The owner is now using Firefox. Earlier closed-browser permission was consumed by completed v0.1.0 qualification; it is not current mutation authority. Actual browser/registration tests require fresh consent/closed-app/ownership preflights and isolated state. No normal profile inspection/modification, unowned process termination, security downgrade, VPN behavior, telemetry, remote updater, private-archive import or manufactured clean-machine evidence is permitted.
+The owner is now using Firefox. Earlier closed-browser permission was consumed by completed v0.1.0 qualification; it is not current mutation authority. At this checkpoint fresh consent was required; the owner's later explicit [standing authority in ADR0014](0014-autonomous-completion.md) supersedes that approval requirement. Actual browser/registration tests still require closed-app/ownership preflights and isolated state. No normal profile inspection/modification, unowned process termination, security downgrade, VPN behavior, telemetry, remote updater, private-archive import or manufactured clean-machine evidence is permitted.
 
 ## Sources and knowledge status
 

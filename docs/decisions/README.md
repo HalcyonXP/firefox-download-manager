@@ -17,5 +17,7 @@ Accepted ADRs define the baseline for the initial local release. Superseding a d
 | [0011](0011-license-and-available-qualification.md) | Permissive licensing and available-machine qualification | Accepted |
 | [0012](0012-qualification-publication-sequence.md) | Candidate acceptance before final-main qualification/publication | Accepted |
 | [0013](0013-install-restart-click.md) | Install–restart–click workflow, visible companion and persistent Firefox integration | Accepted direction; mechanism/signing gates pending |
+| [0014](0014-autonomous-completion.md) | Standing authority for autonomous completion; operational safeguards remain | Accepted owner instruction |
+| [0015](0015-owned-windows-io-cancellation.md) | Explicit owned pipe cancellation; narrow reviewed FFI exception | Accepted engineering decision |
 
 Each record states its reversibility. Security and correctness invariants are not made optional merely because an implementation choice is reversible.
