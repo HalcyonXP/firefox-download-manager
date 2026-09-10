@@ -71,3 +71,35 @@ test("emulation waits for quality and the same-run qualified package", () => {
   assert.doesNotMatch(emulation, /run-id:|repository:|always\(\)|continue-on-error:/u);
   assert.match(blocks.get("rust-dependencies"), /command: check/u);
 });
+
+test("startup diagnostics run only after failed Rust gates and cannot qualify a candidate", () => {
+  for (const [job, step, artifact] of [
+    [quality, "rust_tests", "quality"],
+    [packaging, "candidate", "package"],
+  ]) {
+    assert.match(job, new RegExp(`id: ${step}\\b`, "u"));
+    const condition = `failure() && steps.${step}.outcome == 'failure'`;
+    assert.equal(job.split(condition).length - 1, 2);
+    assert.ok(
+      job.includes(
+        "./scripts/diagnose-private-startup.ps1 -Report artifacts/private-startup-diagnostics.json",
+      ),
+    );
+    assert.ok(job.includes(`name: private-startup-${artifact}-diagnostics`));
+  }
+  const probe = readFileSync(new URL("./diagnose-private-startup.ps1", import.meta.url), "utf8");
+  assert.match(probe, /qualification = \$false/u);
+  assert.match(probe, /\[IO\.FileMode\]::CreateNew/u);
+  assert.match(probe, /\[Environment\]::SystemDirectory/u);
+  assert.match(probe, /5000 - \$clock\.ElapsedMilliseconds/u);
+  assert.match(probe, /\[byte\[\]\]::new\(7\)/u);
+  assert.match(probe, /\[byte\[\]\]::new\(512\)/u);
+  assert.match(probe, /\$process\.Kill\(\)/u);
+  assert.match(probe, /\$process\.WaitForExit\(\)/u);
+  assert.match(probe, /\$pending\.GetAwaiter\(\)\.GetResult\(\)/u);
+  assert.match(probe, /\$errors\.GetAwaiter\(\)\.GetResult\(\)/u);
+  assert.doesNotMatch(
+    probe,
+    /Get-Process|Stop-Process|taskkill|SetAccessControl|Set-ExecutionPolicy|DllImport|Add-Type|Get-ChildItem|ReadToEnd/u,
+  );
+});

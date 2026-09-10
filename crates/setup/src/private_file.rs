@@ -41,6 +41,13 @@ const LIMIT: usize = 4096;
 const EXECUTION_LIMIT: Duration = Duration::from_secs(5);
 const ERROR: SetupError = SetupError::PrivateFile;
 
+#[cfg(test)]
+fn trace_phase(phase: &'static str) {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let elapsed = START.get_or_init(Instant::now).elapsed().as_millis();
+    eprintln!("private adapter: {phase} at +{elapsed} ms");
+}
+
 /// Verified, bounded bytes and a retained read-only file/ancestor lease.
 /// Intentionally not Debug/Serialize. This is not a generation or engine proof.
 pub struct PrivateFile {
@@ -182,7 +189,7 @@ impl Adapter {
             return Err(ERROR);
         }
         #[cfg(test)]
-        eprintln!("private adapter: launch requested");
+        trace_phase("launch requested");
         let child = Command::new(executable)
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
             .creation_flags(0x0800_0000) // CREATE_NO_WINDOW; no execution-policy changes.
@@ -192,7 +199,7 @@ impl Adapter {
             .spawn()
             .map_err(|_| ERROR)?;
         #[cfg(test)]
-        eprintln!("private adapter: process handle retained");
+        trace_phase("process handle retained");
         let mut adapter = Self {
             child,
             worker: None,
@@ -209,28 +216,28 @@ impl Adapter {
                 .name("private-file-adapter".into())
                 .spawn(move || {
                     #[cfg(test)]
-                    eprintln!("private adapter: worker entered");
+                    trace_phase("worker entered");
                     let mut start = [0; 6];
                     stdout.read_exact(&mut start).map_err(|_| ERROR)?;
                     #[cfg(test)]
-                    eprintln!("private adapter: startup bytes read");
+                    trace_phase("startup bytes read");
                     if &start != b"start\n" {
                         return Err(ERROR);
                     }
                     stdin.write_all(&input).map_err(|_| ERROR)?;
                     #[cfg(test)]
-                    eprintln!("private adapter: request written");
+                    trace_phase("request written");
                     let mut consumed = [0; 6];
                     stdout.read_exact(&mut consumed).map_err(|_| ERROR)?;
                     #[cfg(test)]
-                    eprintln!("private adapter: request receipt bytes read");
+                    trace_phase("request receipt bytes read");
                     if &consumed != b"input\n" {
                         return Err(ERROR);
                     }
                     let mut ready = [0; 6];
                     stdout.read_exact(&mut ready).map_err(|_| ERROR)?;
                     #[cfg(test)]
-                    eprintln!("private adapter: readiness bytes read");
+                    trace_phase("readiness bytes read");
                     if &ready != b"ready\n" {
                         return Err(ERROR);
                     }
@@ -238,12 +245,12 @@ impl Adapter {
                     close_rx.recv().map_err(|_| ERROR)?;
                     stdin.write_all(b"close\n").map_err(|_| ERROR)?;
                     #[cfg(test)]
-                    eprintln!("private adapter: close request written");
+                    trace_phase("close request written");
                     drop(stdin);
                     let mut output = Vec::new();
                     stdout.take(3).read_to_end(&mut output).map_err(|_| ERROR)?;
                     #[cfg(test)]
-                    eprintln!("private adapter: completion bytes read");
+                    trace_phase("completion bytes read");
                     if output != b"ok" {
                         return Err(ERROR);
                     }
@@ -259,7 +266,7 @@ impl Adapter {
         loop {
             if Instant::now() >= self.deadline {
                 #[cfg(test)]
-                eprintln!("private adapter: deadline before readiness");
+                trace_phase("deadline before readiness");
                 return Err(ERROR);
             }
             match ready.recv_timeout(Duration::from_millis(5)) {
@@ -269,7 +276,7 @@ impl Adapter {
             }
             if self.child.try_wait().map_err(|_| ERROR)?.is_some() {
                 #[cfg(test)]
-                eprintln!("private adapter: child exit before readiness");
+                trace_phase("child exit before readiness");
                 return Err(ERROR);
             }
         }
@@ -299,16 +306,16 @@ impl Adapter {
         self.close.take(); // Unblock a worker waiting for its Rust-side close signal.
         if !matches!(self.child.try_wait(), Ok(Some(_))) {
             #[cfg(test)]
-            eprintln!("private adapter: retiring retained process");
+            trace_phase("retiring retained process");
             let _ = self.child.kill();
         }
         let process = self.child.wait().map_err(|_| ERROR);
         #[cfg(test)]
-        eprintln!("private adapter: process wait returned");
+        trace_phase("process wait returned");
         let worker = self.worker.take().map(|worker| {
             let result = worker.join().map_err(|_| ERROR);
             #[cfg(test)]
-            eprintln!("private adapter: worker join returned");
+            trace_phase("worker join returned");
             result
         });
         process?;

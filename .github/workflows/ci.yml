@@ -50,6 +50,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Test Rust
+        id: rust_tests
         run: cargo test --workspace --all-features --locked
 
       - name: Repeat cancellation regressions
@@ -76,6 +77,21 @@ jobs:
           path: extension/dist
           if-no-files-found: error
 
+      - name: Observe isolated script startup after failed Rust gate
+        if: ${{ failure() && steps.rust_tests.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          if (!(Test-Path artifacts -PathType Container)) { New-Item -ItemType Directory artifacts | Out-Null }
+          ./scripts/diagnose-private-startup.ps1 -Report artifacts/private-startup-diagnostics.json
+
+      - name: Upload non-qualifying startup observations
+        if: ${{ failure() && steps.rust_tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: private-startup-quality-diagnostics
+          path: artifacts/private-startup-diagnostics.json
+          if-no-files-found: error
+
   package:
     name: Windows package qualification
     runs-on: windows-latest
@@ -98,6 +114,7 @@ jobs:
         run: npm ci
 
       - name: Build checksummed Windows x64 candidate
+        id: candidate
         shell: pwsh
         run: ./scripts/build-package.ps1 -TestRust -Rebuild
 
@@ -157,6 +174,21 @@ jobs:
             artifacts/install-evidence.json
             artifacts/reproducibility.json
             artifacts/native-evidence.json
+          if-no-files-found: error
+
+      - name: Observe isolated script startup after failed Rust gate
+        if: ${{ failure() && steps.candidate.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          if (!(Test-Path artifacts -PathType Container)) { New-Item -ItemType Directory artifacts | Out-Null }
+          ./scripts/diagnose-private-startup.ps1 -Report artifacts/private-startup-diagnostics.json
+
+      - name: Upload non-qualifying startup observations
+        if: ${{ failure() && steps.candidate.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: private-startup-package-diagnostics
+          path: artifacts/private-startup-diagnostics.json
           if-no-files-found: error
 
   windows11-emulation:

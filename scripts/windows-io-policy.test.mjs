@@ -64,13 +64,18 @@ test("private-file adapter keeps secrets in Rust and preserves the OS boundary",
   assert.match(script, /\[IO\.File\]::GetAccessControl/u);
   assert.match(script, /\[IO\.Directory\]::GetAccessControl/u);
   assert.match(script, /\$dmInput\.ReadLine\(\) -cne 'close'/u);
-  const diagnostics = [...rust.matchAll(/eprintln!\(([^;]+)\);/gu)];
+  const diagnostics = [...rust.matchAll(/^\s+trace_phase\(([^;]+)\);/gmu)];
   assert.ok(diagnostics.length > 0);
-  assert.ok(diagnostics.every((match) => /^"private adapter: [a-z ]+"$/u.test(match[1])));
-  assert.equal(
-    rust.match(/#\[cfg\(test\)\]\s+eprintln!/gu)?.length,
-    diagnostics.length,
-    "fixed phase diagnostics must remain test-only",
+  assert.ok(diagnostics.every((match) => /^"[a-z ]+"$/u.test(match[1])));
+  assert.equal(rust.match(/#\[cfg\(test\)\]\s+trace_phase\(/gu)?.length, diagnostics.length);
+  assert.match(rust, /#\[cfg\(test\)\]\s+fn trace_phase\(phase: &'static str\)/u);
+  assert.match(
+    rust,
+    /let elapsed = START\.get_or_init\(Instant::now\)\.elapsed\(\)\.as_millis\(\);/u,
+  );
+  assert.deepEqual(
+    [...rust.matchAll(/eprintln!\(([^;]+)\);/gu)].map((match) => match[1]),
+    ['"private adapter: {phase} at +{elapsed} ms"'],
   );
   // Structural regression guard only, not ACL/cross-account/runtime proof.
 });
