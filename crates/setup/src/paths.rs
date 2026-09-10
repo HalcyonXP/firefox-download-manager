@@ -125,7 +125,7 @@ impl InstallationPath {
 fn same_path(a: &Path, b: &Path) -> bool {
     a.components().count() == b.components().count() && within(a, b)
 }
-fn within(candidate: &Path, parent: &Path) -> bool {
+pub(crate) fn within(candidate: &Path, parent: &Path) -> bool {
     let mut child = candidate.components();
     parent.components().all(|part| {
         child.next().is_some_and(|value| {

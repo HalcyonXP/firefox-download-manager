@@ -9,7 +9,7 @@ license.workspace = true
 
 [features]
 application = ["installed-runtime", "winsafe/gui"]
-installed-runtime = ["private-directory"]
+installed-runtime = ["private-directory", "winsafe/shell"]
 private-file = ["dep:winsafe"]
 private-directory = ["private-file", "winsafe/advapi", "dep:download-manager-local-ipc"]
 

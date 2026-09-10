@@ -6,6 +6,8 @@ use serde::{Deserialize, Serialize};
 /// Fixed internal argument; never a native-message command or supplied path.
 pub const ARGUMENT: &str = "--package-probe";
 const LIMIT: usize = 1024;
+// Entry family2 requires receipt2/journal2 + immutable shortcut support.
+const ENTRY_MODES_VERSION: u32 = 2;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Report {
@@ -25,7 +27,7 @@ pub fn report() -> Result<Vec<u8>, SetupError> {
         version: 1,
         package_version: env!("CARGO_PKG_VERSION").into(),
         protocol_version: download_manager_protocol::PROTOCOL_VERSION,
-        entry_modes_version: 1,
+        entry_modes_version: ENTRY_MODES_VERSION,
     })
     .map_err(|_| SetupError::Launch)
 }
@@ -42,7 +44,7 @@ pub fn verify(bytes: &[u8]) -> Result<(), SetupError> {
         || value.version != 1
         || value.package_version != env!("CARGO_PKG_VERSION")
         || value.protocol_version != download_manager_protocol::PROTOCOL_VERSION
-        || value.entry_modes_version != 1
+        || value.entry_modes_version != ENTRY_MODES_VERSION
     {
         return Err(SetupError::Launch);
     }
@@ -61,7 +63,7 @@ mod tests {
             ("version", serde_json::json!(2)),
             ("package_version", serde_json::json!("0.0.0")),
             ("protocol_version", serde_json::json!(1)),
-            ("entry_modes_version", serde_json::json!(0)),
+            ("entry_modes_version", serde_json::json!(1)),
             ("ready", serde_json::json!(true)),
         ] {
             let mut changed = original.clone();

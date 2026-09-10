@@ -22,16 +22,26 @@ pub struct Generation {
     pub package_version: String,
     /// Helper bytes in this generation.
     pub helper_sha256: String,
-    /// Explicitly loaded unsigned XPI bytes.
+    /// Packaged XPI bytes; signing and browser persistence are separate evidence.
     pub extension_sha256: String,
     /// Generated fixed-principal native manifest bytes.
     pub manifest_sha256: String,
+    /// Receipt2 only: immutable Shell Link bytes, not an arbitrary launch path.
+    #[serde(
+        default,
+        deserialize_with = "present_digest",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub shortcut_sha256: Option<String>,
 }
 impl Generation {
     /// Validates every persisted field before it can affect filesystem ownership.
     #[must_use]
     pub fn is_valid(&self) -> bool {
-        canonical_id(&self.id)
+        self.shortcut_sha256
+            .as_ref()
+            .is_none_or(|value| valid_digest(value))
+            && canonical_id(&self.id)
             && version_label(&self.package_version)
             && [
                 &self.helper_sha256,
@@ -57,17 +67,43 @@ pub struct Receipt {
     pub current: String,
     /// Only proven generated directories are eligible for cleanup.
     pub generations: Vec<Generation>,
+    /// Receipt2 binds an independently resolved Programs directory, never supplies one.
+    #[serde(
+        default,
+        deserialize_with = "present_digest",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub shortcut_scope: Option<String>,
 }
 impl Receipt {
     /// Checks identity, bounds and unique/current generation coverage.
     #[must_use]
     pub fn is_valid(&self) -> bool {
         if self.format != "firefox-download-manager-installation"
-            || self.version != 1
+            || !matches!(self.version, 1 | 2)
             || !canonical_id(&self.installation_id)
             || self.generations.is_empty()
             || self.generations.len() > MAX_GENERATIONS
         {
+            return false;
+        }
+        if match self.version {
+            1 => {
+                self.shortcut_scope.is_some()
+                    || self.generations.iter().any(|g| g.shortcut_sha256.is_some())
+            }
+            2 => {
+                !self
+                    .shortcut_scope
+                    .as_ref()
+                    .is_some_and(|v| valid_digest(v))
+                    || !self
+                        .generations
+                        .iter()
+                        .any(|g| g.id == self.current && g.shortcut_sha256.is_some())
+            }
+            _ => true,
+        } {
             return false;
         }
         let mut ids = BTreeSet::new();
@@ -138,7 +174,17 @@ impl Journal {
     #[must_use]
     pub fn is_valid(&self) -> bool {
         if self.format != "firefox-download-manager-setup-transaction"
-            || self.version != 1
+            || self.version
+                != if self
+                    .previous
+                    .iter()
+                    .chain(self.next.iter())
+                    .any(|r| r.version == 2)
+                {
+                    2
+                } else {
+                    1
+                }
             || !canonical_id(&self.transaction_id)
             || self
                 .previous
@@ -160,6 +206,8 @@ impl Journal {
                     .zip(self.next.as_ref())
                     .is_some_and(|(old, new)| {
                         old.installation_id == new.installation_id
+                            && old.version == new.version
+                            && old.shortcut_scope == new.shortcut_scope
                             && old.current == new.current
                             && new.generations.len() == 1
                             && old.generations.contains(&new.generations[0])
@@ -168,6 +216,8 @@ impl Journal {
             Action::Install => self.next.as_ref().is_some_and(|next| {
                 if let Some(previous) = &self.previous {
                     previous.installation_id == next.installation_id
+                        && previous.version <= next.version
+                        && (previous.version == 1 || previous.shortcut_scope == next.shortcut_scope)
                         && !previous
                             .generations
                             .iter()
@@ -196,6 +246,9 @@ impl Journal {
         }
         Ok(journal)
     }
+}
+fn present_digest<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
 }
 fn nullable_receipt<'de, D: Deserializer<'de>>(
     deserializer: D,
@@ -228,6 +281,7 @@ mod tests {
             helper_sha256: "a".repeat(64),
             extension_sha256: "b".repeat(64),
             manifest_sha256: "c".repeat(64),
+            shortcut_sha256: None,
         }
     }
     fn receipt() -> Receipt {
@@ -238,6 +292,7 @@ mod tests {
             installation_id: Uuid::new_v4().to_string(),
             current: generation.id.clone(),
             generations: vec![generation],
+            shortcut_scope: None,
         }
     }
     #[test]
@@ -287,5 +342,86 @@ mod tests {
         let mut json = serde_json::to_value(uninstall).expect("fixture");
         json.as_object_mut().expect("object").remove("next");
         assert!(Journal::decode(&serde_json::to_vec(&json).expect("JSON")).is_err());
+    }
+    #[test]
+    fn shortcut_schema_is_explicit_bounded_and_migrates_only_forward() {
+        let legacy = receipt();
+        let mut paired = legacy.clone();
+        let mut current = generation();
+        current.shortcut_sha256 = Some("d".repeat(64));
+        paired.version = 2;
+        paired.shortcut_scope = Some("e".repeat(64));
+        paired.current = current.id.clone();
+        paired.generations.push(current);
+        assert!(paired.is_valid());
+        let migration = Journal {
+            format: "firefox-download-manager-setup-transaction".into(),
+            version: 2,
+            transaction_id: Uuid::new_v4().to_string(),
+            action: Action::Install,
+            previous: Some(legacy.clone()),
+            next: Some(paired.clone()),
+            had_registration: true,
+        };
+        assert!(migration.is_valid());
+        let mut wrong = migration.clone();
+        wrong.version = 1;
+        assert!(!wrong.is_valid());
+        let mut wrong = paired.clone();
+        wrong.version = 1;
+        assert!(!wrong.is_valid());
+        let mut wrong = paired.clone();
+        wrong.shortcut_scope = None;
+        assert!(!wrong.is_valid());
+        let mut wrong = paired.clone();
+        wrong.generations.last_mut().unwrap().shortcut_sha256 = None;
+        assert!(!wrong.is_valid());
+        for (field, generation_field) in [("shortcut_scope", false), ("shortcut_sha256", true)] {
+            let mut value = serde_json::to_value(&legacy).unwrap();
+            let target = if generation_field {
+                &mut value["generations"][0]
+            } else {
+                &mut value
+            };
+            target[field] = serde_json::Value::Null;
+            assert!(Receipt::decode(&serde_json::to_vec(&value).unwrap()).is_err());
+            let mut value = serde_json::to_value(&legacy).unwrap();
+            let target = if generation_field {
+                &mut value["generations"][0]
+            } else {
+                &mut value
+            };
+            target[field] = "a".repeat(64).into();
+            assert!(Receipt::decode(&serde_json::to_vec(&value).unwrap()).is_err());
+        }
+        let encoded = serde_json::to_string(&paired).unwrap();
+        let duplicate = encoded.replacen(
+            "\"shortcut_scope\":",
+            &format!(
+                "\"shortcut_scope\":\"{}\",\"shortcut_scope\":",
+                "e".repeat(64)
+            ),
+            1,
+        );
+        assert!(Receipt::decode(duplicate.as_bytes()).is_err());
+        let mut next = paired.clone();
+        let mut current = generation();
+        current.shortcut_sha256 = Some("f".repeat(64));
+        next.current = current.id.clone();
+        next.generations.push(current);
+        let mut journal = migration;
+        journal.previous = Some(paired);
+        journal.next = Some(next);
+        assert!(journal.is_valid());
+        journal.next.as_mut().unwrap().shortcut_scope = Some("f".repeat(64));
+        assert!(!journal.is_valid());
+        journal.action = Action::Cleanup;
+        let old = journal.previous.as_ref().unwrap().clone();
+        let mut next = old.clone();
+        next.generations.retain(|g| g.id == next.current);
+        journal.next = Some(next);
+        assert!(journal.is_valid());
+        journal.next.as_mut().unwrap().shortcut_scope = Some("f".repeat(64));
+        assert!(!journal.is_valid());
     }
 }

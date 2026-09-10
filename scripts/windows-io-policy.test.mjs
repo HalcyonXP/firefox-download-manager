@@ -121,7 +121,9 @@ test("installed runtime binding remains read-only, bounded and separate from eng
     .split("pub(crate) fn acquire")[0];
   assert.match(image, /std::env::current_exe\(\)/u);
   assert.match(image, /SetupLock::open_existing/u);
-  assert.match(image, /_files: \[receipt_file, helper, extension, manifest\]/u);
+  assert.match(image, /let mut immutable = vec!\[receipt_file, helper, extension, manifest\]/u);
+  assert.match(image, /immutable.push\(link\)/u);
+  assert.match(image, /_files: immutable/u);
   assert.doesNotMatch(image, /replace_if_unchanged|fs::write|create_dir_all|create_new/u);
   assert.doesNotMatch(lock, /\.create\(|\.create_new\(|\.truncate\(|\.write\(/u);
   assert.match(record, /server: Server/u);

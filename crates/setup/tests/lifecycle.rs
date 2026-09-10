@@ -65,7 +65,9 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
+        if !std::thread::panicking() {
+            let _ = fs::remove_dir_all(&self.root);
+        }
     }
 }
 #[derive(Default)]
@@ -415,4 +417,347 @@ fn torn_staged_bytes_and_locked_installed_files_are_preserved() {
     );
     assert!(registry.current().expect("old registration") == before);
     assert!(session.root().join("transaction.json").exists());
+}
+
+#[cfg(feature = "installed-runtime")]
+mod paired_shortcuts {
+    use super::*;
+    use download_manager_setup::{
+        receipt::Receipt,
+        shortcuts::{LINK, ShortcutLocation},
+    };
+    impl Fixture {
+        fn paired(&self) -> SetupSession {
+            let programs = self.root.join("Programs Ω");
+            if !programs.exists() {
+                fs::create_dir(&programs).expect("owned Programs fixture");
+            }
+            self.session()
+                .with_shortcuts(ShortcutLocation::open(&programs).expect("anchor"))
+                .expect("disjoint anchor")
+        }
+        fn receipt(&self) -> Receipt {
+            Receipt::decode(&fs::read(self.install.join("installation.json")).expect("receipt"))
+                .expect("valid receipt")
+        }
+        fn link(&self) -> PathBuf {
+            self.root
+                .join("Programs Ω")
+                .join(format!(
+                    "Download Manager {}",
+                    self.receipt().installation_id
+                ))
+                .join(LINK)
+        }
+    }
+    #[test]
+    fn shortcut_migrates_legacy_then_upgrades_cleans_and_uninstalls_only_recorded_bytes() {
+        let f = Fixture::new();
+        let package = f.package();
+        let mut registry = Registry::default();
+        let legacy = f.session();
+        legacy
+            .install(&package, &mut registry, &mut Probe::default())
+            .expect("legacy baseline");
+        assert_eq!(f.receipt().version, 1);
+        drop(legacy);
+        let session = f.paired();
+        let first = session
+            .install(&package, &mut registry, &mut Probe::default())
+            .expect("migration");
+        let receipt = f.receipt();
+        assert_eq!(receipt.version, 2);
+        let link = f.link();
+        let original = fs::read(&link).expect("actual link");
+        assert_eq!(
+            original,
+            fs::read(f.install.join(&first).join(LINK)).expect("immutable copy")
+        );
+        // Independent Windows decoder checks executable/arguments without launching it.
+        {
+            use winsafe::{self as w, co, prelude::*};
+            let _com = w::CoInitializeEx(co::COINIT::APARTMENTTHREADED).expect("COM");
+            let decoded: w::IShellLink = w::CoCreateInstance(
+                &co::CLSID::ShellLink,
+                None::<&w::IUnknown>,
+                co::CLSCTX::INPROC_SERVER,
+            )
+            .expect("link");
+            let stream = w::SHCreateMemStream(&original).expect("stream");
+            decoded
+                .QueryInterface::<w::IPersistStream>()
+                .expect("persist")
+                .Load(&stream)
+                .expect("load");
+            assert_eq!(decoded.GetArguments().expect("args"), "--companion");
+            assert_eq!(
+                PathBuf::from(decoded.GetPath(None, co::SLGP::RAWPATH).expect("path")),
+                session.root().join(&first).join(HELPER_FILE)
+            );
+        }
+        fs::write(
+            link.parent().expect("parent").join("unrelated.txt"),
+            b"preserve",
+        )
+        .expect("unknown");
+        let second = session
+            .install(&package, &mut registry, &mut Probe::default())
+            .expect("paired upgrade");
+        assert_eq!(f.receipt().shortcut_scope, receipt.shortcut_scope);
+        assert_ne!(fs::read(&link).expect("updated"), original);
+        assert_eq!(
+            fs::read(&link).expect("updated"),
+            fs::read(f.install.join(&second).join(LINK)).expect("copy")
+        );
+        session.cleanup(&mut registry).expect("cleanup");
+        assert!(!f.install.join(first).exists());
+        session.uninstall(&mut registry).expect("uninstall");
+        assert!(!link.exists());
+        assert_eq!(
+            fs::read(link.parent().expect("parent").join("unrelated.txt")).expect("preserved"),
+            b"preserve"
+        );
+        assert!(!f.install.join(second).exists());
+        assert!(registry.current().expect("registry").is_none());
+    }
+    #[test]
+    fn shortcut_failures_and_interrupted_activation_restore_exact_previous_entry() {
+        for legacy in [false, true] {
+            for phase in [
+                Phase::Journal,
+                Phase::Helper,
+                Phase::Manifest,
+                Phase::Registration,
+                Phase::Shortcut,
+                Phase::Receipt,
+            ] {
+                for crash in [false, true] {
+                    let f = Fixture::new();
+                    let package = f.package();
+                    let mut registry = Registry::default();
+                    let baseline = if legacy { f.session() } else { f.paired() };
+                    baseline
+                        .install(&package, &mut registry, &mut Probe::default())
+                        .expect("baseline");
+                    let receipt =
+                        fs::read(f.install.join("installation.json")).expect("old receipt");
+                    let old_registry = registry.current().expect("old registration");
+                    let link = f.link();
+                    let old = fs::read(&link).ok();
+                    drop(baseline);
+                    let session = f.paired();
+                    let mut probe = Probe {
+                        fail: (!crash).then_some(phase),
+                        crash: crash.then_some(phase),
+                        ..Probe::default()
+                    };
+                    if crash {
+                        assert!(
+                            catch_unwind(AssertUnwindSafe(|| session.install(
+                                &package,
+                                &mut registry,
+                                &mut probe
+                            )))
+                            .is_err()
+                        );
+                        drop(session);
+                        f.paired()
+                            .recover(&mut registry)
+                            .expect("recover exact old link");
+                    } else {
+                        assert_eq!(
+                            session.install(&package, &mut registry, &mut probe),
+                            Err(SetupError::Io)
+                        );
+                    }
+                    assert_eq!(
+                        fs::read(f.install.join("installation.json")).expect("restored"),
+                        receipt
+                    );
+                    assert!(registry.current().expect("restored registry") == old_registry);
+                    assert_eq!(fs::read(&link).ok(), old);
+                    assert!(!f.install.join("transaction.json").exists());
+                    if legacy {
+                        assert!(!link.parent().expect("folder").exists());
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn shortcut_missing_changed_locked_or_different_scope_never_grants_replacement() {
+        use std::fs::OpenOptions;
+        use std::os::windows::fs::OpenOptionsExt;
+        let f = Fixture::new();
+        let package = f.package();
+        let mut registry = Registry::default();
+        let session = f.paired();
+        session
+            .install(&package, &mut registry, &mut Probe::default())
+            .expect("install");
+        let link = f.link();
+        let bytes = fs::read(&link).expect("link");
+        let old_registry = registry.current().expect("registry");
+        let lease = OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&link)
+            .expect("retained external reader");
+        assert_eq!(
+            session.install(&package, &mut registry, &mut Probe::default()),
+            Err(SetupError::Io)
+        );
+        assert_eq!(fs::read(&link).expect("preserved"), bytes);
+        drop(lease);
+        fs::write(&link, b"unowned modified shortcut").expect("mutation");
+        assert_eq!(session.uninstall(&mut registry), Err(SetupError::Ownership));
+        assert!(registry.current().expect("unchanged") == old_registry);
+        assert_eq!(
+            fs::read(&link).expect("preserved"),
+            b"unowned modified shortcut"
+        );
+        fs::write(&link, &bytes).expect("restore own fixture");
+        drop(session);
+        let legacy = f.session();
+        assert_eq!(legacy.uninstall(&mut registry), Err(SetupError::Ownership));
+        drop(legacy);
+        let other = f.root.join("other Programs");
+        fs::create_dir(&other).expect("other owned anchor");
+        let other_session = f
+            .session()
+            .with_shortcuts(ShortcutLocation::open(&other).expect("anchor"))
+            .expect("session");
+        assert_eq!(
+            other_session.uninstall(&mut registry),
+            Err(SetupError::Ownership)
+        );
+        assert_eq!(fs::read(&link).expect("preserved"), bytes);
+        drop(other_session);
+        fs::remove_file(&link).expect("simulate missing shortcut");
+        f.paired()
+            .uninstall(&mut registry)
+            .expect("missing link removal");
+        assert!(!link.parent().expect("folder").exists());
+    }
+    #[test]
+    fn preexisting_migration_folder_is_not_adopted_even_when_empty() {
+        let f = Fixture::new();
+        let mut registry = Registry::default();
+        let legacy = f.session();
+        legacy
+            .install(&f.package(), &mut registry, &mut Probe::default())
+            .expect("baseline");
+        let receipt = fs::read(f.install.join("installation.json")).expect("receipt");
+        let link = f.link();
+        drop(legacy);
+        let paired = f.paired();
+        fs::create_dir(link.parent().expect("folder")).expect("unowned collision fixture");
+        assert_eq!(
+            paired.install(&f.package(), &mut registry, &mut Probe::default()),
+            Err(SetupError::Ownership)
+        );
+        assert!(link.parent().expect("preserved").is_dir());
+        assert_eq!(
+            fs::read(f.install.join("installation.json")).expect("unchanged"),
+            receipt
+        );
+        assert!(!f.install.join("transaction.json").exists());
+    }
+    #[test]
+    fn interrupted_uninstall_finishes_recovery_and_changed_activation_preserves_journal() {
+        use std::fs::OpenOptions;
+        use std::os::windows::fs::OpenOptionsExt;
+        let f = Fixture::new();
+        let mut registry = Registry::default();
+        let session = f.paired();
+        let generation = session
+            .install(&f.package(), &mut registry, &mut Probe::default())
+            .expect("install");
+        let link = f.link();
+        let held = OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(session.root().join(generation).join(HELPER_FILE))
+            .expect("held image");
+        assert!(session.uninstall(&mut registry).is_err());
+        assert!(!link.exists());
+        assert!(f.install.join("transaction.json").exists());
+        drop(held);
+        session
+            .recover(&mut registry)
+            .expect("finish partial uninstall");
+        assert!(registry.current().expect("removed").is_none());
+        assert!(!f.install.join("installation.json").exists());
+        assert!(!f.install.join("transaction.json").exists());
+        session
+            .install(&f.package(), &mut registry, &mut Probe::default())
+            .expect("new install");
+        let link = f.link();
+        let mut probe = Probe {
+            crash: Some(Phase::Shortcut),
+            ..Probe::default()
+        };
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| session.install(
+                &f.package(),
+                &mut registry,
+                &mut probe
+            )))
+            .is_err()
+        );
+        let published = fs::read(&link).expect("new link");
+        let registered = registry.current().expect("new registry");
+        fs::write(&link, b"changed after interruption").expect("mutation");
+        assert_eq!(session.recover(&mut registry), Err(SetupError::Recovery));
+        assert!(f.install.join("transaction.json").exists());
+        assert!(registry.current().expect("preserved registry") == registered);
+        assert_eq!(
+            fs::read(&link).expect("preserved"),
+            b"changed after interruption"
+        );
+        fs::write(&link, published).expect("restore exact owned fixture");
+        session
+            .recover(&mut registry)
+            .expect("rollback after fixture restoration");
+        session.uninstall(&mut registry).expect("retire fixture");
+    }
+    #[test]
+    fn shortcut_rollback_validates_old_generation_even_without_old_registration() {
+        let f = Fixture::new();
+        let mut registry = Registry::default();
+        let session = f.paired();
+        let old = session
+            .install(&f.package(), &mut registry, &mut Probe::default())
+            .expect("baseline");
+        *registry.value.borrow_mut() = None;
+        let link = f.link();
+        let helper = session.root().join(old).join(HELPER_FILE);
+        let original = fs::read(&helper).expect("old bytes");
+        let mut probe = Probe {
+            crash: Some(Phase::Shortcut),
+            ..Probe::default()
+        };
+        assert!(
+            catch_unwind(AssertUnwindSafe(|| session.install(
+                &f.package(),
+                &mut registry,
+                &mut probe
+            )))
+            .is_err()
+        );
+        let new_link = fs::read(&link).expect("new link");
+        fs::write(&helper, b"changed old image").expect("mutate owned fixture");
+        assert!(session.recover(&mut registry).is_err());
+        assert_eq!(
+            fs::read(&link).expect("not rolled back to changed image"),
+            new_link
+        );
+        assert!(f.install.join("transaction.json").exists());
+        fs::write(helper, original).expect("restore fixture");
+        session
+            .recover(&mut registry)
+            .expect("restored baseline without registration");
+        assert!(registry.current().expect("absent").is_none());
+        session.uninstall(&mut registry).expect("retire fixture");
+    }
 }

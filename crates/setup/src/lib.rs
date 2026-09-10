@@ -23,6 +23,8 @@ pub mod registry;
 #[cfg(all(windows, feature = "installed-runtime"))]
 pub mod runtime_record;
 #[cfg(windows)]
+pub mod shortcuts;
+#[cfg(windows)]
 pub mod transaction;
 
 /// Stable package and registration identity.

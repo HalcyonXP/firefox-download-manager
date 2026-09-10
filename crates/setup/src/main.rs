@@ -111,6 +111,9 @@ mod windows {
         };
         let mut registry = CurrentUserRegistration;
         let session = SetupSession::open(&options.root, &options.local)?;
+        #[cfg(feature = "application")]
+        let session = session
+            .with_shortcuts(download_manager_setup::shortcuts::ShortcutLocation::current()?)?;
         match options.action.as_str() {
             "install" => {
                 let generation = session.install(

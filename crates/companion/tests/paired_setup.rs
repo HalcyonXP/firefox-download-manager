@@ -78,13 +78,38 @@ fn actual_application_probes_before_registration_without_starting_an_engine() {
     .unwrap();
     let package = VerifiedPackage::open(&source).unwrap();
     let install = local.join("Host");
-    let session = SetupSession::open(&install, &local).unwrap();
+    let programs = root.join("Owned Programs");
+    fs::create_dir(&programs).unwrap();
+    let session = SetupSession::open(&install, &local)
+        .unwrap()
+        .with_shortcuts(
+            download_manager_setup::shortcuts::ShortcutLocation::open(&programs).unwrap(),
+        )
+        .unwrap();
     let mut registry = Registry::default();
     let first = session
         .install(&package, &mut registry, &mut OwnedProbe)
         .unwrap();
     assert!(registry.0.is_some());
     assert!(session.root().join(&first).exists());
+    let receipt = download_manager_setup::receipt::Receipt::decode(
+        &fs::read(session.root().join("installation.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(receipt.version, 2);
+    let link = programs
+        .join(format!("Download Manager {}", receipt.installation_id))
+        .join(download_manager_setup::shortcuts::LINK);
+    assert_eq!(
+        fs::read(&link).unwrap(),
+        fs::read(
+            session
+                .root()
+                .join(&first)
+                .join(download_manager_setup::shortcuts::LINK)
+        )
+        .unwrap()
+    );
     session.repair(&mut registry, &mut OwnedProbe).unwrap();
     let second = session
         .install(&package, &mut registry, &mut OwnedProbe)
@@ -93,6 +118,8 @@ fn actual_application_probes_before_registration_without_starting_an_engine() {
     session.cleanup(&mut registry).unwrap();
     session.uninstall(&mut registry).unwrap();
     assert!(registry.0.is_none());
+    assert!(!link.exists());
+    assert!(fs::read_dir(&programs).unwrap().next().is_none());
     assert!(
         !local
             .join("HalcyonXP/FirefoxDownloadManager/state")

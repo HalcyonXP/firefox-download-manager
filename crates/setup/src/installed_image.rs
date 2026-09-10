@@ -30,7 +30,7 @@ pub struct InstalledImage {
     root: DirectoryLease,
     generation: DirectoryLease,
     _application_data: DirectoryLease,
-    _files: [File; 4],
+    _files: Vec<File>,
     pub(crate) binding: ImageBinding,
 }
 
@@ -119,6 +119,12 @@ impl InstalledImage {
         {
             return Err(SetupError::Ownership);
         }
+        let mut immutable = vec![receipt_file, helper, extension, manifest];
+        if current.shortcut_sha256.is_some() {
+            let link = ordinary_read(&generation.path().join(crate::shortcuts::LINK))?;
+            crate::shortcuts::generation_bytes(root.path(), current, false)?;
+            immutable.push(link);
+        }
         let binding = ImageBinding {
             installation_id: receipt.installation_id.clone(),
             generation_id: current.id.clone(),
@@ -130,7 +136,7 @@ impl InstalledImage {
             root,
             generation,
             _application_data: application_data,
-            _files: [receipt_file, helper, extension, manifest],
+            _files: immutable,
             binding,
         })
     }
@@ -251,6 +257,7 @@ pub(crate) mod tests {
             .unwrap();
             fs::write(path.join(files::MANIFEST), manifest_bytes(&path).unwrap()).unwrap();
             let generation = Generation {
+                shortcut_sha256: None,
                 id: id.clone(),
                 package_version: env!("CARGO_PKG_VERSION").into(),
                 helper_sha256: file_hash(&executable).unwrap(),
@@ -258,6 +265,7 @@ pub(crate) mod tests {
                 manifest_sha256: file_hash(&path.join(files::MANIFEST)).unwrap(),
             };
             let receipt = Receipt {
+                shortcut_scope: None,
                 format: "firefox-download-manager-installation".into(),
                 version: 1,
                 installation_id: uuid::Uuid::new_v4().to_string(),
@@ -427,6 +435,45 @@ pub(crate) mod tests {
                 .join("HalcyonXP/FirefoxDownloadManager/setup.lock")
                 .exists()
         );
+        fixture.remove();
+    }
+    #[test]
+    fn receipt2_retains_link_copy_and_refuses_redirected_or_elevation_modes() {
+        let mut fixture = Fixture::new();
+        let path = fixture.executable.with_file_name(crate::shortcuts::LINK);
+        let bytes = crate::shortcuts::encode(&fixture.executable).unwrap();
+        fs::write(&path, &bytes).unwrap();
+        fixture.receipt.version = 2;
+        fixture.receipt.shortcut_scope = Some("a".repeat(64)); // Metadata fixture, not a real Programs binding.
+        fixture.receipt.generations[0].shortcut_sha256 = Some(hash_bytes(&bytes));
+        fixture.save_receipt();
+        let image = fixture.inspect().unwrap();
+        assert!(fs::OpenOptions::new().write(true).open(&path).is_err());
+        assert!(fs::remove_file(&path).is_err());
+        drop(image);
+        let mut elevated = bytes.clone();
+        let flags = u32::from_le_bytes(elevated[20..24].try_into().unwrap()) | 0x2000;
+        elevated[20..24].copy_from_slice(&flags.to_le_bytes());
+        fs::write(&path, &elevated).unwrap();
+        fixture.receipt.generations[0].shortcut_sha256 = Some(hash_bytes(&elevated));
+        fixture.save_receipt();
+        assert!(
+            fixture.inspect().is_err(),
+            "a matching digest must not authorize elevation mode"
+        );
+        let redirected =
+            crate::shortcuts::encode(&fixture.executable.with_file_name("other.exe")).unwrap();
+        fs::write(&path, &redirected).unwrap();
+        fixture.receipt.generations[0].shortcut_sha256 = Some(hash_bytes(&redirected));
+        fixture.save_receipt();
+        assert!(
+            fixture.inspect().is_err(),
+            "a matching digest must not authorize another executable"
+        );
+        fs::write(&path, &bytes).unwrap();
+        fixture.receipt.generations[0].shortcut_sha256 = Some(hash_bytes(&bytes));
+        fixture.save_receipt();
+        assert!(fixture.inspect().is_ok());
         fixture.remove();
     }
 }

@@ -29,6 +29,8 @@ SYSTEM_DLLS = {"advapi32.dll", "bcrypt.dll", "bcryptprimitives.dll", "crypt32.dl
 
 # Paired native GUI uses stock Common Controls; no DLL is copied. See THIRD_PARTY.md.
 SYSTEM_DLLS.add("comctl32.dll")
+# Native in-memory Shell Link serialization; stock OS DLL, never redistributed.
+SYSTEM_DLLS.add("shlwapi.dll")
 
 SYSTEM_DLLS.update({'api-ms-win-crt-stdio-l1-1-0.dll', 'api-ms-win-crt-runtime-l1-1-0.dll', 'api-ms-win-crt-math-l1-1-0.dll', 'api-ms-win-crt-locale-l1-1-0.dll', 'api-ms-win-crt-convert-l1-1-0.dll', 'api-ms-win-crt-utility-l1-1-0.dll', 'api-ms-win-crt-private-l1-1-0.dll', 'api-ms-win-crt-environment-l1-1-0.dll', 'api-ms-win-core-synch-l1-2-0.dll', 'api-ms-win-crt-string-l1-1-0.dll', 'api-ms-win-crt-heap-l1-1-0.dll', 'api-ms-win-crt-filesystem-l1-1-0.dll'})
 
