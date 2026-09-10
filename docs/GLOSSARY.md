@@ -206,3 +206,6 @@ See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed 
 **Setup operation observation (#50)**: a per-retained-window sequence and idle/running/complete marker. Completion resolves that accepted operation, including refusal, only after any worker result has been joined/accepted and launched child retained. It is not success, receipt2, tray readiness or durable transaction authority. See INSTALLED_COMPANION_SLICE.md.
 
 **Setup quiescence (#50)**: the expected setup operation has settled and no launched Manager remains, while the retained setup window stays alive for verified Uninstall. This does not retire native peers or HTTP fixtures. Setup retirement additionally closes and waits that exact setup process.
+
+- **Capture API probe (#49)**: loopback-only temporary diagnostic add-on testing browser event fields and asynchronous request cancellation. It has no nativeMessaging permission, creates no Manager task and does not qualify persistent unsigned installation. See FIREFOX_CAPTURE_API.md.
+- **Browser terminal event versus Manager Completed**: webRequest onCompleted/onErrorOccurred describe a browser request, not native task integrity or output promotion. Browser output and Manager output require their own independent verification.
