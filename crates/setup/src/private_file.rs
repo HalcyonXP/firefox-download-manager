@@ -26,8 +26,14 @@ const SCRIPT: &str = include_str!("private_file.ps1");
 // Process creation alone does not establish script initialization.
 const BOOTSTRAP: &str = r#"
 $ErrorActionPreference = 'Stop'
-$dmInput = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false, $true))
+$dmInput = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false, $true), $false)
 [Console]::Out.Write("start`n")
+[Console]::Out.Flush()
+$dmOperation = $dmInput.ReadLine()
+$dmPath = $dmInput.ReadLine()
+if ($dmOperation -cnotin @('create', 'verify') -or $null -eq $dmPath -or $dmPath.Length -gt 240 -or
+    $dmPath -cnotmatch '^[A-Za-z]:\\' -or $dmPath -match '[\x00-\x1f\x7f]' -or $dmPath.Contains('/')) { exit 1 }
+[Console]::Out.Write("input`n")
 [Console]::Out.Flush()
 "#;
 const NAME: &str = "companion-runtime.json";
@@ -162,11 +168,11 @@ impl Adapter {
     }
 
     fn start_program(operation: &str, path: &Path, script: &str) -> Result<Self, SetupError> {
-        let mut input = serde_json::to_vec(&serde_json::json!({
-            "operation": operation, "path": path.to_str().ok_or(ERROR)?,
-        }))
-        .map_err(|_| ERROR)?;
-        input.push(b'\n');
+        if !matches!(operation, "create" | "verify") {
+            return Err(ERROR);
+        }
+        validate_text(path)?;
+        let input = format!("{operation}\n{}\n", path.to_str().ok_or(ERROR)?).into_bytes();
         if input.len() > 2048 {
             return Err(ERROR);
         }
@@ -214,6 +220,13 @@ impl Adapter {
                     stdin.write_all(&input).map_err(|_| ERROR)?;
                     #[cfg(test)]
                     eprintln!("private adapter: request written");
+                    let mut consumed = [0; 6];
+                    stdout.read_exact(&mut consumed).map_err(|_| ERROR)?;
+                    #[cfg(test)]
+                    eprintln!("private adapter: request receipt bytes read");
+                    if &consumed != b"input\n" {
+                        return Err(ERROR);
+                    }
                     let mut ready = [0; 6];
                     stdout.read_exact(&mut ready).map_err(|_| ERROR)?;
                     #[cfg(test)]
@@ -326,7 +339,7 @@ mod tests {
             r#"
 $ErrorActionPreference = 'Stop'
 # Input reader is established by the fixed Rust-side bootstrap.
-$r = ConvertFrom-Json -InputObject ($dmInput.ReadLine())
+# Opcode and literal path are provided by the fixed bootstrap.
 {change}
 [Console]::Out.Write("ready`n")
 [Console]::Out.Flush()
@@ -346,7 +359,7 @@ if ($dmInput.ReadLine() -cne 'close') {{ exit 1 }}
             path,
             &format!(
                 r"
-$p = [IO.Path]::GetDirectoryName($r.path)
+$p = [IO.Path]::GetDirectoryName($dmPath)
 $a = [IO.Directory]::GetAccessControl($p)
 $a.SetAccessRuleProtection({flag}, $true)
 [IO.Directory]::SetAccessControl($p, $a)
@@ -362,19 +375,27 @@ $a.SetAccessRuleProtection({flag}, $true)
         let path = root.join(NAME);
         let directory = lease(&root);
         protect_fixture(&path, true);
+        assert!(Adapter::start_program("verify\ncreate", &path, "").is_err());
+        assert!(Adapter::start_program("verify", &root.join("bad\nname"), "").is_err());
         // A wrong startup marker must be refused even if the peer could go on
         // to supply otherwise valid ready/completion markers. No filesystem IO.
         let bad_start = r#"
-$r = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false, $true))
+$r = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false, $true), $false)
 [Console]::Out.Write("wrong`n")
 [Console]::Out.Flush()
 [void]$r.ReadLine()
+[void]$r.ReadLine()
+[Console]::Out.Write("input`n")
 [Console]::Out.Write("ready`n")
 [Console]::Out.Flush()
 [void]$r.ReadLine()
 [Console]::Out.Write('ok')
 "#;
         assert!(Adapter::start_program("verify", &path, bad_start).is_err());
+        let bad_input = bad_start
+            .replace("Write(\"wrong`n\")", "Write(\"start`n\")")
+            .replace("Write(\"input`n\")", "Write(\"wrong`n\")");
+        assert!(Adapter::start_program("verify", &path, &bad_input).is_err());
         // Receipt failure after successful process exit must still refuse success.
         let bad_receipt =
             SCRIPT.replace("[Console]::Out.Write('ok')", "[Console]::Out.Write('no')");
@@ -444,12 +465,12 @@ $r = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]:
         let mutator = r#"
 $ErrorActionPreference = 'Stop'
 # Input reader is established by the fixed Rust-side bootstrap.
-$r = ConvertFrom-Json -InputObject ($dmInput.ReadLine())
-$a = [IO.File]::GetAccessControl($r.path)
+# Opcode and literal path are provided by the fixed bootstrap.
+$a = [IO.File]::GetAccessControl($dmPath)
 $world = [Security.Principal.SecurityIdentifier]::new('S-1-1-0')
 $rule = [Security.AccessControl.FileSystemAccessRule]::new($world, [Security.AccessControl.FileSystemRights]::Read, [Security.AccessControl.AccessControlType]::Allow)
 $a.AddAccessRule($rule)
-[IO.File]::SetAccessControl($r.path, $a)
+[IO.File]::SetAccessControl($dmPath, $a)
 [Console]::Out.Write("ready`n")
 [Console]::Out.Flush()
 if ($dmInput.ReadLine() -cne 'close') { exit 1 }
@@ -467,7 +488,7 @@ if ($dmInput.ReadLine() -cne 'close') { exit 1 }
         mutate(
             &path,
             r"
-$p = [IO.Path]::GetDirectoryName($r.path)
+$p = [IO.Path]::GetDirectoryName($dmPath)
 $a = [IO.Directory]::GetAccessControl($p)
 $id = [Security.Principal.WindowsIdentity]::GetCurrent()
 try { $sid = $id.User.Value } finally { $id.Dispose() }
@@ -484,7 +505,7 @@ $a.SetSecurityDescriptorSddlForm(('D:P(A;;FA;;;' + $sid + ')'), [Security.Access
             mutate(
                 &path,
                 &format!(
-                    "$a = [IO.File]::GetAccessControl($r.path)\n{change}\n[IO.File]::SetAccessControl($r.path, $a)"
+                    "$a = [IO.File]::GetAccessControl($dmPath)\n{change}\n[IO.File]::SetAccessControl($dmPath, $a)"
                 ),
             );
             assert!(PrivateFile::open(lease(&root)).is_err());
@@ -502,7 +523,7 @@ $a.SetSecurityDescriptorSddlForm(('D:P(A;;FA;;;' + $sid + ')'), [Security.Access
         mutate(
             &path,
             r"
-$p = [IO.Path]::GetDirectoryName($r.path)
+$p = [IO.Path]::GetDirectoryName($dmPath)
 $a = [IO.Directory]::GetAccessControl($p)
 $world = [Security.Principal.SecurityIdentifier]::new('S-1-1-0')
 $a.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($world, [Security.AccessControl.FileSystemRights]::Write, [Security.AccessControl.AccessControlType]::Allow))

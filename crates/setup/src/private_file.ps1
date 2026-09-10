@@ -5,7 +5,7 @@ $ProgressPreference = 'SilentlyContinue'
 try {
     # Input reader is established by the fixed Rust-side bootstrap.
     # Only an operation and path arrive here; secret bytes never enter PowerShell.
-    $request = ConvertFrom-Json -InputObject ($dmInput.ReadLine())
+    # Opcode and literal path are validated by the fixed bootstrap; no cmdlet loading.
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     try { $sid = $identity.User.Value } finally { $identity.Dispose() }
     if ($sid -notmatch '^S-1-(5-21|12-1)-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { throw 'refused' }
@@ -13,7 +13,7 @@ try {
     # A retained directory lease prevents path replacement. Also require that
     # unprivileged other principals cannot mutate the parent or its children.
     $sections = [Security.AccessControl.AccessControlSections]::Owner -bor [Security.AccessControl.AccessControlSections]::Access
-    $parent = [IO.Directory]::GetAccessControl([IO.Path]::GetDirectoryName($request.path), $sections)
+    $parent = [IO.Directory]::GetAccessControl([IO.Path]::GetDirectoryName($dmPath), $sections)
     $raw = [Security.AccessControl.RawSecurityDescriptor]::new($parent.GetSecurityDescriptorBinaryForm(), 0)
     $trusted = @($sid, 'S-1-5-18', 'S-1-5-32-544')
     if ($null -eq $raw.Owner -or $raw.Owner.Value -notin $trusted -or $null -eq $raw.DiscretionaryAcl -or
@@ -26,19 +26,19 @@ try {
             ([int64]$ace.AccessMask -band [int64]0x500d0156) -ne 0) { throw 'refused' }
     }
 
-    if ($request.operation -eq 'create') {
+    if ($dmOperation -eq 'create') {
         $security = [Security.AccessControl.FileSecurity]::new()
         $security.SetSecurityDescriptorSddlForm(('O:' + $sid + 'D:P(A;;FA;;;' + $sid + ')'))
         # CreateNew and the supplied descriptor apply in the OS create operation.
         # Retain read/write access and deny deletion until Rust finishes writing.
         # A reader denying shared writes cannot open the incomplete record.
         $rights = [Security.AccessControl.FileSystemRights]::Read -bor [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Synchronize
-        $file = [IO.FileStream]::new($request.path, [IO.FileMode]::CreateNew,
+        $file = [IO.FileStream]::new($dmPath, [IO.FileMode]::CreateNew,
             $rights, [IO.FileShare]::ReadWrite, 4096, [IO.FileOptions]::None, $security)
-    } elseif ($request.operation -ne 'verify') { throw 'refused' }
+    } elseif ($dmOperation -ne 'verify') { throw 'refused' }
 
     # Read back actual owner/protected DACL, not just the requested descriptor.
-    $actual = [IO.File]::GetAccessControl($request.path, $sections)
+    $actual = [IO.File]::GetAccessControl($dmPath, $sections)
     $raw = [Security.AccessControl.RawSecurityDescriptor]::new($actual.GetSecurityDescriptorBinaryForm(), 0)
     if ($null -eq $raw.Owner -or $raw.Owner.Value -ne $sid -or
         ([int]$raw.ControlFlags -band [int][Security.AccessControl.ControlFlags]::DiscretionaryAclProtected) -eq 0 -or

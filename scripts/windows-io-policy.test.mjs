@@ -34,12 +34,11 @@ test("ADR0015 compiler exception remains confined to the reviewed Windows bounda
 test("private-file adapter keeps secrets in Rust and preserves the OS boundary", () => {
   const rust = text("crates/setup/src/private_file.rs").split("\n#[cfg(test)]\nmod tests {")[0];
   const script = text("crates/setup/src/private_file.ps1");
-  const request = rust.match(/serde_json::json!\(\{([\s\S]*?)\}\)/u)?.[1];
-  assert.ok(request);
-  assert.deepEqual(
-    [...request.matchAll(/"([a-z_]+)"\s*:/gu)].map((match) => match[1]),
-    ["operation", "path"],
-  );
+  assert.match(rust, /if !matches!\(operation, "create" \| "verify"\)/u);
+  assert.match(rust, /validate_text\(path\)\?;/u);
+  assert.match(rust, /format!\("\{operation\}\\n\{\}\\n", path\.to_str\(\)\.ok_or\(ERROR\)\?\)/u);
+  assert.match(rust, /if &consumed != b"input\\n"/u);
+  assert.doesNotMatch(rust + script, /ConvertFrom-Json|Get-Acl|Set-Acl|Import-Module/u);
   assert.match(rust, /Self::start_script\(operation, path, SCRIPT\)/u);
   assert.match(rust, /winsafe::GetSystemDirectory\(\)/u);
   assert.match(rust, /Self::start_program\(operation, path, &script\)/u);
@@ -53,7 +52,7 @@ test("private-file adapter keeps secrets in Rust and preserves the OS boundary",
   assert.match(rust, /writer\.sync_all\(\)/u);
   assert.match(rust, /worker\.join\(\)/u);
   assert.match(rust, /self\.child\.wait\(\)/u);
-  assert.doesNotMatch(script, /\$request\.(?!operation\b|path\b)\w+/iu);
+  assert.doesNotMatch(script, /\$request\b/iu);
   assert.doesNotMatch(
     script,
     /\b(?:DllImport|Marshal|Add-Type|Invoke-Expression|Invoke-Command|Start-Process|Start-Job|Set-ExecutionPolicy|WebClient|HttpClient)\b/iu,
