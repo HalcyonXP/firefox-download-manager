@@ -42,7 +42,12 @@ test("private-file adapter keeps secrets in Rust and preserves the OS boundary",
   );
   assert.match(rust, /Self::start_script\(operation, path, SCRIPT\)/u);
   assert.match(rust, /winsafe::GetSystemDirectory\(\)/u);
+  assert.match(rust, /Self::start_program\(operation, path, &script\)/u);
   assert.match(rust, /\.args\(\["-NoProfile", "-NonInteractive", "-Command", script\]\)/u);
+  assert.match(rust, /\[IO\.StreamReader\]::new\(\[Console\]::OpenStandardInput\(\)/u);
+  assert.match(rust, /if &start != b"start\\n"/u);
+  assert.ok(rust.indexOf('if &start != b"start\\n"') < rust.indexOf("stdin.write_all(&input)"));
+  assert.doesNotMatch(script, /\[Console\]::(?:In\b|InputEncoding)/u);
   assert.match(rust, /\.creation_flags\(0x0800_0000\)/u);
   assert.match(rust, /writer\.write_all\(bytes\)/u);
   assert.match(rust, /writer\.sync_all\(\)/u);
@@ -59,7 +64,7 @@ test("private-file adapter keeps secrets in Rust and preserves the OS boundary",
   assert.match(script, /DiscretionaryAclProtected/u);
   assert.match(script, /\[IO\.File\]::GetAccessControl/u);
   assert.match(script, /\[IO\.Directory\]::GetAccessControl/u);
-  assert.match(script, /\[Console\]::In\.ReadLine\(\) -cne 'close'/u);
+  assert.match(script, /\$dmInput\.ReadLine\(\) -cne 'close'/u);
   const diagnostics = [...rust.matchAll(/eprintln!\(([^;]+)\);/gu)];
   assert.ok(diagnostics.length > 0);
   assert.ok(diagnostics.every((match) => /^"private adapter: [a-z ]+"$/u.test(match[1])));

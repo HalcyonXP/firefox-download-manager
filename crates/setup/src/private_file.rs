@@ -22,6 +22,14 @@ use crate::{
 };
 
 const SCRIPT: &str = include_str!("private_file.ps1");
+// Establish the script's dedicated raw UTF-8 reader BEFORE accepting a request.
+// Process creation alone does not establish script initialization.
+const BOOTSTRAP: &str = r#"
+$ErrorActionPreference = 'Stop'
+$dmInput = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false, $true))
+[Console]::Out.Write("start`n")
+[Console]::Out.Flush()
+"#;
 const NAME: &str = "companion-runtime.json";
 const LIMIT: usize = 4096;
 const EXECUTION_LIMIT: Duration = Duration::from_secs(5);
@@ -149,6 +157,11 @@ impl Adapter {
     }
 
     fn start_script(operation: &str, path: &Path, script: &str) -> Result<Self, SetupError> {
+        let script = format!("{BOOTSTRAP}\ntry {{\n{script}\n}} finally {{ $dmInput.Dispose() }}");
+        Self::start_program(operation, path, &script)
+    }
+
+    fn start_program(operation: &str, path: &Path, script: &str) -> Result<Self, SetupError> {
         let mut input = serde_json::to_vec(&serde_json::json!({
             "operation": operation, "path": path.to_str().ok_or(ERROR)?,
         }))
@@ -191,6 +204,13 @@ impl Adapter {
                 .spawn(move || {
                     #[cfg(test)]
                     eprintln!("private adapter: worker entered");
+                    let mut start = [0; 6];
+                    stdout.read_exact(&mut start).map_err(|_| ERROR)?;
+                    #[cfg(test)]
+                    eprintln!("private adapter: startup bytes read");
+                    if &start != b"start\n" {
+                        return Err(ERROR);
+                    }
                     stdin.write_all(&input).map_err(|_| ERROR)?;
                     #[cfg(test)]
                     eprintln!("private adapter: request written");
@@ -305,12 +325,12 @@ mod tests {
         let script = format!(
             r#"
 $ErrorActionPreference = 'Stop'
-[Console]::InputEncoding = [Text.UTF8Encoding]::new($false, $true)
-$r = ConvertFrom-Json -InputObject ([Console]::In.ReadLine())
+# Input reader is established by the fixed Rust-side bootstrap.
+$r = ConvertFrom-Json -InputObject ($dmInput.ReadLine())
 {change}
 [Console]::Out.Write("ready`n")
 [Console]::Out.Flush()
-if ([Console]::In.ReadLine() -cne 'close') {{ exit 1 }}
+if ($dmInput.ReadLine() -cne 'close') {{ exit 1 }}
 [Console]::Out.Write('ok')
 "#
         );
@@ -342,6 +362,19 @@ $a.SetAccessRuleProtection({flag}, $true)
         let path = root.join(NAME);
         let directory = lease(&root);
         protect_fixture(&path, true);
+        // A wrong startup marker must be refused even if the peer could go on
+        // to supply otherwise valid ready/completion markers. No filesystem IO.
+        let bad_start = r#"
+$r = [IO.StreamReader]::new([Console]::OpenStandardInput(), [Text.UTF8Encoding]::new($false, $true))
+[Console]::Out.Write("wrong`n")
+[Console]::Out.Flush()
+[void]$r.ReadLine()
+[Console]::Out.Write("ready`n")
+[Console]::Out.Flush()
+[void]$r.ReadLine()
+[Console]::Out.Write('ok')
+"#;
+        assert!(Adapter::start_program("verify", &path, bad_start).is_err());
         // Receipt failure after successful process exit must still refuse success.
         let bad_receipt =
             SCRIPT.replace("[Console]::Out.Write('ok')", "[Console]::Out.Write('no')");
@@ -410,8 +443,8 @@ $a.SetAccessRuleProtection({flag}, $true)
         // Add a broad ACE on public fixture bytes only, not on any real secret.
         let mutator = r#"
 $ErrorActionPreference = 'Stop'
-[Console]::InputEncoding = [Text.UTF8Encoding]::new($false, $true)
-$r = ConvertFrom-Json -InputObject ([Console]::In.ReadLine())
+# Input reader is established by the fixed Rust-side bootstrap.
+$r = ConvertFrom-Json -InputObject ($dmInput.ReadLine())
 $a = [IO.File]::GetAccessControl($r.path)
 $world = [Security.Principal.SecurityIdentifier]::new('S-1-1-0')
 $rule = [Security.AccessControl.FileSystemAccessRule]::new($world, [Security.AccessControl.FileSystemRights]::Read, [Security.AccessControl.AccessControlType]::Allow)
@@ -419,7 +452,7 @@ $a.AddAccessRule($rule)
 [IO.File]::SetAccessControl($r.path, $a)
 [Console]::Out.Write("ready`n")
 [Console]::Out.Flush()
-if ([Console]::In.ReadLine() -cne 'close') { exit 1 }
+if ($dmInput.ReadLine() -cne 'close') { exit 1 }
 [Console]::Out.Write('ok')
 "#;
         Adapter::start_script("verify", &path, mutator)

@@ -3,9 +3,9 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 try {
-    [Console]::InputEncoding = [Text.UTF8Encoding]::new($false, $true)
+    # Input reader is established by the fixed Rust-side bootstrap.
     # Only an operation and path arrive here; secret bytes never enter PowerShell.
-    $request = ConvertFrom-Json -InputObject ([Console]::In.ReadLine())
+    $request = ConvertFrom-Json -InputObject ($dmInput.ReadLine())
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     try { $sid = $identity.User.Value } finally { $identity.Dispose() }
     if ($sid -notmatch '^S-1-(5-21|12-1)-[0-9]+-[0-9]+-[0-9]+-[0-9]+$') { throw 'refused' }
@@ -49,7 +49,7 @@ try {
         $ace.SecurityIdentifier.Value -ne $sid -or $ace.AccessMask -ne 0x1f01ff) { throw 'refused' }
     [Console]::Out.Write("ready`n")
     [Console]::Out.Flush()
-    if ([Console]::In.ReadLine() -cne 'close') { throw 'refused' }
+    if ($dmInput.ReadLine() -cne 'close') { throw 'refused' }
     if ($null -ne $file) { $file.Dispose(); $file = $null }
     [Console]::Out.Write('ok')
     exit 0
