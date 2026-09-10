@@ -316,7 +316,7 @@ Before engine integration, the initial 64 KiB IPC draft was reconciled with the 
 
 ## Installation scope
 
-Target local Firefox Developer Edition installations on Windows 11. A public AMO listing is not required. Signing and listing are distinct: unlisted signing involves Mozilla submission without a public listing. Preserve browser protections and verify persistent installation/restart behavior using exact artifact bytes. See ADR0013.
+Target local Firefox Developer Edition installations on Windows 11. A public AMO listing is not required. Signing and listing are distinct: unlisted signing involves Mozilla submission without a public listing. Preserve browser protections and verify persistent installation/restart behavior using exact artifact bytes. An existing Developer Edition configuration can already accept unsigned persistent installations without a new settings change; this must not be confused with changing signature enforcement. The signed-artifact release gate below remains a project requirement, not a universal Firefox capability restriction. See ADR0013.
 
 ## #50 first engine/IPC integration (2026-09-10)
 
