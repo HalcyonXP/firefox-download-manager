@@ -198,7 +198,7 @@ class InstalledDriverTests(unittest.TestCase):
     def test_orchestration_success_and_all_nine_fault_stages_without_registration(self):
         # Model the UI/native peers, not installed behavior. The actual output
         # assertions and cleanup/report ordering in execute() still run.
-        for fault in (None, *FAULTS):
+        for fault in (None, *FAULTS, "failed-manager-exit"):
             with self.subTest(fault=fault), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary).resolve()
                 package = root / "package"; package.mkdir(); (package / "package.json").write_bytes(b"{}")
@@ -216,7 +216,8 @@ class InstalledDriverTests(unittest.TestCase):
                     run.programs = root / "Programs"; run.programs.mkdir()
                 def observe():
                     lifetime = (f'Owned Manager process: {state["child"]}' if state["child"] else
-                                "Manager exit observed; retained child joined." if state["sequence"] else
+                                ("Manager failed; retained child joined." if fault == "failed-manager-exit" else
+                                 "Manager exit observed; retained child joined.") if state["sequence"] else
                                 "No Manager process launched by this setup.")
                     return f'Operation {state["sequence"]}: ' + ("complete" if state["sequence"] else "idle"), lifetime
                 def button(number):

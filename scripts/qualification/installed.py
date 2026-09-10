@@ -445,6 +445,9 @@ class InstalledRun:
                 self.checkpoint("reconnected")
                 self.close_resources()
                 self.owner.quiesce()
+                # Failed child exit is sufficient for conservative cleanup, not
+                # for the nominal installed-success observation.
+                assert self.text(311) == "Manager exit observed; retained child joined."
                 entries = list(islice(self.install.iterdir(), 65))
                 assert len(entries) <= 64 and not any(p.name.startswith("companion-runtime.") for p in entries)
                 assert not self.ui.tray(self.manager_window)
