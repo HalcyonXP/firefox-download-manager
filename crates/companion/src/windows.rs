@@ -176,9 +176,17 @@ impl Shell {
     }
 
     fn refresh_text(&self) -> w::AnyResult<()> {
-        self.status
-            .hwnd()
-            .SetWindowText(self.state.borrow().status())?;
+        self.status.hwnd().SetWindowText({
+            let state = self.state.borrow();
+            #[cfg(feature = "installed")]
+            if matches!(self.mode, Mode::Installed) && state.phase() == Phase::Running {
+                "Manager is running. Downloads can continue across Firefox restarts."
+            } else {
+                state.status()
+            }
+            #[cfg(not(feature = "installed"))]
+            state.status()
+        })?;
         self.registration_status.hwnd().SetWindowText(&format!(
             "Tray registrations: {}",
             *self.registrations.borrow()

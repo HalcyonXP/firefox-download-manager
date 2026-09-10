@@ -14,6 +14,15 @@ SPEC.loader.exec_module(BUILDER)
 
 
 class PackagePolicy(unittest.TestCase):
+    def test_paired_recipe_is_explicit_and_refuses_production_before_output_creation(self):
+        with self.assertRaisesRegex(ValueError, "development-only"):
+            BUILDER.build("unused", "unused", companion=True)
+        self.assertEqual(BUILDER.binary_input(BUILDER.PAYLOADS[0]), "download-manager-native-host.exe")
+        self.assertEqual(BUILDER.binary_input(BUILDER.PAYLOADS[0], True), "download-manager-app.exe")
+        self.assertEqual(BUILDER.binary_input(BUILDER.PAYLOADS[1], True), "download-manager-setup.exe")
+        with self.assertRaises(ValueError):
+            BUILDER.binary_input("../foreign.exe", True)
+
     def test_first_party_license_metadata_and_distribution_assets_agree(self):
         root = BUILDER.ROOT
         text = (root / "LICENSE").read_bytes()

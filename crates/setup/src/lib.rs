@@ -1,6 +1,9 @@
 //! Local setup boundaries. No networking, elevation or browser-profile API.
 use thiserror::Error;
 
+pub mod application_probe;
+#[cfg(all(windows, feature = "application"))]
+pub mod application_ui;
 #[cfg(windows)]
 mod files;
 #[cfg(all(windows, feature = "installed-runtime"))]

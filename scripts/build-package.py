@@ -27,6 +27,9 @@ SYSTEM_DLLS = {"advapi32.dll", "bcrypt.dll", "bcryptprimitives.dll", "crypt32.dl
                "user32.dll", "version.dll", "winhttp.dll", "wintrust.dll", "ws2_32.dll",
                "normaliz.dll", "rpcrt4.dll", "ucrtbase.dll", "psapi.dll", "winmm.dll"}
 
+# Paired native GUI uses stock Common Controls; no DLL is copied. See THIRD_PARTY.md.
+SYSTEM_DLLS.add("comctl32.dll")
+
 SYSTEM_DLLS.update({'api-ms-win-crt-stdio-l1-1-0.dll', 'api-ms-win-crt-runtime-l1-1-0.dll', 'api-ms-win-crt-math-l1-1-0.dll', 'api-ms-win-crt-locale-l1-1-0.dll', 'api-ms-win-crt-convert-l1-1-0.dll', 'api-ms-win-crt-utility-l1-1-0.dll', 'api-ms-win-crt-private-l1-1-0.dll', 'api-ms-win-crt-environment-l1-1-0.dll', 'api-ms-win-core-synch-l1-2-0.dll', 'api-ms-win-crt-string-l1-1-0.dll', 'api-ms-win-crt-heap-l1-1-0.dll', 'api-ms-win-crt-filesystem-l1-1-0.dll'})
 
 
@@ -124,13 +127,14 @@ def runtime_objects(path):
     return objects
 
 
-def notices():
+def notices(companion=False):
+    features = ("--features", "download-manager-companion/installed,download-manager-setup/application") if companion else ()
     metadata = json.loads(command("cargo", "metadata", "--locked", "--format-version", "1",
-                                  "--filter-platform", "x86_64-pc-windows-gnullvm"))
+                                  "--filter-platform", "x86_64-pc-windows-gnullvm", *features))
     packages = {item["id"]: item for item in metadata["packages"]}
     nodes = {item["id"]: item for item in metadata["resolve"]["nodes"]}
-    pending = [item["id"] for item in packages.values()
-               if item["name"] in ("download-manager-native-host", "download-manager-setup")]
+    roots = ("download-manager-companion" if companion else "download-manager-native-host", "download-manager-setup")
+    pending = [item["id"] for item in packages.values() if item["name"] in roots]
     seen = set()
     while pending:
         key = pending.pop()
@@ -180,7 +184,15 @@ def notices():
     return "\n".join(text), inventory
 
 
-def build(binary_dir, output, development=False):
+def binary_input(name, companion=False):
+    if name not in PAYLOADS[:2]:
+        raise ValueError("unknown binary payload")
+    return "download-manager-app.exe" if companion and name == PAYLOADS[0] else name
+
+
+def build(binary_dir, output, development=False, companion=False):
+    if companion and not development:
+        raise ValueError("paired companion packaging is development-only until installed qualification")
     project = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
     if project.get("license") != "MIT":
         raise ValueError("first-party license metadata requires deliberate review")
@@ -207,12 +219,15 @@ def build(binary_dir, output, development=False):
             "toolchain": {"archive": TOOLCHAIN.name + ".zip", "sha256": TOOLCHAIN_SHA256,
                           "clang": command(str(TOOLCHAIN / "bin/x86_64-w64-mingw32-clang.exe"), "--version").splitlines()[0]},
             "settings_version": 2, "minimum_firefox": "156.0", "imports": {}, "mingw_runtime_objects": {}}
+    if companion:
+        info["application_mode"] = "companion"
     for name in PAYLOADS[:2]:
-        file = ordinary(Path(binary_dir) / name)
+        source_name = binary_input(name, companion)
+        file = ordinary(Path(binary_dir) / source_name)
         imports = pe_imports(file)
         info["imports"][name] = imports
-        info["mingw_runtime_objects"][name] = runtime_objects(ROOT / "target/package-maps" / name.replace(".exe", ".map"))
-        if not development and any(dll not in SYSTEM_DLLS  for dll in imports):
+        info["mingw_runtime_objects"][name] = runtime_objects(ROOT / "target/package-maps" / source_name.replace(".exe", ".map"))
+        if (companion or not development) and any(dll not in SYSTEM_DLLS for dll in imports):
             raise ValueError("unreviewed or non-stock runtime dependency")
         shutil.copyfile(file, out / name)
     ext = ROOT / "extension/dist"
@@ -229,10 +244,10 @@ def build(binary_dir, output, development=False):
         raise ValueError("extension lacks reviewed esbuild attribution")
     (out / "LICENSE.txt").write_text(license_text, encoding="utf-8", newline="\n")
     archive(out / PAYLOADS[2], {name: ext / name for name in EXTENSION}, epoch)
-    for source, target in [("INSTALLATION.md", "INSTALL.md"), ("PACKAGE_SECURITY.md", "SECURITY.md")]:
+    for source, target in [("COMPANION_CANDIDATE.md" if companion else "INSTALLATION.md", "INSTALL.md"), ("PACKAGE_SECURITY.md", "SECURITY.md")]:
         # A clean Git worktree can still have CRLF before index normalization.
         (out / target).write_text(ordinary(ROOT / "docs" / source).read_text(encoding="utf-8"), encoding="utf-8", newline="\n")
-    notice, inventory = notices()
+    notice, inventory = notices(companion)
     (out / "THIRD-PARTY-NOTICES.txt").write_text(notice, encoding="utf-8", newline="\n")
     info["dependencies"] = inventory
     (out / "BUILD-INFO.json").write_text(json.dumps(info, indent=2)+"\n", encoding="utf-8", newline="\n")
@@ -242,7 +257,8 @@ def build(binary_dir, output, development=False):
     (out / "package.json").write_text(json.dumps(descriptor, indent=2)+"\n", encoding="utf-8", newline="\n")
     leaves = [*PAYLOADS, "package.json"]
     (out / "SHA256SUMS.txt").write_text("".join(f"{digest(out / name)}  {name}\n" for name in sorted(leaves)), encoding="utf-8", newline="\n")
-    archive_name = f"firefox-download-manager-{version}-windows-x64.zip"
+    flavor = "-companion-development" if companion else ""
+    archive_name = f"firefox-download-manager-{version}{flavor}-windows-x64.zip"
     archive(out / archive_name, {name: out / name for name in [*leaves, "SHA256SUMS.txt"]}, epoch)
     (out / "PACKAGE-SHA256SUMS.txt").write_text(f"{digest(out / archive_name)}  {archive_name}\n", encoding="utf-8", newline="\n")
     print(f"Built checksummed {'development' if development else 'candidate'} package; qualification is separate.")
@@ -254,5 +270,6 @@ if __name__ == "__main__":
     parser.add_argument("--binary-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--development", action="store_true")
+    parser.add_argument("--companion", action="store_true", help="unqualified paired application/setup development candidate")
     args = parser.parse_args()
-    build(args.binary_dir, args.output, args.development)
+    build(args.binary_dir, args.output, args.development, args.companion)

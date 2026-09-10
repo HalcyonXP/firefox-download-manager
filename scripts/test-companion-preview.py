@@ -48,21 +48,26 @@ def wait(predicate, seconds=15):
     raise RuntimeError("owned preview observation deadline")
 
 
-def qualify(report):
+def qualify(report, setup_window=False, setup_binary=None):
     if os.name != "nt" or ctypes.sizeof(ctypes.c_void_p) != 8:
         raise RuntimeError("native preview driver requires Windows x64")
     report = new_report(report)
-    binary = ROOT / "target/debug/download-manager-companion.exe"
+    binary = ROOT / ("target/debug/download-manager-setup.exe" if setup_window else "target/debug/download-manager-companion.exe")
+    if setup_binary is not None:
+        candidate = Path(os.path.abspath(setup_binary))
+        if not setup_window or candidate.name != "download-manager-setup.exe" or not candidate.is_relative_to(ARTIFACTS):
+            raise RuntimeError("setup binary override requires an owned artifact setup-window case")
+        binary = candidate
     if (not binary.is_file() or not 0 < binary.stat().st_size <= 128 * 1024 * 1024
             or any(p.is_symlink() or p.is_junction() for p in (binary, *binary.parents))):
         raise RuntimeError("build an ordinary owned companion preview first")
     identity = uuid.uuid4().hex
-    domain = ARTIFACTS / f"companion50-preview-{identity}"
+    domain = ARTIFACTS / (f"setup-{identity}" if setup_window else f"companion50-preview-{identity}")
     ARTIFACTS.mkdir(exist_ok=True)
     domain.mkdir()  # create-new; never adopt an existing domain
     ticket = ROOT / f".git/companion50-preview-{identity}.private.json"
     with ticket.open("x", encoding="utf-8") as f:
-        json.dump({"domain": str(domain), "scope": "owned companion preview only"}, f)
+        json.dump({"domain": str(domain), "scope": "owned setup window only" if setup_window else "owned companion preview only"}, f)
     system = Path(os.environ["WINDIR"]) / "System32"
     kernel = ctypes.WinDLL(str(system / "kernel32.dll"), use_last_error=True)
     kernel.IsWow64Process2.argtypes = [wt.HANDLE, ctypes.POINTER(wt.USHORT), ctypes.POINTER(wt.USHORT)]
@@ -97,7 +102,11 @@ def qualify(report):
             digest = hashlib.file_digest(image, "sha256").hexdigest()
             env = os.environ.copy()
             env.update(TMP=str(domain), TEMP=str(domain))
-            proc = subprocess.Popen([str(binary), "--preview"], env=env, stdout=log, stderr=log)
+            if setup_window:
+                local = domain / "Local"
+                local.mkdir()
+                env.update(LOCALAPPDATA=str(local), APPDATA=str(domain / "Roaming"), USERPROFILE=str(domain / "Profile"), HOME=str(domain / "Profile"))
+            proc = subprocess.Popen([str(binary)] + ([] if setup_window else ["--preview"]), env=env, stdout=log, stderr=log)
             process_machine, native_machine = wt.USHORT(), wt.USHORT()
             assert kernel.IsWow64Process2(int(proc._handle), ctypes.byref(process_machine), ctypes.byref(native_machine))
             assert process_machine.value == 0 and native_machine.value == 0x8664
@@ -118,7 +127,7 @@ def qualify(report):
                     if pid.value == proc.pid:
                         name = ctypes.create_unicode_buffer(128)
                         user.GetClassNameW(window, name, len(name))
-                        if name.value == "DownloadManagerCompanionPreview":
+                        if name.value == ("DownloadManagerPairedSetup" if setup_window else "DownloadManagerCompanionPreview"):
                             found.append(window)
                     return True
 
@@ -136,6 +145,34 @@ def qualify(report):
                 value = ctypes.create_unicode_buffer(256)
                 user.GetWindowTextW(control, value, len(value))
                 return value.value
+
+            if setup_window:
+                stage = "owned-setup-window"
+                hwnd = wait(find_window)
+                assert user.IsWindowVisible(hwnd)
+                expected = ["Install / upgrade", "Open Manager", "Repair registration", "Recover journal", "Uninstall", "Close setup", "Clean retired versions"]
+                assert [text(user.GetDlgItem(hwnd, 300 + i)) for i in range(7)] == expected
+                checks.append("visible_setup_window_and_expected_controls")
+                stage = "read-only-missing-installation"
+                send(user.GetDlgItem(hwnd, 301), 0x00F5)
+                status = user.GetDlgItem(hwnd, 310)
+                wait(lambda: text(status) == "installation path is unsafe, unavailable or outside local application data")
+                assert list(local.iterdir()) == []
+                checks.append("open_missing_installation_refuses_without_creation")
+                stage = "owned-setup-close"
+                send(user.GetDlgItem(hwnd, 305), 0x00F5)
+                assert proc.wait(timeout=15) == 0
+                assert list(local.iterdir()) == []
+                checks.append("setup_worker_retired_and_window_process_joined")
+                image.seek(0)
+                assert hashlib.file_digest(image, "sha256").hexdigest() == digest
+                write_report(report, {"scope": "paired setup window and read-only refusal only", "qualification": False,
+                    "checks": checks, "binary_sha256": digest, "physical_mouse_or_keyboard_input": False,
+                    "browser_or_native_host_registration_test": False, "installed_workflow_qualified": False,
+                    "harness_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+                    "harness_worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT))})
+                print("Passed three owned setup-window checks; no install, registry, browser or tray-readiness claim.")
+                return
 
             stage = "owned-window-and-engine-readiness"
             hwnd = wait(find_window)
@@ -219,7 +256,7 @@ def qualify(report):
                 # Popen handle if containment fails. Never a PID/name/tree fallback.
                 try:
                     if hwnd:
-                        send(user.GetDlgItem(hwnd, 202), 0x00F5)
+                        send(user.GetDlgItem(hwnd, 305 if setup_window else 202), 0x00F5)
                     proc.wait(timeout=10)
                 except Exception:
                     proc.terminate()
@@ -238,8 +275,10 @@ if __name__ == "__main__":
         raise SystemExit("qualification requires enabled assertions")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--setup-window", action="store_true", help="owned no-install setup UI and missing-installation refusal only")
+    parser.add_argument("--setup-binary", type=Path, help="explicit owned artifacts setup executable; setup-window only")
     args = parser.parse_args()
     try:
-        qualify(args.report)
+        qualify(args.report, args.setup_window, args.setup_binary)
     except Exception:
         raise SystemExit("Owned preview check failed; private domain retained; no success report.") from None

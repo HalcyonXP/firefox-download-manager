@@ -1,8 +1,10 @@
 //! Bounded owned-child checks. No process termination by name or profile inspection.
 use std::io::Read;
+use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::{self, Receiver};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use download_manager_protocol::{read_frame, write_frame};
@@ -15,67 +17,121 @@ use crate::{HELPER_FILE, SetupError};
 
 const DEADLINE: Duration = Duration::from_secs(15);
 const OUTPUT_LIMIT: u64 = 64 * 1024;
-struct OwnedChild(Child);
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+struct OwnedChild {
+    process: Child,
+    readers: Vec<JoinHandle<()>>,
+}
+impl OwnedChild {
+    fn reader(
+        &mut self,
+        stream: impl Read + Send + 'static,
+        limit: u64,
+    ) -> Result<Receiver<std::io::Result<Vec<u8>>>, SetupError> {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let handle = std::thread::Builder::new()
+            .name("setup-owned-output".into())
+            .spawn(move || {
+                let mut bytes = Vec::new();
+                let result = stream
+                    .take(limit + 1)
+                    .read_to_end(&mut bytes)
+                    .map(|_| bytes);
+                let _ = sender.send(result);
+            })
+            .map_err(|_| SetupError::Launch)?;
+        self.readers.push(handle);
+        Ok(receiver)
+    }
+    fn retire(&mut self) -> Result<(), SetupError> {
+        let mut failed = false;
+        match self.process.try_wait() {
+            Ok(Some(_)) => {}
+            _ => {
+                if self.process.kill().is_err() && !matches!(self.process.try_wait(), Ok(Some(_))) {
+                    failed = true;
+                }
+            }
+        }
+        if self.process.wait().is_err() {
+            failed = true;
+        }
+        for reader in self.readers.drain(..) {
+            if reader.join().is_err() {
+                failed = true;
+            }
+        }
+        if failed {
+            Err(SetupError::Launch)
+        } else {
+            Ok(())
+        }
     }
 }
-fn reader(stream: impl Read + Send + 'static, limit: u64) -> Receiver<std::io::Result<Vec<u8>>> {
-    let (sender, receiver) = mpsc::sync_channel(1);
-    std::thread::spawn(move || {
-        let mut bytes = Vec::new();
-        let result = stream
-            .take(limit + 1)
-            .read_to_end(&mut bytes)
-            .map(|_| bytes);
-        let _ = sender.send(result);
-    });
-    receiver
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        let _ = self.retire();
+    }
 }
-fn run(mut command: Command, input: Option<&[u8]>) -> Result<Vec<u8>, SetupError> {
+fn run(command: Command, input: Option<&[u8]>) -> Result<Vec<u8>, SetupError> {
+    run_with_deadline(command, input, DEADLINE)
+}
+fn run_with_deadline(
+    mut command: Command,
+    input: Option<&[u8]>,
+    limit: Duration,
+) -> Result<Vec<u8>, SetupError> {
+    // All callers use a fixed small hello or no input. Never let arbitrary input
+    // turn the initial synchronous write into an unbounded request-body queue.
+    if input.is_some_and(|bytes| bytes.len() > 1024) {
+        return Err(SetupError::Launch);
+    }
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
-    let mut child = OwnedChild(command.spawn().map_err(|_| SetupError::Launch)?);
-    let output = reader(
-        child.0.stdout.take().ok_or(SetupError::Launch)?,
-        OUTPUT_LIMIT,
-    );
-    let errors = reader(child.0.stderr.take().ok_or(SetupError::Launch)?, 4096);
-    let mut stdin = child.0.stdin.take().ok_or(SetupError::Launch)?;
-    if let Some(input) = input {
-        std::io::Write::write_all(&mut stdin, input).map_err(|_| SetupError::Launch)?;
-    }
-    drop(stdin); // Empty owned profile: EOF shuts down after the hello, no tasks to replay.
-    let end = Instant::now() + DEADLINE;
-    let status = loop {
-        if let Some(status) = child.0.try_wait().map_err(|_| SetupError::Launch)? {
-            break status;
+        .stderr(Stdio::piped())
+        .creation_flags(0x0800_0000);
+    let end = Instant::now() + limit;
+    let mut child = OwnedChild {
+        process: command.spawn().map_err(|_| SetupError::Launch)?,
+        readers: Vec::new(),
+    };
+    let result = (|| {
+        let stdout = child.process.stdout.take().ok_or(SetupError::Launch)?;
+        let output = child.reader(stdout, OUTPUT_LIMIT)?;
+        let stderr = child.process.stderr.take().ok_or(SetupError::Launch)?;
+        let errors = child.reader(stderr, 4096)?;
+        let mut stdin = child.process.stdin.take().ok_or(SetupError::Launch)?;
+        if let Some(input) = input {
+            std::io::Write::write_all(&mut stdin, input).map_err(|_| SetupError::Launch)?;
         }
-        if Instant::now() >= end {
+        drop(stdin);
+        let status = loop {
+            if let Some(status) = child.process.try_wait().map_err(|_| SetupError::Launch)? {
+                break status;
+            }
+            if Instant::now() >= end {
+                return Err(SetupError::Launch);
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let remaining = || end.saturating_duration_since(Instant::now());
+        let output = output
+            .recv_timeout(remaining())
+            .map_err(|_| SetupError::Launch)?
+            .map_err(|_| SetupError::Launch)?;
+        let errors = errors
+            .recv_timeout(remaining())
+            .map_err(|_| SetupError::Launch)?
+            .map_err(|_| SetupError::Launch)?;
+        if !status.success()
+            || !errors.is_empty()
+            || u64::try_from(output.len()).map_err(|_| SetupError::Launch)? > OUTPUT_LIMIT
+        {
             return Err(SetupError::Launch);
         }
-        std::thread::sleep(Duration::from_millis(10));
-    };
-    let remaining = || end.saturating_duration_since(Instant::now());
-    let output = output
-        .recv_timeout(remaining())
-        .map_err(|_| SetupError::Launch)?
-        .map_err(|_| SetupError::Launch)?;
-    let errors = errors
-        .recv_timeout(remaining())
-        .map_err(|_| SetupError::Launch)?
-        .map_err(|_| SetupError::Launch)?;
-    if !status.success()
-        || !errors.is_empty()
-        || u64::try_from(output.len()).map_err(|_| SetupError::Launch)? > OUTPUT_LIMIT
-    {
-        return Err(SetupError::Launch);
-    }
-    Ok(output)
+        Ok(output)
+    })();
+    child.retire().and(result)
 }
 
 /// Refuse—not terminate—Firefox or existing helpers before registry/file mutation.
@@ -122,13 +178,12 @@ pub fn probe_helper(executable: &Path, application_data: &Path) -> Result<(), Se
         .join(format!("dm-probe-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir(&sandbox).map_err(|_| SetupError::Io)?;
     let lease = DirectoryLease::open(&sandbox)?;
-    let result = probe_in(executable, &sandbox);
+    probe_in(executable, &sandbox)?; // Failed probe domains are preserved, not reused.
     // This unique root is entirely created by this process and its trusted owned
     // helper. No live profile or task state is used. std removal does not follow
     // junctions/symlinks; the parent and root are leased until the child is joined.
     drop(lease);
-    let cleanup = std::fs::remove_dir_all(&sandbox).map_err(|_| SetupError::Recovery);
-    result.and(cleanup)
+    std::fs::remove_dir_all(&sandbox).map_err(|_| SetupError::Recovery)
 }
 fn probe_in(executable: &Path, sandbox: &Path) -> Result<(), SetupError> {
     let local = sandbox.join("Local");
@@ -180,4 +235,77 @@ fn probe_in(executable: &Path, sandbox: &Path) -> Result<(), SetupError> {
         return Err(SetupError::Launch);
     }
     Ok(())
+}
+
+/// Paired application's probe does not create an engine or rely on registration.
+/// It does not qualify tray readiness, signatures or installed browser behavior.
+pub struct ApplicationProbe;
+impl InstallProbe for ApplicationProbe {
+    fn verify(&mut self, executable: &Path, application_data: &Path) -> Result<(), SetupError> {
+        require_apps_closed()?;
+        probe_application(executable, application_data)?;
+        require_apps_closed()
+    }
+}
+
+/// Probe a verified application in fresh owned state with the explicit metadata mode.
+/// # Errors
+/// Refuses incompatible/failed output and joined cleanup failures. Failed owned
+/// probe domains are preserved; normal profiles and registration are not read.
+pub fn probe_application(executable: &Path, application_data: &Path) -> Result<(), SetupError> {
+    let parent = DirectoryLease::open(application_data)?;
+    let sandbox = parent
+        .path()
+        .join(format!("dm-app-probe-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&sandbox).map_err(|_| SetupError::Io)?;
+    let lease = DirectoryLease::open(&sandbox)?;
+    let mut command = Command::new(executable);
+    command
+        .arg(crate::application_probe::ARGUMENT)
+        .env("LOCALAPPDATA", sandbox.join("Local"))
+        .env("APPDATA", sandbox.join("Roaming"))
+        .env("USERPROFILE", sandbox.join("Profile"))
+        .env("HOME", sandbox.join("Profile"))
+        .current_dir(&sandbox);
+    let bytes = run(command, None)?;
+    crate::application_probe::verify(&bytes)?;
+    // A metadata-only probe must not have created state or arbitrary files.
+    if std::fs::read_dir(&sandbox)
+        .map_err(|_| SetupError::Io)?
+        .next()
+        .is_some()
+    {
+        return Err(SetupError::Launch);
+    }
+    drop(lease);
+    std::fs::remove_dir(&sandbox).map_err(|_| SetupError::Recovery)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn shell(script: &str) -> Command {
+        let mut command = Command::new(
+            PathBuf::from(std::env::var_os("WINDIR").unwrap())
+                .join("System32/WindowsPowerShell/v1.0/powershell.exe"),
+        );
+        command.args(["-NoProfile", "-NonInteractive", "-Command", script]);
+        command
+    }
+    #[test]
+    fn retained_process_readers_join_for_success_error_and_observation_timeout() {
+        assert_eq!(
+            run(shell("[Console]::Out.Write('fixture')"), None).unwrap(),
+            b"fixture"
+        );
+        assert!(run(shell("[Console]::Error.Write('fixture'); exit 1"), None).is_err());
+        assert!(
+            run_with_deadline(
+                shell("[Threading.Thread]::Sleep(30000)"),
+                None,
+                Duration::from_millis(100)
+            )
+            .is_err()
+        );
+    }
 }

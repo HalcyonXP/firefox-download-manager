@@ -8,6 +8,7 @@ publish.workspace = true
 license.workspace = true
 
 [features]
+application = ["installed-runtime", "winsafe/gui"]
 installed-runtime = ["private-directory"]
 private-file = ["dep:winsafe"]
 private-directory = ["private-file", "winsafe/advapi", "dep:download-manager-local-ipc"]

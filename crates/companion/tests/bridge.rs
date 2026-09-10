@@ -72,6 +72,28 @@ impl Peer {
         let (reader, writer) = channel.split();
         Self { reader, writer }
     }
+    async fn closed_after_events(&mut self) -> Result<usize, &'static str> {
+        // Closure does not erase already buffered frames. Still require actual
+        // transport termination, not a frame/parser error or an idle timeout.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            for count in 0..=128 {
+                match self.reader.read().await {
+                    Err(download_manager_local_ipc::Error::Transport) => return Ok(count),
+                    Ok(body) if count < 128 => {
+                        let value: Value =
+                            serde_json::from_slice(&body).map_err(|_| "invalid terminal frame")?;
+                        if value["kind"] != "event" {
+                            return Err("unexpected terminal response");
+                        }
+                    }
+                    _ => return Err("peer closure not established"),
+                }
+            }
+            Err("terminal event bound exceeded")
+        })
+        .await
+        .map_err(|_| "peer closure observation deadline")?
+    }
     async fn read(&mut self) -> Value {
         let body = tokio::time::timeout(Duration::from_secs(5), self.reader.read())
             .await
@@ -153,10 +175,6 @@ async fn pipe_disconnect_preserves_transfer_and_reconnect_observes_one_correct_o
         domain.0.join("downloads/owned.bin").exists()
     })
     .await;
-    assert_eq!(
-        fs::read(domain.0.join("downloads/owned.bin")).unwrap(),
-        fixture.bytes(0, 64 * 1024, 0)
-    );
     locked(&domain);
     let mut second = Peer::new(connect(endpoint, &key).await.unwrap());
     let tasks = second.hello().await;
@@ -177,11 +195,16 @@ async fn pipe_disconnect_preserves_transfer_and_reconnect_observes_one_correct_o
     })
     .await
     .expect("durable completed receipt");
-    joined(&mut worker).await;
-    assert!(
-        second.reader.read().await.is_err(),
-        "joined Quit must close the real peer"
+    assert_eq!(
+        fs::read(domain.0.join("downloads/owned.bin")).unwrap(),
+        fixture.bytes(0, 64 * 1024, 0)
     );
+    joined(&mut worker).await;
+    let count = second
+        .closed_after_events()
+        .await
+        .expect("joined Quit must close the real peer after buffered events");
+    eprintln!("post-join event frames before EOF: {count}");
     drop(second);
     let reopened = EngineOwner::open(&domain.config()).unwrap();
     assert_eq!(reopened.engine().snapshots().len(), 1);
@@ -382,4 +405,36 @@ async fn idle_controller_quit_retires_both_directions_before_success() {
     drop(reopened);
     let rebound = Server::bind(endpoint, key).unwrap();
     drop(rebound);
+}
+
+#[tokio::test]
+async fn buffered_event_is_not_erased_by_sender_pipe_closure() {
+    let endpoint = Endpoint::generate().unwrap();
+    let key = Arc::new(Capability::generate().unwrap());
+    let server = Server::bind(endpoint, Arc::clone(&key)).unwrap();
+    let (accepted, connected) = tokio::join!(server.accept(), connect(endpoint, &key));
+    let (read, mut write) = accepted.unwrap().split();
+    let mut peer = Peer::new(connected.unwrap());
+    write.write(&serde_json::to_vec(&json!({"protocol_version":2,"kind":"event","event":"snapshot","sequence":0,"data":{"tasks":[],"complete":true}})).unwrap()).await.unwrap();
+    drop(read);
+    drop(write);
+    drop(server);
+    assert_eq!(peer.closed_after_events().await, Ok(1));
+}
+
+#[tokio::test]
+async fn an_idle_live_peer_is_not_misclassified_as_closed() {
+    let endpoint = Endpoint::generate().unwrap();
+    let key = Arc::new(Capability::generate().unwrap());
+    let server = Server::bind(endpoint, Arc::clone(&key)).unwrap();
+    let (accepted, connected) = tokio::join!(server.accept(), connect(endpoint, &key));
+    let accepted = accepted.unwrap();
+    let mut peer = Peer::new(connected.unwrap());
+    assert_eq!(
+        peer.closed_after_events().await,
+        Err("peer closure observation deadline")
+    );
+    drop(peer);
+    drop(accepted);
+    drop(server);
 }

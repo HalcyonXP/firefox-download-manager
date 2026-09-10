@@ -19,6 +19,12 @@ fn main() -> ExitCode {
             }
             result.map_err(|_| ())
         }
+        [mode] if mode == download_manager_setup::application_probe::ARGUMENT => {
+            use std::io::Write;
+            download_manager_setup::application_probe::report()
+                .map_err(|_| ())
+                .and_then(|bytes| std::io::stdout().write_all(&bytes).map_err(|_| ()))
+        }
         [mode] if mode == "--stdio-input" => relay::pump(false).map_err(|_| ()),
         [mode] if mode == "--stdio-output" => relay::pump(true).map_err(|_| ()),
         _ => bridge(&args),

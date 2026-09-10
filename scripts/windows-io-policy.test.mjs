@@ -134,3 +134,16 @@ test("installed runtime binding remains read-only, bounded and separate from eng
   assert.doesNotMatch(record, /eprintln!|println!|remove_dir_all|Command::new|EngineOwner::open/u);
   // Source guards complement actual file/pipe/mutation tests, not installed proof.
 });
+
+test("paired setup keeps application entry checking ahead of normal-state launch", () => {
+  const ui = readFileSync(
+    new URL("../crates/setup/src/application_ui.rs", import.meta.url),
+    "utf8",
+  );
+  const probe = ui.indexOf("probe_application(&image.executable(), &config.local)?;");
+  const launch = ui.indexOf("Command::new(image.executable())");
+  assert.ok(probe >= 0 && launch > probe);
+  assert.ok(ui.includes("require_apps_closed()?;"));
+  assert.ok(ui.indexOf("drop(session);") < probe);
+  assert.doesNotMatch(ui, /\.kill\(/u);
+});

@@ -1,11 +1,22 @@
 //! Local Windows setup entry point. No elevation or browser profile modification.
+#![cfg_attr(all(windows, feature = "application"), windows_subsystem = "windows")]
 #[cfg(all(windows, target_arch = "x86_64"))]
 mod windows {
+    #[cfg(not(feature = "application"))]
+    use download_manager_setup::EXTENSION_FILE;
     use download_manager_setup::package::VerifiedPackage;
-    use download_manager_setup::process::{NativeProbe, probe_helper, require_apps_closed};
+    use download_manager_setup::process::require_apps_closed;
+    #[cfg(feature = "application")]
+    use download_manager_setup::process::{
+        ApplicationProbe as SelectedProbe, probe_application as selected_probe,
+    };
+    #[cfg(not(feature = "application"))]
+    use download_manager_setup::process::{
+        NativeProbe as SelectedProbe, probe_helper as selected_probe,
+    };
     use download_manager_setup::registry::CurrentUserRegistration;
     use download_manager_setup::transaction::SetupSession;
-    use download_manager_setup::{EXTENSION_FILE, HELPER_FILE, SetupError};
+    use download_manager_setup::{HELPER_FILE, SetupError};
     use std::path::PathBuf;
 
     struct Options {
@@ -85,7 +96,7 @@ mod windows {
         if ["verify", "probe"].contains(&options.action.as_str()) {
             let package = VerifiedPackage::open(&options.source)?;
             if options.action == "probe" {
-                probe_helper(&package.payload(HELPER_FILE)?, &options.local)?;
+                selected_probe(&package.payload(HELPER_FILE)?, &options.local)?;
             }
             println!(
                 "Local package checks passed; no registration or browser profile was changed."
@@ -105,8 +116,13 @@ mod windows {
                 let generation = session.install(
                     verified.as_ref().ok_or(SetupError::Package)?,
                     &mut registry,
-                    &mut NativeProbe,
+                    &mut SelectedProbe,
                 )?;
+                #[cfg(feature = "application")]
+                println!(
+                    "Paired application installed in generation {generation}. This development candidate does not qualify persistent Firefox capture or ordinary setup UI."
+                );
+                #[cfg(not(feature = "application"))]
                 println!(
                     "Native host installed. In the installation root, load {generation}\\{EXTENSION_FILE} using Firefox about:debugging. Temporary extensions must be reloaded after Firefox restarts."
                 );
@@ -128,7 +144,7 @@ mod windows {
                 println!("Journal recovery completed; no task state or downloads were removed.");
             }
             "repair" => {
-                session.repair(&mut registry, &mut NativeProbe)?;
+                session.repair(&mut registry, &mut SelectedProbe)?;
                 println!(
                     "Verified current generation registered; no task state or downloads were changed."
                 );
@@ -145,6 +161,15 @@ mod windows {
 }
 #[cfg(all(windows, target_arch = "x86_64"))]
 fn main() {
+    #[cfg(feature = "application")]
+    if std::env::args_os().len() == 1 {
+        if download_manager_setup::application_ui::run().is_err() {
+            use winsafe::{co, prelude::*};
+            let _ = winsafe::HWND::NULL.MessageBox("Setup could not open or complete its window. No successful installation is asserted.", "Download Manager setup", co::MB::ICONERROR);
+            std::process::exit(1);
+        }
+        return;
+    }
     if let Err(error) = windows::execute() {
         eprintln!("{error}");
         std::process::exit(1);

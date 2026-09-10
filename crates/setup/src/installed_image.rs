@@ -28,7 +28,7 @@ pub(crate) struct ImageBinding {
 /// This does not acquire the engine's state lock or prove XPI installation.
 pub struct InstalledImage {
     root: DirectoryLease,
-    _generation: DirectoryLease,
+    generation: DirectoryLease,
     _application_data: DirectoryLease,
     _files: [File; 4],
     pub(crate) binding: ImageBinding,
@@ -63,7 +63,16 @@ impl InstalledImage {
             return Err(SetupError::Ownership);
         }
         let application_data = DirectoryLease::open(application_data)?;
-        let _setup = SetupLock::open_existing(application_data.path())?;
+        let setup = SetupLock::open_existing(application_data.path())?;
+        Self::inspect_locked(executable, application_data, registration, &setup)
+    }
+
+    fn inspect_locked(
+        executable: &Path,
+        application_data: DirectoryLease,
+        registration: &impl RegistrationStore,
+        _setup: &SetupLock,
+    ) -> Result<Self, SetupError> {
         let generation = DirectoryLease::open(executable.parent().ok_or(SetupError::Path)?)?;
         let location = InstallationPath::resolve(
             generation.path().parent().ok_or(SetupError::Path)?,
@@ -119,11 +128,51 @@ impl InstalledImage {
         };
         Ok(Self {
             root,
-            _generation: generation,
+            generation,
             _application_data: application_data,
             _files: [receipt_file, helper, extension, manifest],
             binding,
         })
+    }
+
+    /// Read the current installed target for an explicit setup UI launch. Unlike
+    /// native bridge startup, this derives the executable from a confined receipt.
+    /// # Errors
+    /// Missing lock/receipt, journal, changed files/registration or unsafe root
+    /// refuses without creating or adopting installation objects.
+    pub fn open_installed(root: &Path, application_data: &Path) -> Result<Self, SetupError> {
+        Self::inspect_root(root, application_data, &CurrentUserRegistration)
+    }
+
+    fn inspect_root(
+        root: &Path,
+        application_data: &Path,
+        registration: &impl RegistrationStore,
+    ) -> Result<Self, SetupError> {
+        let application_data = DirectoryLease::open(application_data)?;
+        let setup = SetupLock::open_existing(application_data.path())?;
+        let location = InstallationPath::resolve(root, application_data.path())?;
+        let root = DirectoryLease::open(location.path())?;
+        if files::exists(&root.path().join(files::JOURNAL))? {
+            return Err(SetupError::Recovery);
+        }
+        let mut bytes = Vec::new();
+        ordinary_read(&root.path().join(files::RECEIPT))?
+            .take(RECORD_LIMIT as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| SetupError::Ownership)?;
+        let receipt = Receipt::decode(&bytes)?;
+        let executable = root
+            .path()
+            .join(&receipt.current_generation()?.id)
+            .join(HELPER_FILE);
+        Self::inspect_locked(&executable, application_data, registration, &setup)
+    }
+
+    /// Fixed helper target covered by this retained image binding.
+    #[must_use]
+    pub fn executable(&self) -> std::path::PathBuf {
+        self.generation.path().join(HELPER_FILE)
     }
 
     /// Lease the verified install root for separately gated runtime publication.
@@ -339,6 +388,45 @@ pub(crate) mod tests {
         fixture.save_receipt();
         // Hash agreement alone cannot bless a malformed/redirected manifest.
         assert!(fixture.inspect().is_err());
+        fixture.remove();
+    }
+
+    #[test]
+    fn launch_target_uses_existing_coordination_and_current_receipt_only() {
+        let fixture = Fixture::new();
+        let image =
+            InstalledImage::inspect_root(&fixture.install, &fixture.local, &fixture.registry)
+                .unwrap();
+        assert_eq!(image.executable(), fixture.executable);
+        assert!(
+            fs::OpenOptions::new()
+                .write(true)
+                .open(&fixture.executable)
+                .is_err()
+        );
+        drop(image);
+        let lock = SetupLock::open_existing(&fixture.local).unwrap();
+        assert!(
+            InstalledImage::inspect_root(&fixture.install, &fixture.local, &fixture.registry)
+                .is_err()
+        );
+        drop(lock);
+        fs::remove_file(
+            fixture
+                .local
+                .join("HalcyonXP/FirefoxDownloadManager/setup.lock"),
+        )
+        .unwrap();
+        assert!(
+            InstalledImage::inspect_root(&fixture.install, &fixture.local, &fixture.registry)
+                .is_err()
+        );
+        assert!(
+            !fixture
+                .local
+                .join("HalcyonXP/FirefoxDownloadManager/setup.lock")
+                .exists()
+        );
         fixture.remove();
     }
 }
