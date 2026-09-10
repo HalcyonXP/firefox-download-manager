@@ -14,9 +14,9 @@ import platform
 from pathlib import Path
 import subprocess
 import time
-import uuid
 
 from qualification.support import ARTIFACTS, new_report, write_report
+from qualification.setup_owner import DomainPlan, SetupOwner
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -48,7 +48,9 @@ def wait(predicate, seconds=15):
     raise RuntimeError("owned preview observation deadline")
 
 
-def qualify(report, setup_window=False, setup_binary=None):
+def qualify(report, setup_window=False, setup_binary=None, fail_at=None):
+    if fail_at is not None and (not setup_window or fail_at not in ("before-window", "after-refusal")):
+        raise RuntimeError("invalid no-install failure injection")
     if os.name != "nt" or ctypes.sizeof(ctypes.c_void_p) != 8:
         raise RuntimeError("native preview driver requires Windows x64")
     report = new_report(report)
@@ -61,13 +63,10 @@ def qualify(report, setup_window=False, setup_binary=None):
     if (not binary.is_file() or not 0 < binary.stat().st_size <= 128 * 1024 * 1024
             or any(p.is_symlink() or p.is_junction() for p in (binary, *binary.parents))):
         raise RuntimeError("build an ordinary owned companion preview first")
-    identity = uuid.uuid4().hex
-    domain = ARTIFACTS / (f"setup-{identity}" if setup_window else f"companion50-preview-{identity}")
     ARTIFACTS.mkdir(exist_ok=True)
-    domain.mkdir()  # create-new; never adopt an existing domain
-    ticket = ROOT / f".git/companion50-preview-{identity}.private.json"
-    with ticket.open("x", encoding="utf-8") as f:
-        json.dump({"domain": str(domain), "scope": "owned setup window only" if setup_window else "owned companion preview only"}, f)
+    plan = DomainPlan.record(ARTIFACTS, ROOT / ".git")
+    domain = plan.path
+    plan.create()
     system = Path(os.environ["WINDIR"]) / "System32"
     kernel = ctypes.WinDLL(str(system / "kernel32.dll"), use_last_error=True)
     kernel.IsWow64Process2.argtypes = [wt.HANDLE, ctypes.POINTER(wt.USHORT), ctypes.POINTER(wt.USHORT)]
@@ -94,6 +93,8 @@ def qualify(report, setup_window=False, setup_binary=None):
     shell.Shell_NotifyIconGetRect.argtypes = [ctypes.POINTER(IconId), ctypes.POINTER(wt.RECT)]
     shell.Shell_NotifyIconGetRect.restype = ctypes.c_long
     proc = None
+    setup_owner = None
+    process_joined = False
     hwnd = None
     checks = []
     stage = "launch"
@@ -107,10 +108,6 @@ def qualify(report, setup_window=False, setup_binary=None):
                 local.mkdir()
                 env.update(LOCALAPPDATA=str(local), APPDATA=str(domain / "Roaming"), USERPROFILE=str(domain / "Profile"), HOME=str(domain / "Profile"))
             proc = subprocess.Popen([str(binary)] + ([] if setup_window else ["--preview"]), env=env, stdout=log, stderr=log)
-            process_machine, native_machine = wt.USHORT(), wt.USHORT()
-            assert kernel.IsWow64Process2(int(proc._handle), ctypes.byref(process_machine), ctypes.byref(native_machine))
-            assert process_machine.value == 0 and native_machine.value == 0x8664
-
             def owned(window):
                 pid = wt.DWORD()
                 user.GetWindowThreadProcessId(window, ctypes.byref(pid))
@@ -147,22 +144,42 @@ def qualify(report, setup_window=False, setup_binary=None):
                 return value.value
 
             if setup_window:
+                def observation():
+                    window = find_window()
+                    return (text(user.GetDlgItem(window, 312)), text(user.GetDlgItem(window, 311)))
+                def close_setup():
+                    send(user.GetDlgItem(find_window(), 305), 0x00F5)
+                def refuse_unexpected_child(_):
+                    raise RuntimeError("unexpected Manager in no-install fixture; retain owner")
+                setup_owner = SetupOwner(proc, observation, close_setup, refuse_unexpected_child)
+            process_machine, native_machine = wt.USHORT(), wt.USHORT()
+            assert kernel.IsWow64Process2(int(proc._handle), ctypes.byref(process_machine), ctypes.byref(native_machine))
+            assert process_machine.value == 0 and native_machine.value == 0x8664
+
+            if setup_window:
                 stage = "owned-setup-window"
+                if fail_at == "before-window":
+                    raise RuntimeError("injected no-install observation failure")
                 hwnd = wait(find_window)
                 assert user.IsWindowVisible(hwnd)
                 expected = ["Install / upgrade", "Open Manager", "Repair registration", "Recover journal", "Uninstall", "Close setup", "Clean retired versions"]
                 assert [text(user.GetDlgItem(hwnd, 300 + i)) for i in range(7)] == expected
                 assert text(user.GetDlgItem(hwnd, 311)) == "No Manager process launched by this setup."
+                assert text(user.GetDlgItem(hwnd, 312)) == "Operation 0: idle"
                 checks.append("visible_setup_window_and_expected_controls")
                 stage = "read-only-missing-installation"
-                send(user.GetDlgItem(hwnd, 301), 0x00F5)
+                setup_owner.request(lambda: send(user.GetDlgItem(hwnd, 301), 0x00F5))
                 status = user.GetDlgItem(hwnd, 310)
                 wait(lambda: text(status) == "installation path is unsafe, unavailable or outside local application data")
+                wait(lambda: text(user.GetDlgItem(hwnd, 312)) == "Operation 1: complete")
                 assert list(local.iterdir()) == []
                 checks.append("open_missing_installation_refuses_without_creation")
+                if fail_at == "after-refusal":
+                    raise RuntimeError("injected no-install observation failure")
                 stage = "owned-setup-close"
-                send(user.GetDlgItem(hwnd, 305), 0x00F5)
-                assert proc.wait(timeout=15) == 0
+                setup_owner.retire()
+                process_joined = setup_owner.joined
+                assert proc.returncode == 0
                 assert list(local.iterdir()) == []
                 checks.append("setup_worker_retired_and_window_process_joined")
                 image.seek(0)
@@ -220,6 +237,7 @@ def qualify(report, setup_window=False, setup_binary=None):
             stage = "quit-and-join"
             send(user.GetDlgItem(hwnd, 202), 0x00F5)
             assert proc.wait(timeout=15) == 0
+            process_joined = True
             assert not icon_present()  # read-only absence observation, never mutate a retired HWND
             checks.append("quit_process_join_and_icon_absence")
             stage = "state-lock-release"
@@ -247,27 +265,46 @@ def qualify(report, setup_window=False, setup_binary=None):
         print("Passed six owned native preview checks; no browser, installer or physical tray-input claim.")
     except BaseException as error:
         kind = "assertion" if isinstance(error, AssertionError) else "timeout" if isinstance(error, subprocess.TimeoutExpired) else "driver"
-        with (domain / "failure.private.json").open("x", encoding="utf-8") as f:
-            json.dump({"stage": stage, "kind": kind, "completed_checks": checks}, f)
-        print(f"Preview observation failed at {stage}; bounded kind: {kind}.")
         terminated = False
         try:
-            if proc is not None and proc.poll() is None:
-                # Try the owned Quit control, then terminate only the exact retained
-                # Popen handle if containment fails. Never a PID/name/tree fallback.
+            # Diagnostics must precede window destruction, but a sink failure
+            # must not bypass retained-child retirement.
+            observation = None
+            setup_status = None
+            if setup_owner is not None:
                 try:
-                    if hwnd:
-                        send(user.GetDlgItem(hwnd, 305 if setup_window else 202), 0x00F5)
-                    proc.wait(timeout=10)
+                    observation = setup_owner.snapshot()
+                    setup_status = text(user.GetDlgItem(find_window(), 310))
                 except Exception:
-                    proc.terminate()
-                    terminated = True
-                    proc.wait(timeout=10)
+                    setup_status = "unavailable"
+            with (domain / "failure.private.json").open("x", encoding="utf-8") as f:
+                json.dump({"stage": stage, "kind": kind, "failure_type": type(error).__name__, "completed_checks": checks,
+                           "setup_observation_before_cleanup": observation,
+                           "setup_status_before_cleanup": setup_status}, f)
         finally:
-            with (domain / "containment.private.json").open("x", encoding="utf-8") as f:
-                json.dump({"retained_handle_termination_used": terminated,
-                           "owned_process_joined": proc is None or proc.poll() is not None,
-                           "success_report_authorized": False}, f)
+            try:
+                if setup_owner is not None:
+                    setup_owner.retire()
+                    process_joined = setup_owner.joined
+                elif proc is not None:
+                    # Preview-only fallback: exact retained Popen, never PID/tree.
+                    # Paired setup is never force-terminated after a dispatch.
+                    try:
+                        if hwnd:
+                            send(user.GetDlgItem(hwnd, 202), 0x00F5)
+                        proc.wait(timeout=10)
+                    except Exception:
+                        proc.terminate()
+                        terminated = True
+                        proc.wait(timeout=10)
+                    process_joined = True
+            finally:
+                with (domain / "containment.private.json").open("x", encoding="utf-8") as f:
+                    json.dump({"retained_handle_termination_used": terminated,
+                               "owned_process_joined": process_joined,
+                               "process_not_started": proc is None,
+                               "success_report_authorized": False}, f)
+        print(f"Preview observation failed at {stage}; bounded kind: {kind}.")
         raise RuntimeError("owned preview failed; private domain retained, no success report") from None
 
 
@@ -278,8 +315,9 @@ if __name__ == "__main__":
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--setup-window", action="store_true", help="owned no-install setup UI and missing-installation refusal only")
     parser.add_argument("--setup-binary", type=Path, help="explicit owned artifacts setup executable; setup-window only")
+    parser.add_argument("--fail-at", choices=["before-window", "after-refusal"], help="no-install setup cleanup fault injection; always refuses success")
     args = parser.parse_args()
     try:
-        qualify(args.report, args.setup_window, args.setup_binary)
+        qualify(args.report, args.setup_window, args.setup_binary, args.fail_at)
     except Exception:
         raise SystemExit("Owned preview check failed; private domain retained; no success report.") from None

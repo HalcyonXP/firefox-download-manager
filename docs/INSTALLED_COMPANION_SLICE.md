@@ -23,6 +23,14 @@ A second fixture guard incorrectly required Programs beneath the APPDATA spellin
 
 Setup now exposes retained launch/exit observations separately from its operation status. The child is retained before publishing its identifier; failed waits retain ownership, and a joined-exit observation is emitted only when no launched child remains. These observations do not make setup's launch request a tray-readiness receipt or make a PID standalone ownership authority.
 
+## Operation observations and driver cleanup
+
+Setup label312 starts at `Operation 0: idle`. Each accepted action advances a per-window counter before configuration or worker startup and reports `running`; `complete` is published after configuration refusal or after joining/accepting the worker result and retaining any launched child. Completion is not operation success, tray readiness, durable receipt2 or a cross-process transaction identifier. Ignored requests do not advance the counter.
+
+The diagnostic `SetupOwner` records dispatch uncertainty before sending a control. It never replays a failed delivery. Initial no-child text does not resolve a pending request; cleanup requires the expected completed operation plus no retained Manager (or a joined-child observation). Normal Manager Quit must precede setup Close. Failed waits retain the exact process object; a late exit can be joined without another Close request. Unknown observations preserve the domain and refuse success rather than killing a discovered process. These callbacks require the same retained setup instance and a controlled fixture, not arbitrary concurrent GUI actions.
+
+`DomainPlan` writes a local plan before exclusive domain creation. A plan is not a creation witness and cannot adopt a collision. The no-install window driver now uses these helpers, records status/lifetime before window destruction, and attempts retirement even if failure-record writing fails. Its normal read-only refusal and injected failures before window discovery/after refusal/while writing failure diagnostics were observed with exact retained setup waits and no forced termination; failed cases produced no success report. These checks neither exercise registration nor qualify installed failure recovery. The installed diagnostic driver still needs this integration and review of all partial bridge/server/installation paths.
+
 ## Remaining gates
 
 Persistent signed XPI, Firefox restart/native-parent lifetime, supported ordinary-click capture, normal Start Menu/physical tray interaction and exact-final-main package qualification remain open. The diagnostic driver still needs reviewed failure/recovery handling before becoming a general qualification entry point; existing legacy drivers must not be relabeled as receipt2/Firefox qualification. The failed setup window is outside the successful run's cleanup result.

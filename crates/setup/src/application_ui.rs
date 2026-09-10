@@ -9,7 +9,7 @@ use crate::{
     transaction::SetupSession,
 };
 use std::{
-    cell::RefCell,
+    cell::{Cell, RefCell},
     path::PathBuf,
     process::{Child, Command, Stdio},
     rc::Rc,
@@ -123,6 +123,8 @@ struct Window {
     main: gui::WindowMain,
     status: gui::Label,
     lifetime: gui::Label,
+    operation: gui::Label,
+    sequence: Cell<u64>,
     worker: RefCell<Option<JoinHandle<Result<Outcome, SetupError>>>>,
     launched: RefCell<Vec<Child>>,
 }
@@ -135,26 +137,43 @@ impl Window {
             self.status.hwnd().SetWindowText("This setup is still observing a launched Manager. Use its status window or Quit before launching another.")?;
             return Ok(());
         }
+        let sequence = self
+            .sequence
+            .get()
+            .checked_add(1)
+            .ok_or("setup operation sequence exhausted")?;
+        self.sequence.set(sequence);
+        self.operation
+            .hwnd()
+            .SetWindowText(&format!("Operation {sequence}: running"))?;
         let config = match Configuration::current() {
             Ok(config) => config,
             Err(error) => {
                 self.status.hwnd().SetWindowText(&error.to_string())?;
+                self.operation_complete()?;
                 return Ok(());
             }
         };
         self.status.hwnd().SetWindowText(
             "Checking package and ownership. Please wait; no browser is opened or closed by setup.",
         )?;
-        match std::thread::Builder::new()
+        if let Ok(handle) = std::thread::Builder::new()
             .name("paired-setup-operation".into())
             .spawn(move || perform(action, &config))
         {
-            Ok(handle) => *self.worker.borrow_mut() = Some(handle),
-            Err(_) => self
-                .status
+            *self.worker.borrow_mut() = Some(handle);
+        } else {
+            self.status
                 .hwnd()
-                .SetWindowText("Setup could not start its worker. No operation was started.")?,
+                .SetWindowText("Setup could not start its worker. No operation was started.")?;
+            self.operation_complete()?;
         }
+        Ok(())
+    }
+    fn operation_complete(&self) -> w::AnyResult<()> {
+        self.operation
+            .hwnd()
+            .SetWindowText(&format!("Operation {}: complete", self.sequence.get()))?;
         Ok(())
     }
     fn accept(&self, result: Result<Outcome, SetupError>) -> w::AnyResult<()> {
@@ -171,7 +190,7 @@ impl Window {
             Err(error) => error.to_string(),
         };
         self.status.hwnd().SetWindowText(&text)?;
-        Ok(())
+        self.operation_complete()
     }
     fn tick(&self) -> w::AnyResult<()> {
         if self
@@ -260,6 +279,19 @@ fn buttons(main: &gui::WindowMain) -> w::AnyResult<Vec<gui::Button>> {
     Ok(controls)
 }
 
+fn operation_label(main: &gui::WindowMain) -> gui::Label {
+    gui::Label::new(
+        main,
+        gui::LabelOpts {
+            text: "Operation 0: idle",
+            position: gui::dpi(20, 337),
+            size: gui::dpi(640, 20),
+            ctrl_id: 312,
+            ..Default::default()
+        },
+    )
+}
+
 /// Open the ordinary no-arguments setup interface for paired development builds.
 /// # Errors
 /// Refuses UI/worker failure; never treats process creation as tray readiness.
@@ -267,7 +299,7 @@ pub fn run() -> w::AnyResult<()> {
     let main = gui::WindowMain::new(gui::WindowMainOpts {
         class_name: "DownloadManagerPairedSetup",
         title: "Download Manager setup — development candidate",
-        size: gui::dpi(680, 340),
+        size: gui::dpi(680, 365),
         class_icon: gui::Icon::Idi(co::IDI::INFORMATION),
         ..Default::default()
     });
@@ -300,11 +332,14 @@ pub fn run() -> w::AnyResult<()> {
             ..Default::default()
         },
     );
+    let operation = operation_label(&main);
     let controls = buttons(&main)?;
     let window = Rc::new(Window {
         main,
         status,
         lifetime,
+        operation,
+        sequence: Cell::new(0),
         worker: RefCell::new(None),
         launched: RefCell::new(Vec::new()),
     });

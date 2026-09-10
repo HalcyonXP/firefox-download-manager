@@ -122,3 +122,7 @@ Ten image mutations (version/current generation/setup coordination/registration/
 The failed-publication listener test requires a transport-open refusal, not merely an authentication error/deadline. Deliberately retaining that failed listener reaches the specific closure assertion after the authentication deadline; the exact test process exits/joins without forced retirement.
 
 The setup launch entry separately derives the helper from a confined current receipt under the existing setup lock, then uses the same retained image verification. It refuses a missing lock without creation; this is local setup input, never native-message executable authority. A launch-binding test exercises current selection, retained files, busy coordination and missing-lock refusal.
+
+## 4082436 hosted startup failures
+
+CI34470951101 failed Windows quality with three private-directory tests timing out before `startup bytes read`: directory/record composition, retained creator/grant, and readonly-before-grant. Each trace records the retained process wait and worker join after the five-second readiness deadline. No request transmission or later permission work was observed in those failed adapters. Package qualification and dependency policy passed; dependent emulation was skipped. Earlier passes do not diagnose these failures, and no startup deadline, concurrency, or production permission requirement was changed in response.
