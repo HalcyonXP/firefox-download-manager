@@ -152,6 +152,7 @@ def qualify(report, setup_window=False, setup_binary=None):
                 assert user.IsWindowVisible(hwnd)
                 expected = ["Install / upgrade", "Open Manager", "Repair registration", "Recover journal", "Uninstall", "Close setup", "Clean retired versions"]
                 assert [text(user.GetDlgItem(hwnd, 300 + i)) for i in range(7)] == expected
+                assert text(user.GetDlgItem(hwnd, 311)) == "No Manager process launched by this setup."
                 checks.append("visible_setup_window_and_expected_controls")
                 stage = "read-only-missing-installation"
                 send(user.GetDlgItem(hwnd, 301), 0x00F5)

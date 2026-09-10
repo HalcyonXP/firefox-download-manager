@@ -122,6 +122,7 @@ fn perform(action: Action, config: &Configuration) -> Result<Outcome, SetupError
 struct Window {
     main: gui::WindowMain,
     status: gui::Label,
+    lifetime: gui::Label,
     worker: RefCell<Option<JoinHandle<Result<Outcome, SetupError>>>>,
     launched: RefCell<Vec<Child>>,
 }
@@ -159,7 +160,11 @@ impl Window {
     fn accept(&self, result: Result<Outcome, SetupError>) -> w::AnyResult<()> {
         let text = match result {
             Ok(Outcome::Launched(child)) => {
+                let id = child.id();
                 self.launched.borrow_mut().push(child);
+                self.lifetime
+                    .hwnd()
+                    .SetWindowText(&format!("Owned Manager process: {id}"))?;
                 "Installation verified; Manager launch requested. Check its visible status window. This is not a tray-readiness or persistent-XPI receipt.".to_owned()
             }
             Ok(Outcome::Done(text)) => text.to_owned(),
@@ -183,13 +188,19 @@ impl Window {
             self.accept(handle.join().unwrap_or(Err(SetupError::Io)))?;
         }
         let mut failed = false;
+        let mut joined = false;
         self.launched
             .borrow_mut()
             .retain_mut(|child| match child.try_wait() {
                 Ok(Some(status)) => {
-                    let joined = child.wait();
-                    failed |= !status.success() || joined.is_err();
-                    false
+                    if child.wait().is_ok() {
+                        joined = true;
+                        failed |= !status.success();
+                        false
+                    } else {
+                        failed = true;
+                        true
+                    }
                 }
                 Ok(None) => true,
                 Err(_) => {
@@ -197,6 +208,13 @@ impl Window {
                     true
                 }
             });
+        if joined && self.launched.borrow().is_empty() {
+            self.lifetime.hwnd().SetWindowText(if failed {
+                "Manager failed; retained child joined."
+            } else {
+                "Manager exit observed; retained child joined."
+            })?;
+        }
         if failed {
             self.status.hwnd().SetWindowText("A launched Manager process failed or could not be observed. No successful startup is asserted; state was preserved.")?;
         }
@@ -272,10 +290,21 @@ pub fn run() -> w::AnyResult<()> {
             ..Default::default()
         },
     );
+    let lifetime = gui::Label::new(
+        &main,
+        gui::LabelOpts {
+            text: "No Manager process launched by this setup.",
+            position: gui::dpi(20, 315),
+            size: gui::dpi(640, 20),
+            ctrl_id: 311,
+            ..Default::default()
+        },
+    );
     let controls = buttons(&main)?;
     let window = Rc::new(Window {
         main,
         status,
+        lifetime,
         worker: RefCell::new(None),
         launched: RefCell::new(Vec::new()),
     });

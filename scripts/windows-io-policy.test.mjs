@@ -148,4 +148,10 @@ test("paired setup keeps application entry checking ahead of normal-state launch
   assert.ok(ui.includes("require_apps_closed()?;"));
   assert.ok(ui.indexOf("drop(session);") < probe);
   assert.doesNotMatch(ui, /\.kill\(/u);
+  assert.ok(
+    ui.indexOf("self.launched.borrow_mut().push(child);") <
+      ui.indexOf("Owned Manager process: {id}"),
+  );
+  assert.match(ui, /if joined && self\.launched\.borrow\(\)\.is_empty\(\)/u);
+  assert.match(ui, /Manager exit observed; retained child joined\./u);
 });
