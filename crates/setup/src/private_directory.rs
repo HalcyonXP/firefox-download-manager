@@ -6,7 +6,7 @@ use crate::{
     paths::{DirectoryLease, validate_text},
     private_file::Adapter,
 };
-use download_manager_local_ipc::CurrentUser;
+use download_manager_local_ipc::{CurrentUser, Endpoint};
 
 const SCRIPT: &str = include_str!("private_directory.ps1");
 const NAME: &str = "companion-runtime";
@@ -47,9 +47,23 @@ impl PrivateDirectory {
         Self::create_with_script(parent, SCRIPT)
     }
 
+    /// Create a fresh session directory for a canonical, already generated endpoint.
+    /// # Errors
+    /// Existing entries and unsafe/overlong namespace paths are preserved/refused.
+    pub fn create_for_endpoint(
+        parent: DirectoryLease,
+        endpoint: Endpoint,
+    ) -> Result<Self, SetupError> {
+        Self::create_at(parent, &session_name(endpoint), SCRIPT)
+    }
+
     fn create_with_script(parent: DirectoryLease, script: &str) -> Result<Self, SetupError> {
-        let path = parent.path().join(NAME);
-        validate_text(&path)?;
+        Self::create_at(parent, NAME, script)
+    }
+
+    fn create_at(parent: DirectoryLease, name: &str, script: &str) -> Result<Self, SetupError> {
+        let path = parent.path().join(name);
+        validate_text(&path.join(crate::private_file::NAME))?;
         Adapter::start_script("verify", &path, script)?.finish()?;
         let user = CurrentUser::observe().map_err(|_| ERROR)?;
         create_readonly(&path, &user)?;
@@ -80,6 +94,10 @@ impl PrivateDirectory {
         drop(parent);
         result
     }
+}
+
+pub(crate) fn session_name(endpoint: Endpoint) -> String {
+    format!("{NAME}.{}", endpoint.id())
 }
 
 fn create_readonly(path: &Path, user: &CurrentUser) -> Result<(), SetupError> {

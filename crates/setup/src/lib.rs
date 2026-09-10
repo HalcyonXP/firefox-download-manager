@@ -3,6 +3,8 @@ use thiserror::Error;
 
 #[cfg(windows)]
 mod files;
+#[cfg(all(windows, feature = "installed-runtime"))]
+pub mod installed_image;
 pub mod package;
 #[cfg(windows)]
 pub mod paths;
@@ -15,6 +17,8 @@ pub mod process;
 pub mod receipt;
 #[cfg(windows)]
 pub mod registry;
+#[cfg(all(windows, feature = "installed-runtime"))]
+pub mod runtime_record;
 #[cfg(windows)]
 pub mod transaction;
 

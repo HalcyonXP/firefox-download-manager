@@ -325,3 +325,13 @@ The previous multi-client coordinator was a proposal. The selected first bridge 
 ## #50 protected runtime-record component
 
 An opt-in setup component now implements protected create-new record files and independent permission readback; [PRIVATE_RUNTIME_RECORD.md](PRIVATE_RUNTIME_RECORD.md) defines its scope, protocol and evidence. It requires an already owned, protected directory and does not prepare/adopt installed state. An additional opt-in exclusive directory creator now supplies a read-only bootstrap DACL, retained no-delete lease and independent initial/final descriptor verification below a caller-owned parent; it never adopts existing entries. Installed caller/receipt integration, record/generation binding, singleton coordination, stdio forwarding and installed lifecycle qualification remain open. The default setup package and current memory-only preview do not select this feature.
+
+
+## #50 installed-image/record composition
+
+The optional installed-runtime component now inspects/retains a content-consistent current image and receipt under existing setup coordination, and publishes/reads a closed protected endpoint/capability record from a privately owned bound server exposed only after successful publication. This is not the installed caller or state-lock singleton integration. The selected next deployment uses one image for companion/bridge entry modes, covered by the existing helper digest; current preview and legacy package selection are unchanged. Native discovery deadlines, stdio cancellation/joining, application entry modes, setup/shortcut migration and actual browser acceptance remain open. See COMPANION_DESIGN.md and PRIVATE_RUNTIME_RECORD.md.
+
+
+## Next integration checkpoint
+
+Connect the existing visible-shell gate, retained image/receipt binding, engine state-lock ownership and protected runtime publication in one application entry. Then connect native stdio forwarding and verify one small independently checked transfer through that entry before expanding installer UI/shortcut and ordinary-click capture. Use isolated fixtures until shared-registration/browser preflights pass. Persistent signed-XPI qualification remains a separate required gate; a temporary or synthetic connection is not completion of the install/restart/click workflow.

@@ -80,3 +80,5 @@ Setup's optional `private-file` feature reuses the exact existing `winsafe 0.0.2
 ### Opt-in protected-directory SDK surface
 
 Setup `private-directory` selects the existing exact winsafe0.0.29 advapi feature for ConvertStringSidToSid/LocalFreeSidGuard and InitializeSecurityDescriptor, with synchronous CreateDirectory from kernel. PRIVATE_RUNTIME_RECORD.md records the owned SID/whole-ACL allocation lifetime and layout review; no new registry package or first-party unsafe exception is introduced. The optional setup-to-local-ipc dependency reuses the bounded current-user identity adapter and introduces no dependency cycle.
+
+The installed-runtime composition adds only setup's development dependency edge to the already selected exact Tokio1.53.1 for real-pipe/runtime tests. No registry version, license exception or additional first-party unsafe allowance is introduced.

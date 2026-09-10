@@ -112,3 +112,25 @@ test("protected-directory creation keeps exclusive ownership and whole-ACL SDK i
     /ConvertFrom-Json|Get-Acl|Set-Acl|Import-Module|DllImport|Marshal|Add-Type|Invoke-Expression|Start-Process|Start-Job|Set-ExecutionPolicy/u,
   );
 });
+
+test("installed runtime binding remains read-only, bounded and separate from engine authority", () => {
+  const image = text("crates/setup/src/installed_image.rs").split("\n#[cfg(test)]")[0];
+  const record = text("crates/setup/src/runtime_record.rs").split("\n#[cfg(test)]")[0];
+  const lock = text("crates/setup/src/files.rs")
+    .split("pub(crate) fn open_existing")[1]
+    .split("pub(crate) fn acquire")[0];
+  assert.match(image, /std::env::current_exe\(\)/u);
+  assert.match(image, /SetupLock::open_existing/u);
+  assert.match(image, /_files: \[receipt_file, helper, extension, manifest\]/u);
+  assert.doesNotMatch(image, /replace_if_unchanged|fs::write|create_dir_all|create_new/u);
+  assert.doesNotMatch(lock, /\.create\(|\.create_new\(|\.truncate\(|\.write\(/u);
+  assert.match(record, /server: Server/u);
+  assert.match(record, /let server = Server::bind/u);
+  assert.match(record, /pub const fn server\(&self\) -> &Server/u);
+  assert.match(record, /MAX_ROOT_ENTRIES: usize = 64/u);
+  assert.match(record, /stored.binding != image.binding/u);
+  assert.match(record, /stored.endpoint != endpoint.id\(\)/u);
+  assert.match(record, /bytes.len\(\) > LIMIT/u);
+  assert.doesNotMatch(record, /eprintln!|println!|remove_dir_all|Command::new|EngineOwner::open/u);
+  // Source guards complement actual file/pipe/mutation tests, not installed proof.
+});

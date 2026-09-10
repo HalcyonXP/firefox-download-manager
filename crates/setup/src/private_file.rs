@@ -36,8 +36,8 @@ if ($dmOperation -cnotin @('create', 'verify') -or $null -eq $dmPath -or $dmPath
 [Console]::Out.Write("input`n")
 [Console]::Out.Flush()
 "#;
-const NAME: &str = "companion-runtime.json";
-const LIMIT: usize = 4096;
+pub(crate) const NAME: &str = "companion-runtime.json";
+pub(crate) const LIMIT: usize = 4096;
 const EXECUTION_LIMIT: Duration = Duration::from_secs(5);
 const ERROR: SetupError = SetupError::PrivateFile;
 

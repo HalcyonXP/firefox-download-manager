@@ -424,7 +424,7 @@ fn expected_registration(
         })
         .transpose()
 }
-fn manifest_bytes(generation_path: &Path) -> Result<Vec<u8>, SetupError> {
+pub(crate) fn manifest_bytes(generation_path: &Path) -> Result<Vec<u8>, SetupError> {
     let executable = generation_path.join(HELPER_FILE);
     serde_json::to_vec(&json!({"name": HOST_NAME,"description":"Firefox Download Manager native host","path":executable.to_str().ok_or(SetupError::Path)?,"type":"stdio","allowed_extensions":[EXTENSION_ID]})).map_err(|_| SetupError::Package)
 }

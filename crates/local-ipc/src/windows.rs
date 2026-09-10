@@ -40,6 +40,18 @@ pub struct Server {
 }
 
 impl Server {
+    /// Bound public address; not installation or engine authority.
+    #[must_use]
+    pub const fn endpoint(&self) -> Endpoint {
+        self.endpoint
+    }
+
+    /// Explicit secret-storage access after independent directory/receipt checks.
+    #[must_use]
+    pub fn capability_for_private_storage(&self) -> &Capability {
+        &self.key
+    }
+
     /// Bind a fresh address, with first-instance protection, a protected exact
     /// current-user owner/DACL, remote clients refused and noninheritable handles.
     /// Call on a worker under an active Tokio runtime, not on the UI thread:

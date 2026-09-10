@@ -41,6 +41,30 @@ pub(crate) struct SetupLock {
     _directory: DirectoryLease,
 }
 impl SetupLock {
+    #[cfg(feature = "installed-runtime")]
+    /// Read-side coordination must never create or adopt missing setup state.
+    pub(crate) fn open_existing(application_data: &Path) -> Result<Self, SetupError> {
+        let directory = DirectoryLease::open(
+            &application_data
+                .join("HalcyonXP")
+                .join("FirefoxDownloadManager"),
+        )?;
+        let file = OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .custom_flags(0x0020_0000)
+            .open(directory.path().join("setup.lock"))
+            .map_err(|_| SetupError::Busy)?;
+        let metadata = file.metadata().map_err(|_| SetupError::Io)?;
+        if !metadata.is_file() || metadata.file_attributes() & 0x400 != 0 || metadata.len() != 0 {
+            return Err(SetupError::Ownership);
+        }
+        Ok(Self {
+            _file: file,
+            _directory: directory,
+        })
+    }
+
     pub(crate) fn acquire(application_data: &Path) -> Result<Self, SetupError> {
         let directory = create_tree(
             &application_data

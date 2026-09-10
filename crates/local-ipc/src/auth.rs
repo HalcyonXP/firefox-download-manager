@@ -12,7 +12,7 @@ const MAGIC: &[u8; 8] = b"DMIPC\x01\0\0";
 const CLIENT: &[u8] = b"DMIPC1/client-proof";
 const SERVER: &[u8] = b"DMIPC1/server-proof";
 
-/// Memory-only transport key. Storage/ACL authority is the caller's separate gate.
+/// Transport key. Explicit protected runtime storage requires a separate authority gate.
 /// No serialization, automatic logging or secure-erasure claim is provided.
 pub struct Capability([u8; 32]);
 
@@ -22,6 +22,13 @@ impl Capability {
     /// Returns `Randomness` if the OS source fails.
     pub fn generate() -> Result<Self, Error> {
         Ok(Self(random()?))
+    }
+
+    /// Borrow secret bytes only for independently verified private runtime storage.
+    /// Never log, put in process arguments or confuse with HTTP session credentials.
+    #[must_use]
+    pub const fn bytes_for_private_storage(&self) -> &[u8; 32] {
+        &self.0
     }
 
     /// Import exactly 32 bytes from independently verified private authority.

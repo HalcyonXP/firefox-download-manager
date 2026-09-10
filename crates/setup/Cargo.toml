@@ -8,6 +8,7 @@ publish.workspace = true
 license.workspace = true
 
 [features]
+installed-runtime = ["private-directory"]
 private-file = ["dep:winsafe"]
 private-directory = ["private-file", "winsafe/advapi", "dep:download-manager-local-ipc"]
 
@@ -23,6 +24,9 @@ uuid.workspace = true
 download-manager-local-ipc = { version = "=0.1.0", path = "../local-ipc", optional = true }
 winreg.workspace = true
 winsafe = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio.workspace = true
 
 [lints]
 workspace = true

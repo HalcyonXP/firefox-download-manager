@@ -1,6 +1,6 @@
 # Visible companion implementation — #50
 
-Status: implementation in progress; not an installable successor release. This branch starts from accepted mainf944247 independently of #49/PR55. The exact owner-supplied Hugging Face URL and probe observations are recorded in #49/PR55; earlier unknown-provider wording is historical. The owner approved the user-facing infographic and said Proceed. That earlier checkpoint confirmed the direction only. The later explicit autonomous-completion instruction in [ADR0014](decisions/0014-autonomous-completion.md) now authorizes in-scope implementation, isolated tests and reviewed distribution without routine approvals; it does not supply credentials, waive operational preflights or request a Windows startup service. #49's browser/signing/handoff proof remains separate and open.
+Status: implementation in progress; not an installable successor release. This branch starts from main f944247 independently of #49/PR55. Provider feasibility observations and browser/signing/handoff proof remain separate in #49/PR55. Component checks do not establish installed workflow acceptance.
 
 ## Boundaries selected before implementation
 
@@ -22,7 +22,7 @@ tray-icon0.24.2 was reviewed but not selected: its constructor can retain a wind
 
 ## Required evidence still ahead
 
-Pure lifecycle tests, actual owned TaskEngine lifetime/lock/checkpoint tests, native window/tray interaction and owned-icon-loss recovery are distinct layers. `EngineOwner` now separates state/settings lifetime from a borrowed protocol session; existing `run_host` still shuts down on EOF. `crates/companion` adds the retained worker and safe Windows preview shell. The preview intentionally allows distinct isolated domains, not a proven installed per-user singleton or IPC connection. The first increment must preserve that distinction. It cannot close #50 without real singleton/IPC/reconnect/quit and installer lifecycle acceptance. Actual Firefox/setup qualification is now authorized under ADR0014, subject to ownership and closed-app preflights. Signing, real ordinary-click capture and final exact-artifact publication remain #49/#51–#53 gates.
+Pure lifecycle tests, actual owned TaskEngine lifetime/lock/checkpoint tests, native window/tray interaction and owned-icon-loss recovery are distinct layers. `EngineOwner` now separates state/settings lifetime from a borrowed protocol session; existing `run_host` still shuts down on EOF. `crates/companion` adds the retained worker and safe Windows preview shell. The preview intentionally allows distinct isolated domains, not a proven installed per-user singleton or IPC connection. The first increment must preserve that distinction. It cannot close #50 without real singleton/IPC/reconnect/quit and installer lifecycle acceptance. Actual Firefox/setup qualification retains ownership and closed-app preflights. Signing, real ordinary-click capture and final exact-artifact publication remain #49/#51–#53 gates.
 
 
 ## First increment evidence and limits
@@ -64,3 +64,18 @@ Local-session EOF/failure closes and joins its reader/writer scope, not the engi
 
 
 The initial implementation is opt-in through the native host crate's `local-bridge` feature, selected by the preview companion, not its legacy executable. `serve_local` retains one async reader in a JoinSet, closes both directions and awaits the reader before returning. Retirement failure is distinct from a bad/closed peer and is sticky at the companion worker; engine failures remain engine failures. Default stdio EOF still checkpoints/shuts down its legacy owner. Snapshot projection is now per page instead of a second whole-history description vector. Captured history, decoded command allocations and wrapper/kernel buffers are separate from the stated input-body budget.
+
+
+## Selected next installed integration (not yet deployed)
+
+Use one installed application image at the existing fixed helper leaf, with separate companion, native bridge and bounded fixture-probe entry modes. The companion remains a separate **process/lifetime**, not necessarily a separate executable file. A second companion-crate binary can combine its UI/worker with the existing native-host library without a setup/native-host/companion dependency cycle. The current preview binary and released on-demand host remain unchanged until paired packaging/qualification selects the application image.
+
+This avoids claiming authority for a second executable absent from existing receipts: the installed helper SHA-256 binds both bridge and companion code. It does not bypass shortcut/lifecycle migration or persistent-XPI qualification. Setup retains independence from the application crates. Existing receipt/generation/file formats are not silently redefined; any additional shortcut ownership metadata needs explicit schema/migration tests.
+
+Before opening state or connecting, verify the running image's fixed leaf/canonical generation path, current receipt, actual retained helper/XPI/manifest files, generated fixed-principal manifest and current registration. Hold metadata/file leases; take the existing cooperative setup lock only during inspection, without creating/adopting missing lock state. A matching record is content/installation binding, not publisher authenticity, engine ownership or proof of Firefox installation.
+
+Create a fresh protected runtime directory for each engine session, bind the pipe before publishing discovery, and compare runtime record fields against the independently verified installation. Retain the real engine state lock for singleton authority. Stale/failed records are preserved, not treated as removal authority; discovery needs explicit enumeration/time limits. Transport capabilities may be stored only in the protected runtime record; HTTP session credentials remain memory-only. Neither capability possession nor discovery metadata permits uncertain Add replay.
+
+Native stdio requires a separate joined cancellation design: global tokio stdin or a detached blocking writer is not acceptable. Investigate exact retained I/O-only children with private parent pipe ends, rather than adding a second raw cancellation exception. This is not yet selected or qualified transport behavior; pending output, idle input and actual process/pipe joins must be proved.
+
+Read-only review of Tokio1.53.1 `src/process/windows.rs` establishes that ChildStdio uses `Blocking<ArcFile>`, not the named-pipe async transport. AsHandle is not proof of overlapped cancellation. An I/O-only child design must prove that retiring the exact counterpart closes blocked parent reads/writes and that the blocking pool actually joins; no such adapter is implemented by the record component.
