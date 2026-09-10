@@ -162,6 +162,8 @@ impl Adapter {
         if !executable.is_absolute() {
             return Err(ERROR);
         }
+        #[cfg(test)]
+        eprintln!("private adapter: launch requested");
         let child = Command::new(executable)
             .args(["-NoProfile", "-NonInteractive", "-Command", script])
             .creation_flags(0x0800_0000) // CREATE_NO_WINDOW; no execution-policy changes.
@@ -170,6 +172,8 @@ impl Adapter {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|_| ERROR)?;
+        #[cfg(test)]
+        eprintln!("private adapter: process handle retained");
         let mut adapter = Self {
             child,
             worker: None,
@@ -185,18 +189,28 @@ impl Adapter {
             thread::Builder::new()
                 .name("private-file-adapter".into())
                 .spawn(move || {
+                    #[cfg(test)]
+                    eprintln!("private adapter: worker entered");
                     stdin.write_all(&input).map_err(|_| ERROR)?;
+                    #[cfg(test)]
+                    eprintln!("private adapter: request written");
                     let mut ready = [0; 6];
                     stdout.read_exact(&mut ready).map_err(|_| ERROR)?;
+                    #[cfg(test)]
+                    eprintln!("private adapter: readiness bytes read");
                     if &ready != b"ready\n" {
                         return Err(ERROR);
                     }
                     ready_tx.send(()).map_err(|_| ERROR)?;
                     close_rx.recv().map_err(|_| ERROR)?;
                     stdin.write_all(b"close\n").map_err(|_| ERROR)?;
+                    #[cfg(test)]
+                    eprintln!("private adapter: close request written");
                     drop(stdin);
                     let mut output = Vec::new();
                     stdout.take(3).read_to_end(&mut output).map_err(|_| ERROR)?;
+                    #[cfg(test)]
+                    eprintln!("private adapter: completion bytes read");
                     if output != b"ok" {
                         return Err(ERROR);
                     }
@@ -211,6 +225,8 @@ impl Adapter {
     fn wait_ready(&mut self, ready: &Receiver<()>) -> Result<(), SetupError> {
         loop {
             if Instant::now() >= self.deadline {
+                #[cfg(test)]
+                eprintln!("private adapter: deadline before readiness");
                 return Err(ERROR);
             }
             match ready.recv_timeout(Duration::from_millis(5)) {
@@ -219,6 +235,8 @@ impl Adapter {
                 Err(mpsc::RecvTimeoutError::Timeout) => (),
             }
             if self.child.try_wait().map_err(|_| ERROR)?.is_some() {
+                #[cfg(test)]
+                eprintln!("private adapter: child exit before readiness");
                 return Err(ERROR);
             }
         }
@@ -247,13 +265,19 @@ impl Adapter {
     fn cleanup(&mut self) -> Result<(), SetupError> {
         self.close.take(); // Unblock a worker waiting for its Rust-side close signal.
         if !matches!(self.child.try_wait(), Ok(Some(_))) {
+            #[cfg(test)]
+            eprintln!("private adapter: retiring retained process");
             let _ = self.child.kill();
         }
         let process = self.child.wait().map_err(|_| ERROR);
-        let worker = self
-            .worker
-            .take()
-            .map(|worker| worker.join().map_err(|_| ERROR));
+        #[cfg(test)]
+        eprintln!("private adapter: process wait returned");
+        let worker = self.worker.take().map(|worker| {
+            let result = worker.join().map_err(|_| ERROR);
+            #[cfg(test)]
+            eprintln!("private adapter: worker join returned");
+            result
+        });
         process?;
         if let Some(result) = worker {
             result??;

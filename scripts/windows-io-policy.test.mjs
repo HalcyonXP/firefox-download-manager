@@ -32,7 +32,7 @@ test("ADR0015 compiler exception remains confined to the reviewed Windows bounda
 });
 
 test("private-file adapter keeps secrets in Rust and preserves the OS boundary", () => {
-  const rust = text("crates/setup/src/private_file.rs").split("#[cfg(test)]")[0];
+  const rust = text("crates/setup/src/private_file.rs").split("\n#[cfg(test)]\nmod tests {")[0];
   const script = text("crates/setup/src/private_file.ps1");
   const request = rust.match(/serde_json::json!\(\{([\s\S]*?)\}\)/u)?.[1];
   assert.ok(request);
@@ -60,5 +60,13 @@ test("private-file adapter keeps secrets in Rust and preserves the OS boundary",
   assert.match(script, /\[IO\.File\]::GetAccessControl/u);
   assert.match(script, /\[IO\.Directory\]::GetAccessControl/u);
   assert.match(script, /\[Console\]::In\.ReadLine\(\) -cne 'close'/u);
+  const diagnostics = [...rust.matchAll(/eprintln!\(([^;]+)\);/gu)];
+  assert.ok(diagnostics.length > 0);
+  assert.ok(diagnostics.every((match) => /^"private adapter: [a-z ]+"$/u.test(match[1])));
+  assert.equal(
+    rust.match(/#\[cfg\(test\)\]\s+eprintln!/gu)?.length,
+    diagnostics.length,
+    "fixed phase diagnostics must remain test-only",
+  );
   // Structural regression guard only, not ACL/cross-account/runtime proof.
 });
