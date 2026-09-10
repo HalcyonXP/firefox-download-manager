@@ -95,3 +95,6 @@ The separate opt-in `private-directory` creator prepares a new protected `compan
 
 
 An unselected `installed-runtime` composition now binds protected records to independently inspected current-image/receipt/generation/manifest/registration metadata. Server getters permit explicit protected storage of the transport key; HTTP session credentials remain memory-only. Runtime record1 does not change IPC1's proof/framing or wire2. A privately owned bound server is exposed only after successful record publication. The image borrow and publication witness do not acquire an engine state lock, launch an installed process or prove browser installation. See PRIVATE_RUNTIME_RECORD.md for schema, bounded candidate enumeration and outstanding discovery/stdio/lifecycle gaps.
+
+
+The opt-in application now forwards native stdio through exact owned I/O-only children and retained parent threads; two real-executable tests connect it to the existing engine/controller. The installed worker also connects retained image inspection to state-lock ownership and private runtime publication. These are implemented entry paths, not yet package-selected/installed-browser qualification; COMPANION_DESIGN.md records the boundaries and pending setup/probe work.

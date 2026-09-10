@@ -1,5 +1,5 @@
-//! Native Windows preview adapter. Only predefined messages and safe wrappers;
-//! no raw FFI, message-filter changes, browser access or installed-state use.
+//! Native Windows shell. Only predefined messages and safe wrappers; installed
+//! mode delegates receipt/state access to its visibility-gated retained worker.
 use std::cell::RefCell;
 use std::fs;
 use std::rc::Rc;
@@ -14,9 +14,41 @@ const TIMER: usize = 1;
 const ICON_ID: u32 = 1;
 const OPEN: u16 = 100;
 const QUIT: u16 = 101;
-const TOOLTIP: &str = "Download Manager - development preview";
+#[derive(Clone, Copy)]
+enum Mode {
+    Preview,
+    #[cfg(feature = "installed")]
+    Installed,
+}
+impl Mode {
+    fn worker(self) -> Result<Worker, ()> {
+        match self {
+            Self::Preview => preview_worker(),
+            #[cfg(feature = "installed")]
+            Self::Installed => Worker::start_installed().map_err(|_| ()),
+        }
+    }
+    fn labels(self) -> (&'static str, &'static str, &'static str, &'static str) {
+        match self {
+            Self::Preview => (
+                "DownloadManagerCompanionPreview",
+                "Download Manager - development preview",
+                "Visible companion preview - not an installable release",
+                "Isolated temporary state. No browser connection or installation changes.",
+            ),
+            #[cfg(feature = "installed")]
+            Self::Installed => (
+                "DownloadManagerCompanion",
+                "Download Manager",
+                "Download Manager",
+                "Firefox can reconnect while downloads continue. Choose Quit to stop Manager.",
+            ),
+        }
+    }
+}
 
 struct Shell {
+    mode: Mode,
     window: gui::WindowMain,
     status: gui::Label,
     registration_status: gui::Label,
@@ -51,7 +83,7 @@ impl Shell {
             // A shared stock icon is appropriate for a clearly marked preview;
             // no third-party artwork or raw handle duplication is needed.
             data.hIcon = gui::Icon::Idi(co::IDI::INFORMATION).as_hicon(&w::HINSTANCE::NULL)?;
-            data.set_szTip(TOOLTIP);
+            data.set_szTip(shell.mode.labels().1);
             *shell.tray.borrow_mut() = Some(data);
             shell.confirm_tray();
             shell.window.hwnd().SetTimer(TIMER, 100, None)?;
@@ -127,7 +159,7 @@ impl Shell {
         });
         let start = self.state.borrow_mut().tray_observed(confirmed);
         if start {
-            match preview_worker() {
+            match self.mode.worker() {
                 Ok(worker) => *self.worker.borrow_mut() = Some(worker),
                 Err(()) => self.state.borrow_mut().joined(false),
             }
@@ -260,9 +292,22 @@ fn preview_worker() -> Result<Worker, ()> {
 /// # Errors
 /// Refuses unavailable UI/tray/engine resources; never prints raw error text.
 pub fn run_preview() -> w::AnyResult<()> {
+    run_shell(Mode::Preview)
+}
+
+/// Run the installed companion with independent receipt checks on its worker.
+/// # Errors
+/// Failed visibility, ownership or joined shutdown remains an explicit failure.
+#[cfg(feature = "installed")]
+pub fn run_installed() -> w::AnyResult<()> {
+    run_shell(Mode::Installed)
+}
+
+fn run_shell(mode: Mode) -> w::AnyResult<()> {
+    let (class_name, title, heading, detail) = mode.labels();
     let window = gui::WindowMain::new(gui::WindowMainOpts {
-        class_name: "DownloadManagerCompanionPreview",
-        title: "Download Manager - development preview",
+        class_name,
+        title,
         size: gui::dpi(600, 240),
         class_icon: gui::Icon::Idi(co::IDI::INFORMATION),
         ..Default::default()
@@ -270,7 +315,7 @@ pub fn run_preview() -> w::AnyResult<()> {
     let _heading = gui::Label::new(
         &window,
         gui::LabelOpts {
-            text: "Visible companion preview - not an installable release",
+            text: heading,
             position: gui::dpi(22, 18),
             size: gui::dpi(556, 28),
             ..Default::default()
@@ -289,7 +334,7 @@ pub fn run_preview() -> w::AnyResult<()> {
     let _detail = gui::Label::new(
         &window,
         gui::LabelOpts {
-            text: "Isolated temporary state. No browser connection or installation changes.",
+            text: detail,
             position: gui::dpi(22, 108),
             size: gui::dpi(556, 30),
             ..Default::default()
@@ -326,6 +371,7 @@ pub fn run_preview() -> w::AnyResult<()> {
         },
     );
     let shell = Rc::new(Shell {
+        mode,
         window,
         status,
         registration_status,

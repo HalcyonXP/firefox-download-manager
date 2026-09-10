@@ -208,6 +208,8 @@ dependencies = [
  "download-manager-engine",
  "download-manager-local-ipc",
  "download-manager-native-host",
+ "download-manager-protocol",
+ "download-manager-setup",
  "download-manager-test-server",
  "serde_json",
  "tokio",

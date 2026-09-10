@@ -61,54 +61,53 @@ impl Worker {
         endpoint: download_manager_local_ipc::Endpoint,
         key: std::sync::Arc<download_manager_local_ipc::Capability>,
     ) -> Result<Self, WorkerError> {
-        use download_manager_native_host::{HostError, LocalSessionEnd};
         Self::spawn(move |mut stopped, ready| async move {
             let mut owner = EngineOwner::open(&config).map_err(|_| WorkerError::Startup)?;
             let session = async {
                 let server = download_manager_local_ipc::Server::bind(endpoint, key)
                     .map_err(|_| WorkerError::Bridge)?;
                 let _ = ready.try_send(());
-                let result = loop {
-                    if server.cancellation_failed() {
-                        break Err(WorkerError::Bridge);
-                    }
-                    let _ = owner.engine().take_overflow_snapshot();
-                    tokio::select! {
-                        biased;
-                        _ = &mut stopped => break Ok(()),
-                        event = owner.engine().next_event() => {
-                            if event.is_err() { break Err(WorkerError::Engine); }
-                        }
-                        connection = server.accept() => {
-                            let Ok(channel) = connection else {
-                                // Bound retries on a failed listener/unauthenticated peer;
-                                // do not turn a peer refusal into a hot loop or engine stop.
-                                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                                continue;
-                            };
-                            // Deliberately one controller. Awaiting this session leaves
-                            // additional connections at bounded handshake timeout; no
-                            // second engine/settings writer or command dispatch exists.
-                            match owner.serve_local(channel, &mut stopped).await {
-                                Ok(LocalSessionEnd::StopRequested) => break Ok(()),
-                                Err(HostError::LocalRetirement) => break Err(WorkerError::Bridge),
-                                Err(HostError::Engine(_)) => break Err(WorkerError::Engine),
-                                Ok(LocalSessionEnd::Disconnected) | Err(_) => {}
-                            }
-                        }
-                    }
-                };
-                // The final select may itself retire an unauthenticated pipe.
-                // Observe that cancellation result before destroying the server.
-                if server.cancellation_failed() {
-                    Err(WorkerError::Bridge)
-                } else {
-                    result
-                }
+                serve_controller(&mut owner, &server, &mut stopped).await
             }
             .await;
             let shutdown = owner.shutdown().await.map_err(|_| WorkerError::Engine);
             shutdown.and(session)
+        })
+    }
+
+    /// Start the installed image only after the shell's confirmed visibility gate.
+    /// Metadata verification precedes state access; engine ownership precedes
+    /// protected publication. Failed cleanup preserves the runtime domain.
+    /// # Errors
+    /// Refuses failed worker creation; startup errors are reported through join.
+    #[cfg(all(windows, feature = "installed"))]
+    pub fn start_installed() -> Result<Self, WorkerError> {
+        use download_manager_local_ipc::{Capability, Endpoint};
+        use download_manager_setup::{
+            installed_image::InstalledImage, runtime_record::RuntimePublication,
+        };
+        Self::spawn(move |mut stopped, ready| async move {
+            let image = InstalledImage::open_current().map_err(|_| WorkerError::Startup)?;
+            let config = HostConfig::for_current_user().map_err(|_| WorkerError::Startup)?;
+            let mut owner = EngineOwner::open(&config).map_err(|_| WorkerError::Startup)?;
+            let publication = (|| {
+                let endpoint = Endpoint::generate().map_err(|_| WorkerError::Bridge)?;
+                let key =
+                    std::sync::Arc::new(Capability::generate().map_err(|_| WorkerError::Bridge)?);
+                RuntimePublication::bind(&image, endpoint, key).map_err(|_| WorkerError::Bridge)
+            })();
+            let publication = match publication {
+                Ok(publication) => publication,
+                Err(error) => {
+                    owner.shutdown().await.map_err(|_| WorkerError::Engine)?;
+                    return Err(error);
+                }
+            };
+            let _ = ready.try_send(());
+            let session = serve_controller(&mut owner, publication.server(), &mut stopped).await;
+            let shutdown = owner.shutdown().await.map_err(|_| WorkerError::Engine);
+            shutdown.and(session)?;
+            publication.remove().map_err(|_| WorkerError::Bridge)
         })
     }
 
@@ -173,5 +172,51 @@ impl Drop for Worker {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
+    }
+}
+
+#[cfg(windows)]
+async fn serve_controller(
+    owner: &mut EngineOwner,
+    server: &download_manager_local_ipc::Server,
+    stopped: &mut oneshot::Receiver<()>,
+) -> Result<(), WorkerError> {
+    use download_manager_native_host::{HostError, LocalSessionEnd};
+    let result = loop {
+        if server.cancellation_failed() {
+            break Err(WorkerError::Bridge);
+        }
+        let _ = owner.engine().take_overflow_snapshot();
+        tokio::select! {
+            biased;
+            _ = &mut *stopped => break Ok(()),
+            event = owner.engine().next_event() => {
+                if event.is_err() { break Err(WorkerError::Engine); }
+            }
+            connection = server.accept() => {
+                let Ok(channel) = connection else {
+                    // Bound retries on a failed listener/unauthenticated peer;
+                    // do not turn a peer refusal into a hot loop or engine stop.
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    continue;
+                };
+                // Deliberately one controller. Awaiting this session leaves
+                // additional connections at bounded handshake timeout; no
+                // second engine/settings writer or command dispatch exists.
+                match owner.serve_local(channel, stopped).await {
+                    Ok(LocalSessionEnd::StopRequested) => break Ok(()),
+                    Err(HostError::LocalRetirement) => break Err(WorkerError::Bridge),
+                    Err(HostError::Engine(_)) => break Err(WorkerError::Engine),
+                    Ok(LocalSessionEnd::Disconnected) | Err(_) => {}
+                }
+            }
+        }
+    };
+    // The final select may itself retire an unauthenticated pipe.
+    // Observe that cancellation result before destroying the server.
+    if server.cancellation_failed() {
+        Err(WorkerError::Bridge)
+    } else {
+        result
     }
 }

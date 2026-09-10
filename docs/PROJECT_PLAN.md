@@ -335,3 +335,6 @@ The optional installed-runtime component now inspects/retains a content-consiste
 ## Next integration checkpoint
 
 Connect the existing visible-shell gate, retained image/receipt binding, engine state-lock ownership and protected runtime publication in one application entry. Then connect native stdio forwarding and verify one small independently checked transfer through that entry before expanding installer UI/shortcut and ordinary-click capture. Use isolated fixtures until shared-registration/browser preflights pass. Persistent signed-XPI qualification remains a separate required gate; a temporary or synthetic connection is not completion of the install/restart/click workflow.
+
+
+Checkpoint update: the opt-in application now connects the visible-shell gate, image/receipt inspection, engine state lock, private publication and shared controller loop. Real executable stdio/IPC tests pass one small transfer with disconnect/reconnect and joined stalled-I/O cleanup. Production setup/probe/shortcut selection and actual installed Firefox acceptance remain incomplete; the next checkpoint is paired setup integration, not additional standalone primitive expansion.
