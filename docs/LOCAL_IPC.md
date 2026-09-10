@@ -86,3 +86,7 @@ After the earlier Windows commit-capacity failure, the Windows CI quality job no
 
 
 Restored-source workspace tests/build/Clippy passed with one Cargo build job; the existing optional hedging measurement remains ignored, not newly qualified. Default-feature native-host Clippy also passed. npm check and dependency policy passed. The new native preview report `artifacts/companion50-engine-ipc-preview.json` passed six owned Windows x64 checks on a dirty identified development tree; it is not inherited from d88e7b7, an installed bridge report or physical tray input. Tracked-file privacy screening and current-head CI must be checked for the final staged/committed source.
+
+## Protected-record component (not installed discovery)
+
+Setup's opt-in `private-file` feature now provides create-new protected file creation, independent parent/owner/DACL readback and retained file/ancestor leases. See [PRIVATE_RUNTIME_RECORD.md](PRIVATE_RUNTIME_RECORD.md) for the 4 KiB content bound, protected-parent prerequisite, fixed auxiliary-process protocol and tests. Secret bytes remain in Rust. The component does not seal or adopt a directory, choose the installed record schema, verify a receipt/generation, acquire engine authority or replace stdio. No installed caller selects it, and the preview still publishes no endpoint/key file.

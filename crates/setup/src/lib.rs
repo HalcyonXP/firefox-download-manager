@@ -6,6 +6,8 @@ mod files;
 pub mod package;
 #[cfg(windows)]
 pub mod paths;
+#[cfg(all(windows, feature = "private-file"))]
+pub mod private_file;
 #[cfg(windows)]
 pub mod process;
 pub mod receipt;
@@ -50,6 +52,8 @@ pub enum SetupError {
     Recovery,
     #[error("generation history is full; run cleanup before upgrading")]
     HistoryFull,
+    #[error("private runtime record failed validation or publication")]
+    PrivateFile,
     #[error("setup filesystem operation failed")]
     Io,
 }

@@ -136,7 +136,7 @@ fn within(candidate: &Path, parent: &Path) -> bool {
         })
     })
 }
-fn validate_text(path: &Path) -> Result<(), SetupError> {
+pub(crate) fn validate_text(path: &Path) -> Result<(), SetupError> {
     let text = path.to_str().ok_or(SetupError::Path)?;
     let bytes = text.as_bytes();
     if bytes.len() < 3

@@ -72,3 +72,7 @@ The non-Cargo compiler/runtime review is explicit, not represented as something 
 - `winsafe`'s existing reviewed GetSystemDirectory wrapper selects the Windows-supplied read-only whoami identity utility without PATH/environment executable discovery. The utility is an OS component, not a developer-tool requirement or redistributed payload. No access-token/SID-buffer FFI wrapper was added to the first-party cancellation boundary.
 
 The seven new locked registry packages are hmac, interprocess, widestring, ctutils, cmov, doctest-file and recvmsg; existing package versions were not opportunistically updated. Runtime pending-write/flush behavior was reviewed separately from dependency/license scanning. The transport is not yet part of the installed package's dependency closure or qualification.
+
+## #50 protected-record adapter review
+
+Setup's optional `private-file` feature reuses the exact existing `winsafe 0.0.29` dependency and feature selection only for `GetSystemDirectory`. No registry package/version/license or build script is added; the lockfile adds only setup's optional dependency edge. Default setup builds do not select it. The fixed first-party script invokes Windows-supplied PowerShell/.NET identity, file-creation and security-descriptor APIs. No PowerShell/.NET binary, security-wrapper implementation, custom P/Invoke or third-party source is copied or redistributed. The process, permission and secret-handling boundary is documented in [PRIVATE_RUNTIME_RECORD.md](PRIVATE_RUNTIME_RECORD.md), separately from license scanning and ADR0015.

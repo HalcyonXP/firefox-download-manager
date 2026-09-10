@@ -30,3 +30,35 @@ test("ADR0015 compiler exception remains confined to the reviewed Windows bounda
   assert.match(text("crates/local-ipc/src/windows.rs"), /request_cancellation\(handle\)/u);
   assert.match(text("crates/local-ipc/src/windows.rs"), /io\.assume_flushed\(\)/u);
 });
+
+test("private-file adapter keeps secrets in Rust and preserves the OS boundary", () => {
+  const rust = text("crates/setup/src/private_file.rs").split("#[cfg(test)]")[0];
+  const script = text("crates/setup/src/private_file.ps1");
+  const request = rust.match(/serde_json::json!\(\{([\s\S]*?)\}\)/u)?.[1];
+  assert.ok(request);
+  assert.deepEqual(
+    [...request.matchAll(/"([a-z_]+)"\s*:/gu)].map((match) => match[1]),
+    ["operation", "path"],
+  );
+  assert.match(rust, /Self::start_script\(operation, path, SCRIPT\)/u);
+  assert.match(rust, /winsafe::GetSystemDirectory\(\)/u);
+  assert.match(rust, /\.args\(\["-NoProfile", "-NonInteractive", "-Command", script\]\)/u);
+  assert.match(rust, /\.creation_flags\(0x0800_0000\)/u);
+  assert.match(rust, /writer\.write_all\(bytes\)/u);
+  assert.match(rust, /writer\.sync_all\(\)/u);
+  assert.match(rust, /worker\.join\(\)/u);
+  assert.match(rust, /self\.child\.wait\(\)/u);
+  assert.doesNotMatch(script, /\$request\.(?!operation\b|path\b)\w+/iu);
+  assert.doesNotMatch(
+    script,
+    /\b(?:DllImport|Marshal|Add-Type|Invoke-Expression|Invoke-Command|Start-Process|Start-Job|Set-ExecutionPolicy|WebClient|HttpClient)\b/iu,
+  );
+  assert.match(script, /\[IO\.FileMode\]::CreateNew/u);
+  assert.match(script, /D:P\(A;;FA;;;/u);
+  assert.match(script, /0x500d0156/u);
+  assert.match(script, /DiscretionaryAclProtected/u);
+  assert.match(script, /\[IO\.File\]::GetAccessControl/u);
+  assert.match(script, /\[IO\.Directory\]::GetAccessControl/u);
+  assert.match(script, /\[Console\]::In\.ReadLine\(\) -cne 'close'/u);
+  // Structural regression guard only, not ACL/cross-account/runtime proof.
+});

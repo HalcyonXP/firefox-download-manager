@@ -321,3 +321,7 @@ Target local Firefox Developer Edition installations on Windows 11. A public AMO
 ## #50 first engine/IPC integration (2026-09-10)
 
 The previous multi-client coordinator was a proposal. The selected first bridge preserves one active browser controller and one engine/settings owner; further connections cannot dispatch while it is active. The transport's four reservations do not imply four engine controllers. [COMPANION_DESIGN.md](COMPANION_DESIGN.md) records the trade-off and bounded async session design. The opt-in `local-bridge` native-host API and preview worker now serve wire2 over authenticated pipes without letting client loss stop the engine. Actual pipe/engine tests are separate from Firefox, native stdio forwarding, installed private authority and package qualification, which remain unfinished. Do not close #50 or promote #51 based on this increment. Current-head validation and new preview evidence are required; old reports remain version-specific.
+
+## #50 protected runtime-record component
+
+An opt-in setup component now implements protected create-new record files and independent permission readback; [PRIVATE_RUNTIME_RECORD.md](PRIVATE_RUNTIME_RECORD.md) defines its scope, protocol and evidence. It requires an already owned, protected directory and does not prepare/adopt installed state. Directory preparation, record/receipt/generation binding, singleton coordination, stdio forwarding and installed lifecycle qualification remain open. The default setup package and current memory-only preview do not select this feature.
