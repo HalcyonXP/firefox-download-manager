@@ -15,7 +15,35 @@ use crate::Error;
 const OUTPUT_LIMIT: u64 = 8 * 1024;
 const EXECUTION_LIMIT: Duration = Duration::from_secs(2);
 
+/// An observed process-user SID, not installation or engine authority.
+/// Raw account-name output is discarded. Deliberately not Debug/Serialize.
+pub struct CurrentUser(String);
+
+impl CurrentUser {
+    /// Observe the current user using the bounded, joined OS identity adapter.
+    /// # Errors
+    /// Refuses unsupported identities, malformed output and failed cleanup.
+    pub fn observe() -> Result<Self, Error> {
+        observed_sid().map(Self)
+    }
+
+    /// SID for reviewed OS security-descriptor construction; do not log it.
+    #[must_use]
+    pub fn sid(&self) -> &str {
+        &self.0
+    }
+
+    fn pipe_descriptor(&self) -> String {
+        let sid = self.sid();
+        format!("O:{sid}D:P(A;;GA;;;{sid})")
+    }
+}
+
 pub(crate) fn current_user_descriptor() -> Result<String, Error> {
+    CurrentUser::observe().map(|user| user.pipe_descriptor())
+}
+
+fn observed_sid() -> Result<String, Error> {
     // An OS API, NOT PATH/SystemRoot/environment executable discovery.
     let directory = winsafe::GetSystemDirectory().map_err(|_| Error::Identity)?;
     let executable = PathBuf::from(directory).join("whoami.exe");
@@ -63,7 +91,7 @@ pub(crate) fn current_user_descriptor() -> Result<String, Error> {
     if !succeeded {
         return Err(Error::Identity);
     }
-    descriptor(&output.map_err(|_| Error::Identity)?)
+    parse_sid(&output.map_err(|_| Error::Identity)?)
 }
 
 fn retire(child: &mut Child) -> Result<(), Error> {
@@ -75,7 +103,7 @@ fn retire(child: &mut Child) -> Result<(), Error> {
     child.wait().map(|_| ()).map_err(|_| Error::Identity)
 }
 
-fn descriptor(output: &[u8]) -> Result<String, Error> {
+fn parse_sid(output: &[u8]) -> Result<String, Error> {
     if output.len() > usize::try_from(OUTPUT_LIMIT).expect("small output bound") {
         return Err(Error::Identity);
     }
@@ -114,7 +142,7 @@ fn descriptor(output: &[u8]) -> Result<String, Error> {
     {
         return Err(Error::Identity);
     }
-    Ok(format!("O:{sid}D:P(A;;GA;;;{sid})"))
+    Ok(sid.to_owned())
 }
 
 #[cfg(test)]
@@ -127,8 +155,10 @@ mod tests {
             let mut bytes = b"\"".to_vec();
             bytes.extend_from_slice(name);
             bytes.extend_from_slice(b"\",\"S-1-5-21-1-2-3-1001\"\r\n");
+            let user = CurrentUser(parse_sid(&bytes).unwrap());
+            assert_eq!(user.sid(), "S-1-5-21-1-2-3-1001");
             assert_eq!(
-                descriptor(&bytes).unwrap(),
+                user.pipe_descriptor(),
                 "O:S-1-5-21-1-2-3-1001D:P(A;;GA;;;S-1-5-21-1-2-3-1001)"
             );
         }
@@ -140,9 +170,9 @@ mod tests {
             b"\"user\",\"S-1-5-21-1-2-3-1\",\"extra\"",
             b"\"user\",\"S-1-5-21-1-2-3-1\"\nother",
         ] {
-            assert_eq!(descriptor(bad), Err(Error::Identity));
+            assert_eq!(parse_sid(bad), Err(Error::Identity));
         }
-        assert_eq!(descriptor(&vec![b'x'; 8193]), Err(Error::Identity));
+        assert_eq!(parse_sid(&vec![b'x'; 8193]), Err(Error::Identity));
     }
 
     #[test]

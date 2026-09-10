@@ -157,7 +157,7 @@ fn open_file(path: &Path, writing: bool) -> Result<File, SetupError> {
 
 // Owns every process/thread even on an early error. Deadlines bound waiting for
 // helper work, not an unconditional bound on Windows disk or joined cleanup.
-struct Adapter {
+pub(crate) struct Adapter {
     child: Child,
     worker: Option<JoinHandle<Result<(), SetupError>>>,
     close: Option<Sender<()>>,
@@ -169,7 +169,11 @@ impl Adapter {
         Self::start_script(operation, path, SCRIPT)
     }
 
-    fn start_script(operation: &str, path: &Path, script: &str) -> Result<Self, SetupError> {
+    pub(crate) fn start_script(
+        operation: &str,
+        path: &Path,
+        script: &str,
+    ) -> Result<Self, SetupError> {
         let script = format!("{BOOTSTRAP}\ntry {{\n{script}\n}} finally {{ $dmInput.Dispose() }}");
         Self::start_program(operation, path, &script)
     }
@@ -282,7 +286,7 @@ impl Adapter {
         }
     }
 
-    fn finish(mut self) -> Result<(), SetupError> {
+    pub(crate) fn finish(mut self) -> Result<(), SetupError> {
         self.close
             .take()
             .ok_or(ERROR)?

@@ -13,6 +13,8 @@ mod windows;
 pub use auth::{Capability, Endpoint};
 pub use frame::{Channel, FrameReader, FrameWriter, MAX_FRAME};
 #[cfg(windows)]
+pub use identity::CurrentUser;
+#[cfg(windows)]
 pub use windows::{CancellationStatus, CancellationWatch, LocalPipe, MAX_CLIENTS, Server, connect};
 
 /// Fixed classifications only: never embed pipe names, SID, keys or peer input.

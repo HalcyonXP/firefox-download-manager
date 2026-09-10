@@ -76,3 +76,7 @@ The seven new locked registry packages are hmac, interprocess, widestring, ctuti
 ## #50 protected-record adapter review
 
 Setup's optional `private-file` feature reuses the exact existing `winsafe 0.0.29` dependency and feature selection only for `GetSystemDirectory`. No registry package/version/license or build script is added; the lockfile adds only setup's optional dependency edge. Default setup builds do not select it. The fixed first-party script invokes Windows-supplied PowerShell/.NET identity, file-creation and security-descriptor APIs. No PowerShell/.NET binary, security-wrapper implementation, custom P/Invoke or third-party source is copied or redistributed. The process, permission and secret-handling boundary is documented in [PRIVATE_RUNTIME_RECORD.md](PRIVATE_RUNTIME_RECORD.md), separately from license scanning and ADR0015.
+
+### Opt-in protected-directory SDK surface
+
+Setup `private-directory` selects the existing exact winsafe0.0.29 advapi feature for ConvertStringSidToSid/LocalFreeSidGuard and InitializeSecurityDescriptor, with synchronous CreateDirectory from kernel. PRIVATE_RUNTIME_RECORD.md records the owned SID/whole-ACL allocation lifetime and layout review; no new registry package or first-party unsafe exception is introduced. The optional setup-to-local-ipc dependency reuses the bounded current-user identity adapter and introduces no dependency cycle.

@@ -79,3 +79,36 @@ test("private-file adapter keeps secrets in Rust and preserves the OS boundary",
   );
   // Structural regression guard only, not ACL/cross-account/runtime proof.
 });
+
+test("protected-directory creation keeps exclusive ownership and whole-ACL SDK inputs", () => {
+  const rust = text("crates/setup/src/private_directory.rs").split(
+    "\n#[cfg(test)]\nmod tests {",
+  )[0];
+  const script = text("crates/setup/src/private_directory.ps1");
+  assert.match(rust, /Self::create_with_script\(parent, SCRIPT\)/u);
+  assert.match(
+    rust,
+    /winsafe::CreateDirectory\(path\.to_str\(\)\.ok_or\(ERROR\)\?, Some\(&attributes\)\)\.map_err/u,
+  );
+  assert.match(rust, /std::ptr::from_mut\(&mut acl\)\.cast::<winsafe::ACL>\(\)/u);
+  assert.doesNotMatch(
+    rust,
+    /from_mut\(&mut acl\.header\)|unsafe\s*\{|remove_dir_all|create_dir_all/u,
+  );
+  assert.match(rust, /DACL_PRESENT \| winsafe::co::SE::DACL_PROTECTED/u);
+  assert.match(rust, /let retained = DirectoryLease::open\(&path\)\?;/u);
+  const creation = rust.indexOf("create_readonly(&path, &user)?");
+  const retention = rust.indexOf("let retained =");
+  const grant = rust.indexOf('Adapter::start_script("create"');
+  assert.ok(creation >= 0 && creation < retention && retention < grant);
+  assert.match(script, /0x500d0152/u);
+  assert.match(script, /0x500d0112/u);
+  assert.match(script, /0x120089/u);
+  assert.match(script, /0x1f01ff/u);
+  assert.match(script, /DiscretionaryAclProtected/u);
+  assert.match(script, /AccessControlSections\]::Access\)/u);
+  assert.doesNotMatch(
+    script,
+    /ConvertFrom-Json|Get-Acl|Set-Acl|Import-Module|DllImport|Marshal|Add-Type|Invoke-Expression|Start-Process|Start-Job|Set-ExecutionPolicy/u,
+  );
+});

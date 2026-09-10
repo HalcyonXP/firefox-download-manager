@@ -9,6 +9,7 @@ license.workspace = true
 
 [features]
 private-file = ["dep:winsafe"]
+private-directory = ["private-file", "winsafe/advapi", "dep:download-manager-local-ipc"]
 
 [dependencies]
 download-manager-protocol = { version = "=0.1.0", path = "../protocol" }
@@ -19,6 +20,7 @@ thiserror.workspace = true
 uuid.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+download-manager-local-ipc = { version = "=0.1.0", path = "../local-ipc", optional = true }
 winreg.workspace = true
 winsafe = { workspace = true, optional = true }
 

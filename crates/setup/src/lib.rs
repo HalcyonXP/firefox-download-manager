@@ -6,6 +6,8 @@ mod files;
 pub mod package;
 #[cfg(windows)]
 pub mod paths;
+#[cfg(all(windows, feature = "private-directory"))]
+pub mod private_directory;
 #[cfg(all(windows, feature = "private-file"))]
 pub mod private_file;
 #[cfg(windows)]
