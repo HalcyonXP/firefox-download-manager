@@ -126,3 +126,5 @@ The setup launch entry separately derives the helper from a confined current rec
 ## 4082436 hosted startup failures
 
 CI34470951101 failed Windows quality with three private-directory tests timing out before `startup bytes read`: directory/record composition, retained creator/grant, and readonly-before-grant. Each trace records the retained process wait and worker join after the five-second readiness deadline. No request transmission or later permission work was observed in those failed adapters. Package qualification and dependency policy passed; dependent emulation was skipped. Earlier passes do not diagnose these failures, and no startup deadline, concurrency, or production permission requirement was changed in response.
+
+CI34475545402 at1c49add passed quality/dependency policy but failed the package release-target run in the same three private-directory test names, again before `startup bytes read`. Each failed trace recorded a retained process wait and worker join. Dependent emulation was skipped. No shared cause is established by the repeated observation, and the separate local package/no-install passes do not resolve it.

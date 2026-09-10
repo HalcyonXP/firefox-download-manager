@@ -73,6 +73,9 @@ jobs:
       - name: Test setup driver ownership and uncertain dispatch
         run: python -m unittest discover -s scripts -p "test_setup_owner.py"
 
+      - name: Test installed driver boundaries without registration
+        run: python -m unittest discover -s scripts -p "test_installed_driver.py"
+
       - name: Upload extension build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

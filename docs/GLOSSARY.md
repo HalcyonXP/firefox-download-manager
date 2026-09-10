@@ -201,3 +201,5 @@ See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed 
 **Setup lifetime observation (#50)**: a launched child identifier is published only after setup retains its Child handle. Exit/join is a separate observation and is not emitted while a launched child remains. The identifier is an observation tied to that retained owner, not standalone cleanup authority or proof of tray readiness. See INSTALLED_COMPANION_SLICE.md.
 
 **Setup operation observation (#50)**: a per-retained-window sequence and idle/running/complete marker. Completion resolves that accepted operation, including refusal, only after any worker result has been joined/accepted and launched child retained. It is not success, receipt2, tray readiness or durable transaction authority. See INSTALLED_COMPANION_SLICE.md.
+
+**Setup quiescence (#50)**: the expected setup operation has settled and no launched Manager remains, while the retained setup window stays alive for verified Uninstall. This does not retire native peers or HTTP fixtures. Setup retirement additionally closes and waits that exact setup process.

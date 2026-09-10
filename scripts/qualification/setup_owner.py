@@ -93,16 +93,13 @@ class SetupOwner:
         self.child_id = child_id
         return match[2], child_id
 
-    def retire(self, timeout=15):
-        if self.joined:
-            return
+    def quiesce(self, timeout=15):
+        """Settle the action and join Manager, keeping setup alive for uninstall."""
         if self.close_requested:
-            # A previous delivery/wait failure may still have closed the window.
-            # Keep waiting the exact retained process; do not rediscover/replay.
-            self.process.wait(timeout=timeout)
-            self.joined = True
-            return
-        deadline = time.monotonic() + timeout
+            raise RuntimeError("setup close remains pending or joined")
+        return self._quiesce_until(time.monotonic() + timeout)
+
+    def _quiesce_until(self, deadline):
         while time.monotonic() < deadline:
             try:
                 state, child_id = self._observe()
@@ -112,16 +109,24 @@ class SetupOwner:
             if child_id is not None:
                 if not self.quit_requested:
                     self.quit_requested = True
-                    # A normal GUI Quit request, never kill-by-identifier. The
-                    # callback must recheck the parent's retained-child receipt.
                     self.quit_manager(child_id)
             elif state in ("idle", "complete"):
-                # Preserve diagnostic observations BEFORE destroying the window.
-                self.before_close = (state, "no retained Manager")
-                self.close_requested = True
-                self.close_setup()
-                self.process.wait(timeout=max(0, deadline-time.monotonic()))
-                self.joined = True
-                return
+                return state
             time.sleep(0.05)
         raise RuntimeError("setup retirement unconfirmed; retain owner and domain")
+
+    def retire(self, timeout=15):
+        if self.joined:
+            return
+        if self.close_requested:
+            # Delivery/wait failure may still have closed the window. Never replay.
+            self.process.wait(timeout=timeout)
+            self.joined = True
+            return
+        deadline = time.monotonic() + timeout
+        state = self._quiesce_until(deadline)
+        self.before_close = (state, "no retained Manager")
+        self.close_requested = True
+        self.close_setup()
+        self.process.wait(timeout=max(0, deadline-time.monotonic()))
+        self.joined = True
