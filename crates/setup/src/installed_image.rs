@@ -252,7 +252,7 @@ pub(crate) mod tests {
             .unwrap();
             fs::write(
                 path.join(EXTENSION_FILE),
-                b"public XPI fixture, not signing qualification",
+                b"public XPI fixture, not browser qualification",
             )
             .unwrap();
             fs::write(path.join(files::MANIFEST), manifest_bytes(&path).unwrap()).unwrap();

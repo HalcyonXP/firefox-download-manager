@@ -315,7 +315,7 @@ pub fn run() -> w::AnyResult<()> {
     let status = gui::Label::new(
         &main,
         gui::LabelOpts {
-            text: "Install/upgrade requires Firefox and Manager closed normally. Open Manager does not change registration. A per-installation Start Menu shortcut is created. Signed XPI and installed ordinary-click qualification remain pending.",
+            text: "Install/upgrade requires Firefox and Manager closed normally. Open Manager does not change registration. A per-installation Start Menu shortcut is created. Persistent unsigned XPI and installed ordinary-click qualification remain pending.",
             position: gui::dpi(20, 62),
             size: gui::dpi(640, 90),
             ctrl_id: 310,

@@ -1,6 +1,6 @@
 # Visible companion implementation — #50
 
-Status: implementation in progress; not an installable successor release. This branch starts from main f944247 independently of #49/PR55. Provider feasibility observations and browser/signing/handoff proof remain separate in #49/PR55. Component checks do not establish installed workflow acceptance.
+Status: implementation in progress; not an installable successor release. This branch starts from main f944247 independently of #49/PR55. Provider feasibility observations and browser/unsigned-install/handoff proof remain separate in #49/PR55. Component checks do not establish installed workflow acceptance.
 
 ## Boundaries selected before implementation
 
@@ -22,7 +22,7 @@ tray-icon0.24.2 was reviewed but not selected: its constructor can retain a wind
 
 ## Required evidence still ahead
 
-Pure lifecycle tests, actual owned TaskEngine lifetime/lock/checkpoint tests, native window/tray interaction and owned-icon-loss recovery are distinct layers. `EngineOwner` now separates state/settings lifetime from a borrowed protocol session; existing `run_host` still shuts down on EOF. `crates/companion` adds the retained worker and safe Windows preview shell. The preview intentionally allows distinct isolated domains, not a proven installed per-user singleton or IPC connection. The first increment must preserve that distinction. It cannot close #50 without real singleton/IPC/reconnect/quit and installer lifecycle acceptance. Actual Firefox/setup qualification retains ownership and closed-app preflights. Signing, real ordinary-click capture and final exact-artifact publication remain #49/#51–#53 gates.
+Pure lifecycle tests, actual owned TaskEngine lifetime/lock/checkpoint tests, native window/tray interaction and owned-icon-loss recovery are distinct layers. `EngineOwner` now separates state/settings lifetime from a borrowed protocol session; existing `run_host` still shuts down on EOF. `crates/companion` adds the retained worker and safe Windows preview shell. The preview intentionally allows distinct isolated domains, not a proven installed per-user singleton or IPC connection. The first increment must preserve that distinction. It cannot close #50 without real singleton/IPC/reconnect/quit and installer lifecycle acceptance. Actual Firefox/setup qualification retains ownership and closed-app preflights. Persistent unsigned installation, real ordinary-click capture and final exact-artifact publication remain #49/#51–#53 gates.
 
 
 ## First increment evidence and limits

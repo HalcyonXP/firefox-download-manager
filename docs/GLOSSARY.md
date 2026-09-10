@@ -2,6 +2,9 @@
 
 ## Current meaning
 
+- **Unsigned personal XPI (M5)**: the Firefox extension package without Mozilla signing, distributed for local personal use. No signing/submission, publisher account, credentials or marketplace listing is required.
+- **Existing compatibility / settings change / signing / persistence**: distinct facts. Developer Edition may already accept persistent unsigned installation; no normal-profile inspection or settings/protection change is permitted. Exact Manager artifact persistence still requires its own evidence.
+
 - **Canonical repository / `origin`**: [HalcyonXP/firefox-download-manager](https://github.com/HalcyonXP/firefox-download-manager), public and authoritative for code, issues, CI, and future releases. There is no publication-mirror workflow.
 - **Private predecessor / archive**: retained original review/Git records, not an alternative development repository. It must remain private; its sensitive original refs must never be imported.
 - **Current issue number**: an issue in the canonical repository. [ISSUE_MIGRATION.md](ISSUE_MIGRATION.md) maps historical numbers and implementation commits; old commit messages retain their historical namespace.
@@ -10,7 +13,7 @@
 - **Ordinary-click / automatic capture** (M5): route a supported HTTP(S) file download initiated by a normal user click to one automatically started Manager task. The click supplies user intent; routing is automatic. This is not navigation hijacking, replay of every download as GET, or implicit credential collection.
 - **Companion** (M5): visible per-user Rust application owning the single engine/state root, with tray status and deliberate Quit. Independent lifetime across browser restart is our implementation choice; Windows-logon autorun is not implied.
 - **Native bridge** (M5): bounded authenticated/local-user-confined connection between Firefox Native Messaging and the companion, not a second engine or unauthenticated local web server.
-- **Persistent XPI installation** (M5): normal supported installation of the signed add-on that remains installed across Firefox restart. Reinstalling a temporary add-on after restart, including automatically from a harness, does not satisfy it.
+- **Persistent XPI installation** (M5): normal installation of the unsigned personal add-on that remains installed across Firefox restart. This is required behavior, not an already verified Manager result. Reinstalling a temporary add-on after restart, including automatically from a harness, does not satisfy it.
 - **Proposed filename**: a Windows-safe name derived from the URL or entered by the user. #19 resolves this before submission; server metadata cannot choose a path. Collision suffixes are selected safely at final promotion.
 - **Worker**: one transfer lane (1/2/4/8), not permission to exceed the separate global/per-host request caps.
 - **Partial**: helper-managed, unvalidated download storage; not final output.
@@ -25,10 +28,10 @@
 - **Joined Quit** (#50): cooperative engine shutdown followed by joining the retained worker handle before removing the icon/closing. Sending a stop request alone is not a successful Quit.
 - **Companion preview** (#50): a real native window/tray and real engine in a fresh temporary domain, clearly labelled unfinished. It has no browser bridge, capture or installer integration and is excluded from released package payloads. See [COMPANION_DESIGN.md](COMPANION_DESIGN.md).
 
-## Autonomous completion authority (ADR0014)
+## Qualification boundaries (ADR0014)
 
-- **Standing authority**: the owner's explicit instruction to complete the agreed project through GitHub without routine approval requests, including owned isolated tests and reviewed distribution work. It does not supply absent credentials or waive acceptance/security gates.
-- **Operational preflight**: an established condition such as closed Firefox processes before shared-registration mutation. It is not another request for permission; never fake it or terminate unowned processes to satisfy it.
+- **Operational preflight**: an established condition such as closed Firefox processes before shared-registration mutation. Never infer it from an older snapshot or terminate unowned processes to satisfy it.
+- **Distribution scope (ADR0016)**: unsigned personal XPI with existing settings/protections unchanged. Signing/account access is not a prerequisite; exact-artifact persistence and browser acceptance remain required.
 
 ## Privacy meanings
 
@@ -193,7 +196,7 @@ See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed 
 
 - **I/O-only pump / parent-pipe liveness (#50)**: separate copies of the application move bounded native frames but own no engine. An input-pump zero byte is private liveness, not protocol readiness; an output-pump byte 1 follows an actual stdout write/flush, not command commitment. Parent-pipe loss can require whole-process retirement rather than cooperative internal-thread join. The retained owner must still observe process exit and join its own reader/writer/monitor threads before success.
 
-- **Application package probe / launch request / installed readiness (#50)**: the closed metadata probe reports compiled entry-family, wire and package compatibility without opening an engine. Process creation is only a launch request. Actual visible tray, retained installed engine/bridge, signed-XPI persistence and correct ordinary-click output are separate acceptance observations. A successful setup window or mock-registration transaction does not establish them.
+- **Application package probe / launch request / installed readiness (#50)**: the closed metadata probe reports compiled entry-family, wire and package compatibility without opening an engine. Process creation is only a launch request. Actual visible tray, retained installed engine/bridge, unsigned-XPI persistence and correct ordinary-click output are separate acceptance observations. A successful setup window or mock-registration transaction does not establish them.
 - **Buffered terminal events / peer closure (#50)**: already queued events may remain readable after sender closure. Joined owner shutdown, a bounded drain and actual transport termination establish different facts; a first successful read or an idle deadline alone is not proof of a live or closed sender.
 
 - **Receipt2 / journal2 / Programs scope (#50)**: installation ownership formats for a generation-bound Start Menu shortcut, independent of wire2/task4/settings2. The scope is a hash of the independently resolved canonical current-user Programs directory, not a persisted path to execute. Receipt1 has no shortcut ownership; a 1→2 migration explicitly creates it. Application entry family2 rejects the earlier family1 helper before receipt2 activation. A Shell Link readback is not an observed application launch. See SHORTCUT_OWNERSHIP.md.

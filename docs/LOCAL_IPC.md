@@ -53,7 +53,7 @@ Only `crates/windows-io` has a function-local FFI exception for `CancelIoEx`, us
 
 ## Integration still required
 
-Private endpoint/capability publication and ACL/receipt readback; installed per-user singleton authority and migration; complete lifecycle qualification of the new one-controller engine session; native stdio forwarding and coordinated cancellation/join; reconnect/uncertain-command semantics; ordinary setup UI/shortcuts/upgrade/uninstall; actual Firefox lifetime/capture and signed XPI; final exact-package qualification/publication. Do not close #50 or claim install readiness from this library's tests.
+Private endpoint/capability publication and ACL/receipt readback; installed per-user singleton authority and migration; complete lifecycle qualification of the new one-controller engine session; native stdio forwarding and coordinated cancellation/join; reconnect/uncertain-command semantics; ordinary setup UI/shortcuts/upgrade/uninstall; actual Firefox lifetime/capture and persistent unsigned XPI; final exact-package qualification/publication. Do not close #50 or claim install readiness from this library's tests.
 
 ## Initial transport validation checkpoint (historical)
 

@@ -57,6 +57,6 @@ Evidence review identified a missing positive-path distinction: f0b538c accepted
 
 ## Remaining gates
 
-Persistent signed XPI, Firefox restart/native-parent lifetime, supported ordinary-click capture, normal Start Menu/physical tray interaction and exact-final-main package qualification remain open. The available-machine native slice and recorded fault cases do not qualify later source or the complete browser workflow; existing legacy drivers must not be relabeled as receipt2/Firefox qualification. The failed setup window is outside the successful run's cleanup result.
+Persistent unsigned XPI, Firefox restart/native-parent lifetime, supported ordinary-click capture, normal Start Menu/physical tray interaction and exact-final-main package qualification remain open. The available-machine native slice and recorded fault cases do not qualify later source or the complete browser workflow; existing legacy drivers must not be relabeled as receipt2/Firefox qualification. The failed setup window is outside the successful run's cleanup result.
 
 References: [SHORTCUT_OWNERSHIP.md](SHORTCUT_OWNERSHIP.md), [COMPANION_DESIGN.md](COMPANION_DESIGN.md), [USER_WORKFLOW.md](USER_WORKFLOW.md).

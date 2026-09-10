@@ -56,7 +56,7 @@ fn actual_application_probes_before_registration_without_starting_an_engine() {
         } else {
             fs::write(
                 source.join(name),
-                b"public non-executable fixture, not a signed XPI",
+                b"public non-executable fixture, not an installable XPI",
             )
             .unwrap();
         }

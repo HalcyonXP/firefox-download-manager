@@ -8,7 +8,7 @@ The package probe uses the explicit `--package-probe` entry and a bounded closed
 
 Use only independently owned installation/test domains and documented closed-app/registration preflights. Do not install over normal state merely to test. Setup never opens, stops, inspects or changes Firefox profiles. Existing journals and unknown entries retain their conservative refusal/recovery rules. A launched companion intentionally outlives setup; closing setup is not companion shutdown.
 
-An ordinary launch shortcut and its receipt/journal migration, independently observed installed tray/bridge lifetime, signed persistent XPI, restart and ordinary-click capture remain unqualified. Do not substitute temporary extension loading, a right-click action or a successful metadata probe for those gates. No account/signing authority or signed bytes are supplied by this candidate.
+An ordinary launch shortcut and its receipt/journal migration, independently observed installed tray/bridge lifetime, unsigned persistent XPI, restart and ordinary-click capture remain unqualified. Do not substitute temporary extension loading, a right-click action or a successful metadata probe for those gates. No signed XPI or signing/account workflow is required. Exact unsigned-XPI persistence remains unverified; package metadata is not browser acceptance.
 
 Maintainer build selection is `scripts/build-package.ps1 -Development -Companion -Output artifacts/<new-owned-directory>`. This opt-in recipe refuses production selection, preserves the eight payload roles, includes the companion's actual dependency closure/notices, and requires reviewed stock-system imports/runtime objects even for this development candidate. It does not publish or install anything.
 

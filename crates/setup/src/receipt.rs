@@ -22,7 +22,7 @@ pub struct Generation {
     pub package_version: String,
     /// Helper bytes in this generation.
     pub helper_sha256: String,
-    /// Packaged XPI bytes; signing and browser persistence are separate evidence.
+    /// Packaged unsigned XPI bytes; content agreement is not browser persistence.
     pub extension_sha256: String,
     /// Generated fixed-principal native manifest bytes.
     pub manifest_sha256: String,
