@@ -338,3 +338,5 @@ Connect the existing visible-shell gate, retained image/receipt binding, engine 
 
 
 Checkpoint update: the opt-in application now connects the visible-shell gate, image/receipt inspection, engine state lock, private publication and shared controller loop. Real executable stdio/IPC tests pass one small transfer with disconnect/reconnect and joined stalled-I/O cleanup. Production setup/probe/shortcut selection and actual installed Firefox acceptance remain incomplete; the next checkpoint is paired setup integration, not additional standalone primitive expansion.
+
+A concrete relay integration defect was found and corrected before installed selection: private-parent-pipe loss could leave an I/O-only pump blocked on external stdio. Dedicated liveness/input observation now retires those processes; normal and parent-loss cases are separate tested observations, not a process-tree containment assumption.

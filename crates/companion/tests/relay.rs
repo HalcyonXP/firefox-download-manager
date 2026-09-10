@@ -267,3 +267,144 @@ async fn partial_native_input_and_nonreading_output_retire_exact_pumps_and_join(
     drop(writer);
     assert!(!server.cancellation_failed());
 }
+
+#[test]
+fn output_pump_retires_when_its_parent_pipe_dies_with_an_unread_consumer() {
+    use std::{
+        os::windows::process::CommandExt,
+        process::{Child, Command},
+    };
+    struct Owned(Child);
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let (child_input, parent_output) = std::io::pipe().unwrap();
+    let (mut unread, child_output) = std::io::pipe().unwrap();
+    let mut child = Owned(
+        Command::new(APP)
+            .arg("--stdio-output")
+            .stdin(child_input)
+            .stdout(child_output)
+            .stderr(Stdio::piped())
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .unwrap(),
+    );
+    // Both processes are directly retained by this fixture. Their pipe topology
+    // models loss of the sole parent writer without relying on PID/tree lookup.
+    let mut parent = Owned(
+        Command::new(APP)
+            .arg("--stdio-input")
+            .stdin(Stdio::piped())
+            .stdout(parent_output)
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .unwrap(),
+    );
+    let mut sender = parent.0.stdin.take().unwrap();
+    let (ready, observed_ready) = std::sync::mpsc::channel();
+    let writer = std::thread::spawn(move || {
+        let result = (|| -> std::io::Result<_> {
+            sender.write_all(&u32::try_from(MAX_MESSAGE_BYTES).unwrap().to_le_bytes())?;
+            sender.write_all(&vec![7; MAX_MESSAGE_BYTES])?;
+            let mut prefix = [0; 4];
+            unread.read_exact(&mut prefix)?;
+            Ok((sender, unread, prefix))
+        })();
+        let _ = ready.send(result);
+    });
+    let started = observed_ready.recv_timeout(Duration::from_secs(5));
+    if !matches!(&started, Ok(Ok(_))) {
+        let _ = parent.0.kill();
+        let _ = parent.0.wait();
+        let _ = child.0.kill();
+        let _ = child.0.wait();
+    }
+    writer.join().unwrap();
+    let (sender, unread, prefix) = started
+        .expect("owned output startup observation")
+        .expect("owned output prefix");
+    assert_eq!(
+        u32::from_le_bytes(prefix),
+        u32::try_from(MAX_MESSAGE_BYTES).unwrap()
+    );
+    parent.0.kill().unwrap();
+    parent.0.wait().unwrap();
+    drop(sender);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let observed = loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            break Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    if observed.is_none() {
+        child.0.kill().unwrap();
+    }
+    child.0.wait().unwrap(); // All failure assertions follow exact owned cleanup.
+    let mut tail = Vec::new();
+    unread
+        .take(u64::try_from(MAX_MESSAGE_BYTES + 1).unwrap())
+        .read_to_end(&mut tail)
+        .unwrap();
+    assert!(
+        observed.is_some_and(|status| !status.success()),
+        "output pump must retire itself on parent-pipe loss, not survive behind an unread consumer"
+    );
+    assert!(tail.len() < MAX_MESSAGE_BYTES);
+}
+
+#[test]
+fn input_pump_retires_on_private_parent_pipe_loss_with_native_input_held() {
+    use std::{
+        os::windows::process::CommandExt,
+        process::{Child, Command},
+    };
+    struct Owned(Child);
+    impl Drop for Owned {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let (parent_reader, liveness) = std::io::pipe().unwrap();
+    let mut child = Owned(
+        Command::new(APP)
+            .arg("--stdio-input")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(liveness)
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .unwrap(),
+    );
+    let mut native_input = child.0.stdin.take().unwrap();
+    native_input.write_all(&[4, 0]).unwrap();
+    drop(parent_reader); // Sole private parent reader; native input remains held.
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let observed = loop {
+        if let Some(status) = child.0.try_wait().unwrap() {
+            break Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    };
+    if observed.is_none() {
+        child.0.kill().unwrap();
+    }
+    child.0.wait().unwrap();
+    assert!(
+        observed.is_some_and(|status| !status.success()),
+        "input pump must retire on private parent-pipe loss despite held native input"
+    );
+    assert!(native_input.write_all(&[0, 0]).is_err());
+}

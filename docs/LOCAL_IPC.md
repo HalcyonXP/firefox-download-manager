@@ -98,3 +98,5 @@ An unselected `installed-runtime` composition now binds protected records to ind
 
 
 The opt-in application now forwards native stdio through exact owned I/O-only children and retained parent threads; two real-executable tests connect it to the existing engine/controller. The installed worker also connects retained image inspection to state-lock ownership and private runtime publication. These are implemented entry paths, not yet package-selected/installed-browser qualification; COMPANION_DESIGN.md records the boundaries and pending setup/probe work.
+
+Follow-up private-parent-pipe tests now cover output-consumer stalling and held native input after parent-side pipe loss. I/O-only process self-retirement is distinct from cooperative thread joining; normal relay retirement still waits for exact processes and joins retained parent threads. See the application checkpoint for the two initially failing observations and implemented liveness channels.

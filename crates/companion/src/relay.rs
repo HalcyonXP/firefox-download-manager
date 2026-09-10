@@ -39,28 +39,101 @@ fn write_body(writer: &mut impl Write, body: &[u8]) -> Result<(), RelayError> {
         .map_err(|_| RelayError::Output)
 }
 
-/// I/O-only internal entry: raw framed copies, and a private output-completion
-/// byte on stderr for the output child. Refuse console input/output capture.
+/// I/O-only internal entry. Output completion and input-parent liveness use
+/// separate private stderr bytes; no frame or credential is logged there.
 /// # Errors
-/// Rejects malformed frames, console handles and failed actual writes.
+/// Rejects console handles, malformed frames and failed actual writes. Parent
+/// loss during blocked I/O retires this I/O-only process with failure; it never
+/// claims delivery or engine cleanup. Its owner must still wait for this process.
 pub fn pump(output: bool) -> Result<(), RelayError> {
-    let mut input = std::io::stdin();
-    let mut destination = std::io::stdout();
-    let mut acknowledgement = std::io::stderr();
-    if input.is_terminal() || destination.is_terminal() || (output && acknowledgement.is_terminal())
+    if std::io::stdin().is_terminal()
+        || std::io::stdout().is_terminal()
+        || std::io::stderr().is_terminal()
     {
         return Err(RelayError::Start);
     }
-    while let Some(body) = read_frame(&mut input).map_err(|_| RelayError::Input)? {
-        write_body(&mut destination, &body)?;
-        if output {
-            acknowledgement
-                .write_all(&[1])
-                .and_then(|()| acknowledgement.flush())
-                .map_err(|_| RelayError::Output)?;
+    if output { output_pump() } else { input_pump() }
+}
+
+fn input_pump() -> Result<(), RelayError> {
+    let (stop, stopped) = mpsc::channel();
+    let monitor = thread::Builder::new()
+        .name("manager-input-parent".into())
+        .spawn(move || {
+            loop {
+                // The parent continuously drains this private pipe. Its read end is
+                // distinct from native stdin, which can remain open after parent loss.
+                if std::io::stderr()
+                    .write_all(&[0])
+                    .and_then(|()| std::io::stderr().flush())
+                    .is_err()
+                {
+                    std::process::exit(1);
+                }
+                match stopped.recv_timeout(Duration::from_millis(250)) {
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
+                    _ => break,
+                }
+            }
+        })
+        .map_err(|_| RelayError::Start)?;
+    let result = (|| {
+        let mut input = std::io::stdin();
+        while let Some(body) = read_frame(&mut input).map_err(|_| RelayError::Input)? {
+            write_body(&mut std::io::stdout(), &body)?;
+        }
+        Ok(())
+    })();
+    let _ = stop.send(());
+    monitor.join().map_err(|_| RelayError::Retirement)?;
+    result
+}
+
+fn output_pump() -> Result<(), RelayError> {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    };
+    let pending = Arc::new(AtomicBool::new(false));
+    let receiving = Arc::clone(&pending);
+    let (sender, receiver) = mpsc::sync_channel(1);
+    let reader = thread::Builder::new()
+        .name("manager-output-parent".into())
+        .spawn(move || {
+            let mut input = std::io::stdin();
+            loop {
+                match read_frame(&mut input) {
+                    Ok(Some(body)) if !body.is_empty() => {
+                        // Parent protocol permits exactly one outstanding frame;
+                        // it waits for the actual stdout acknowledgement before more.
+                        if receiving.swap(true, Ordering::SeqCst) || sender.send(body).is_err() {
+                            std::process::exit(1);
+                        }
+                    }
+                    Ok(None) if !receiving.load(Ordering::SeqCst) => break,
+                    // No synchronous stdout cancellation claim: terminate this exact
+                    // I/O-only process, including its blocked writer, with failure.
+                    _ => std::process::exit(1),
+                }
+            }
+        })
+        .map_err(|_| RelayError::Start)?;
+    for body in receiver {
+        if write_body(&mut std::io::stdout(), &body).is_err() {
+            std::process::exit(1);
+        }
+        // Clear before acknowledging: a valid parent cannot send the next frame
+        // until it receives that acknowledgement, avoiding a lost pending flag.
+        pending.store(false, Ordering::SeqCst);
+        if std::io::stderr()
+            .write_all(&[1])
+            .and_then(|()| std::io::stderr().flush())
+            .is_err()
+        {
+            std::process::exit(1);
         }
     }
-    Ok(())
+    reader.join().map_err(|_| RelayError::Retirement)
 }
 
 struct Pumps {
@@ -82,7 +155,7 @@ impl Pumps {
             .arg("--stdio-input")
             .stdin(input)
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .creation_flags(0x0800_0000)
             .spawn()
             .map_err(|_| RelayError::Start)?;
@@ -105,6 +178,16 @@ impl Pumps {
                             break;
                         }
                     }
+                })
+                .map_err(|_| RelayError::Start)?,
+        );
+        let mut liveness = pumps.children[0].stderr.take().ok_or(RelayError::Start)?;
+        pumps.threads.push(
+            thread::Builder::new()
+                .name("manager-native-parent-monitor".into())
+                .spawn(move || {
+                    let mut marker = [0];
+                    while liveness.read_exact(&mut marker).is_ok() && marker == [0] {}
                 })
                 .map_err(|_| RelayError::Start)?,
         );
