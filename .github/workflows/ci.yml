@@ -69,6 +69,34 @@ jobs:
       - name: Test qualification fixture and reporting boundaries
         run: python -m unittest discover -s scripts -p "test_qualification.py"
 
+      - name: Upload extension build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: extension-dist
+          path: extension/dist
+          if-no-files-found: error
+
+  package:
+    name: Windows package qualification
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
       - name: Build checksummed Windows x64 candidate
         shell: pwsh
         run: ./scripts/build-package.ps1 -TestRust -Rebuild
@@ -131,16 +159,9 @@ jobs:
             artifacts/native-evidence.json
           if-no-files-found: error
 
-      - name: Upload extension build
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: extension-dist
-          path: extension/dist
-          if-no-files-found: error
-
   windows11-emulation:
     name: Windows 11 x64-emulation package lifecycle
-    needs: quality
+    needs: [quality, package]
     runs-on: windows-11-arm
     timeout-minutes: 15
     steps:
