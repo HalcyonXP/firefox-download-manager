@@ -76,9 +76,11 @@ Matching source supplies the adapter contract: `ext-webRequest.js` passes the ex
 
 Twelve Node models exercise the actual reader and SDK adapter shape; nine executed/rejected mutations cover identity/process/default-store binding, channel replacement, closure, idempotent release, serialization, sparse history and uncertain close-hook registration. Complete npm gates pass with restored sources. Initial modeled counterexamples caught repeated release detaching a later record and closure during metadata copying/final matching; these were corrected before selection. No product/candidate/fixed-probe manifest or entry point uses the reader, and no new live mode, permission or preference is introduced. Actual parent loading, registered-channel timing, handoff binding and post-cancellation use remain unverified.
 
-## Native fixed-name groundwork (unselected)
+## Native binding groundwork (unselected)
 
 The native storage API now supports a `NamedValidatedPartial`: a fully computed fingerprint and immutable final component held with the non-cloneable validation lease. Publication attempts only that component and refuses a collision instead of silently numbering another name. Binding is not a directory reservation or a verdict; another attempt after drop/failure requires fresh validation and independently current authority. Three storage regressions, two compile-fail ownership examples and six rejected mutations cover this boundary; see [INTEGRITY.md](INTEGRITY.md#opt-in-fixed-name-binding). Ordinary task completion remains unchanged and does not select this API. Task/run/context/challenge association and actual verdict consumption remain unimplemented.
+
+`ProbeClient::probe_anonymous_without_redirects` now provides an unselected anonymous probe path which refuses initial and final-boundary redirects before target contact. Ordinary probing remains unchanged; transfer requests already refuse redirects. This can support an enforced empty native redirect chain when starting from an actual captured final browser URL, but task/retry/reprobe/recovery selection is not implemented. A final-URL-only ordinary probe receipt does not prove the absence of intermediate URLs. Three real loopback cases and three rejected mutations cover the mode; see [HTTP.md](HTTP.md#opt-in-anonymous-no-redirect-probe). No browser or current-verdict qualification is added.
 
 ## Production integration still required
 
