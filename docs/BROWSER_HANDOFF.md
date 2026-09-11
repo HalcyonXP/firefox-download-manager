@@ -22,7 +22,7 @@ Missing terminal observation becomes uncertain after five seconds. A mismatched 
 
 ## Pending presentation
 
-The manager port publishes pending records and a blocked-state warning; the extension badge indicates attention is needed. Labels join opaque IDs to the existing native task-name projection, without adding names to journal storage. Unknown task details do not offer Manager confirmation. `intent` offers explicit Manager/Firefox decisions and recheck; other stages offer recheck. Confirmation warns against competing Firefox output. Rendering is presentation, not native commitment or independent evidence of browser cancellation.
+The manager port publishes pending records and a blocked-state warning; the extension badge indicates attention is needed. Labels join opaque IDs to the existing native task-name projection, without adding names to journal storage. Unknown details or any phase other than a known Prepared reservation do not offer Manager confirmation. `intent` offers explicit Manager/Firefox decisions and recheck; other stages offer recheck. Confirmation warns against competing Firefox output. Rendering is presentation, not native commitment or independent evidence of browser cancellation.
 
 ## Unselected eligibility adapter
 
@@ -47,4 +47,10 @@ Integration found an actual compatibility defect: the companion advertised `prep
 
 An owned temporary loopback XPI has now exercised the real coordinator/native/UI nominal path and nine cleanup checkpoints against an identified older clean package; see [INSTALLED_BROWSER_SLICE.md](INSTALLED_BROWSER_SLICE.md). This does not qualify production interception or persistence.
 
-Still required before production selection: further live recovery/fault cases, phase-aware queue controls, orphan/tombstone/history reconciliation, activation/permission/off-on behavior, persistent unsigned exact-XPI restart/click acceptance and final artifact qualification. Existing API-probe and installed-native reports remain separate source-specific observations. No current component result closes #49/#50 or unblocks #51 acceptance.
+Still required before production selection: further live recovery/fault cases, live phase-aware control qualification, orphan/tombstone/history reconciliation, activation/permission/off-on behavior, persistent unsigned exact-XPI restart/click acceptance and final artifact qualification. Existing API-probe and installed-native reports remain separate source-specific observations. No current component result closes #49/#50 or unblocks #51 acceptance.
+
+
+The dashboard now distinguishes durable native handoff phase from transfer state using `task_handoff_phase`; see [PROTOCOL.md](PROTOCOL.md#task-phase-metadata). Prepared/aborted/unknown snapshots do not offer ordinary mutating controls; committed history remains retained. A regression first demonstrated the former queued projection offered Pause/Start/Cancel for Prepared. Component checks do not establish the live updated-pair result.
+
+
+Recheck now queries uncertain `intent` by the same ID: already-Committed status settles it without sending commit; Prepared/Aborted stays pending. Explicit Manager continuation independently rechecks status before recording `confirmed`. An Aborted result refuses while preserving `intent`, allowing the separate Firefox/unused-reservation choice instead of stranding it as Confirmed. A modeled regression demonstrated both the previous no-op recheck and the stranded-Aborted stage. No new transfer is authorized from intent on restart, and no journal contents/limits/deadlines change. Live missing-terminal confirmation remains an acceptance gate.

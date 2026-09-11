@@ -71,6 +71,14 @@ async fn preparation_survives_restart_without_network_or_ordinary_control_author
     let engine = domain.engine();
     let prepared = engine.prepare_handoff(domain.request(id, &url)).unwrap();
     assert_eq!(prepared.phase(), HandoffPhase::Prepared);
+    assert_eq!(
+        prepared.task().handoff_phase(),
+        Some(HandoffPhase::Prepared)
+    );
+    assert_eq!(
+        engine.snapshots()[0].handoff_phase(),
+        Some(HandoffPhase::Prepared)
+    );
     assert_eq!(prepared.task().state(), TaskState::Queued);
     assert_eq!(engine.start(id), Err(TaskEngineError::InvalidTaskState));
     assert_eq!(
@@ -129,6 +137,7 @@ async fn concurrent_commits_and_restart_create_only_one_independently_correct_ou
         .unwrap();
     engine.shutdown().await.unwrap();
     assert_eq!(complete.state(), TaskState::Completed);
+    assert_eq!(complete.handoff_phase(), Some(HandoffPhase::Committed));
     assert_eq!(engine.snapshots().len(), 1);
     let count = server.requests().len();
     assert!(count > 0);
@@ -225,6 +234,11 @@ async fn aborted_identity_and_immutable_inputs_cannot_be_reused() {
     }
     let aborted = engine.abort_handoff(id).unwrap();
     assert_eq!(aborted.phase(), HandoffPhase::Aborted);
+    assert_eq!(aborted.task().handoff_phase(), Some(HandoffPhase::Aborted));
+    assert_eq!(
+        engine.snapshots()[0].handoff_phase(),
+        Some(HandoffPhase::Aborted)
+    );
     assert_eq!(engine.abort_handoff(id).unwrap(), aborted);
     assert_eq!(
         engine.commit_handoff(id),
@@ -264,6 +278,7 @@ fn ordinary_tasks_and_existing_unloaded_files_are_not_adopted() {
     let ordinary = engine
         .create_task_default(url, &domain.downloads, "normal.bin")
         .unwrap();
+    assert_eq!(ordinary.handoff_phase(), None);
     assert_eq!(
         engine.prepare_handoff(domain.request(ordinary.task_id(), url)),
         Err(TaskEngineError::InvalidTaskState)

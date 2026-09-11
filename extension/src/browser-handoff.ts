@@ -222,7 +222,7 @@ export class BrowserHandoff {
       throw new Error("Handoff receipt refused");
     await this.#journal.settle(id);
   }
-  /** Never replay prepare or Add. Intent without an observed cancellation stays pending. */
+  /** Never replay prepare or Add. Intent never authorizes an automatic commit. */
   async recover(): Promise<void> {
     try {
       await this.#journal.ready();
@@ -239,11 +239,16 @@ export class BrowserHandoff {
         await this.#exclusive(entry.id, async () => {
           if (entry.stage === "preparing" || entry.stage === "fallback")
             await this.#abort(entry.id);
-          else if (entry.stage === "cancelled" || entry.stage === "confirmed") {
+          else if (
+            entry.stage === "intent" ||
+            entry.stage === "cancelled" ||
+            entry.stage === "confirmed"
+          ) {
             const receipt = await this.#peer.command("get_handoff", { task_id: entry.id });
             if (receipt.task.task_id !== entry.id) throw new Error("Handoff receipt refused");
             if (receipt.phase === "committed") await this.#journal.settle(entry.id);
-            else if (receipt.phase === "prepared") await this.#commit(entry.id);
+            else if (receipt.phase === "prepared" && entry.stage !== "intent")
+              await this.#commit(entry.id);
           }
         });
       } catch {
@@ -264,6 +269,13 @@ export class BrowserHandoff {
     try {
       await this.#exclusive(id, async () => {
         if (choice === "manager") {
+          const receipt = await this.#peer.command("get_handoff", { task_id: id });
+          if (receipt.task.task_id !== id || receipt.phase === "aborted")
+            throw new Error("Handoff cannot continue in Manager");
+          if (receipt.phase === "committed") {
+            await this.#journal.settle(id);
+            return;
+          }
           await this.#journal.advance(id, "confirmed");
           await this.#commit(id);
         } else await this.#abort(id);

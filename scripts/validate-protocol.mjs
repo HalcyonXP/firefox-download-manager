@@ -57,6 +57,27 @@ for (const phase of ["prepared", "aborted"]) {
   assert.equal(validate(invalid), false, "uncommitted handoff claimed completed output");
 }
 
+// A standalone frame may be from an older peer; negotiated presence is enforced
+// by NativeConnection. If present, closed phase/transfer invariants still apply.
+for (const phase of [null, "prepared", "committed", "aborted"]) {
+  const value = structuredClone(prepared);
+  value.result.phase = phase ?? "prepared";
+  value.result.task.handoff_phase = phase ?? "prepared";
+  value.result.task.state = phase === "aborted" ? "cancelled" : "queued";
+  assert.equal(validate(value), true, "valid phase projection refused");
+}
+for (const patch of [
+  { handoff_phase: "unknown" },
+  { handoff_phase: null },
+  { handoff_phase: "committed" },
+  { handoff_phase: "prepared", bytes_completed: 1 },
+  { handoff_phase: "aborted", state: "queued" },
+]) {
+  const invalid = structuredClone(prepared);
+  Object.assign(invalid.result.task, patch);
+  assert.equal(validate(invalid), false, "invalid task phase projection accepted");
+}
+
 let sessionMessageCount = 0;
 for (const sessionPath of process.argv.slice(2)) {
   const document = JSON.parse(await readFile(sessionPath, "utf8"));

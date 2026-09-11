@@ -410,6 +410,9 @@
               "type": "null"
             }
           ]
+        },
+        "handoff_phase": {
+          "enum": [null, "prepared", "committed", "aborted"]
         }
       },
       "additionalProperties": false,
@@ -428,6 +431,60 @@
         "created_at",
         "updated_at",
         "error"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "required": ["handoff_phase"],
+            "properties": {
+              "handoff_phase": {
+                "const": "prepared"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "const": "queued"
+              },
+              "bytes_completed": {
+                "const": 0
+              },
+              "expected_size": {
+                "type": "null"
+              },
+              "transfer_mode": {
+                "const": "pending"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "required": ["handoff_phase"],
+            "properties": {
+              "handoff_phase": {
+                "const": "aborted"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "state": {
+                "const": "cancelled"
+              },
+              "bytes_completed": {
+                "const": 0
+              },
+              "expected_size": {
+                "type": "null"
+              },
+              "transfer_mode": {
+                "const": "pending"
+              }
+            }
+          }
+        }
       ]
     },
     "snapshotPage": {
@@ -623,7 +680,8 @@
               "coalesced_progress",
               "authenticated_requests",
               "sha256",
-              "prepared_handoff"
+              "prepared_handoff",
+              "task_handoff_phase"
             ]
           }
         },
@@ -1642,6 +1700,9 @@
                 "properties": {
                   "state": {
                     "const": "queued"
+                  },
+                  "handoff_phase": {
+                    "const": "prepared"
                   }
                 },
                 "required": ["state"]
@@ -1665,9 +1726,34 @@
                 "properties": {
                   "state": {
                     "const": "cancelled"
+                  },
+                  "handoff_phase": {
+                    "const": "aborted"
                   }
                 },
                 "required": ["state"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "committed"
+              }
+            },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "task": {
+                "type": "object",
+                "properties": {
+                  "handoff_phase": {
+                    "const": "committed"
+                  }
+                }
               }
             }
           }

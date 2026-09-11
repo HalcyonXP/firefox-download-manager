@@ -23,6 +23,7 @@ class Storage implements HandoffStorage {
 }
 function receipt(phase: NativeHandoff["phase"], taskId = id): NativeHandoff {
   const task: NativeTask = {
+    handoff_phase: phase,
     task_id: taskId,
     display_name: "file.bin",
     destination: "C:\\Downloads",
@@ -120,7 +121,7 @@ describe("browser cancellation/commit boundary", () => {
       expect(peer.calls).toEqual(["prepare_handoff"]);
       expect(controller.view().pending[0]?.stage).toBe("intent");
       await controller.recover();
-      expect(peer.calls).toEqual(["prepare_handoff"]);
+      expect(peer.calls).toEqual(["prepare_handoff", "get_handoff"]);
     },
   );
   it("leaves a missing terminal event uncertain rather than committing after its deadline", async () => {
@@ -225,7 +226,7 @@ describe("browser cancellation/commit boundary", () => {
   it("requires explicit intent resolution and records confirmation separately from observation", async () => {
     const { controller, storage, peer } = setup("intent");
     await controller.recover();
-    expect(peer.calls).toEqual([]);
+    expect(peer.calls).toEqual(["get_handoff"]);
     peer.observe = (command) => {
       if (command === "commit_handoff")
         expect(storage.value).toMatchObject({ pending: [{ stage: "confirmed" }] });
@@ -354,5 +355,26 @@ describe("closed bounded pending journal", () => {
       { id, createdAt: 1, stage: "intent" },
       { id: other, createdAt: 2, stage: "fallback" },
     ]);
+  });
+});
+
+describe("phase-aware uncertain intent recovery", () => {
+  it("rechecks an already committed intent without another commit or Add", async () => {
+    const { controller, peer } = setup("intent");
+    peer.phase = "committed";
+    await controller.recover();
+    expect(peer.calls).toEqual(["get_handoff"]);
+    expect(controller.view().pending).toEqual([]);
+    expect(peer.transfers).toBe(0);
+  });
+  it("does not strand an aborted intent as a confirmed continuation", async () => {
+    const { controller, peer } = setup("intent");
+    peer.phase = "aborted";
+    await expect(controller.resolveIntent(id, "manager")).rejects.toThrow();
+    expect(controller.view().pending[0]?.stage).toBe("intent");
+    expect(peer.calls).toEqual(["get_handoff"]);
+    await controller.resolveIntent(id, "firefox");
+    expect(controller.view().pending).toEqual([]);
+    expect(peer.transfers).toBe(0);
   });
 });

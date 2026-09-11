@@ -405,6 +405,7 @@ impl TaskProgress {
 #[derive(Clone, PartialEq, Eq)]
 pub struct TaskSnapshot {
     task_id: TaskId,
+    handoff_phase: Option<HandoffPhase>,
     display_name: String,
     destination: PathBuf,
     source_origin: String,
@@ -422,6 +423,12 @@ pub struct TaskSnapshot {
 }
 
 impl TaskSnapshot {
+    /// Durable handoff phase, independent of the ordinary transfer lifecycle.
+    #[must_use]
+    pub const fn handoff_phase(&self) -> Option<HandoffPhase> {
+        self.handoff_phase
+    }
+
     /// Stable task ID.
     #[must_use]
     pub const fn task_id(&self) -> TaskId {
@@ -518,6 +525,7 @@ impl fmt::Debug for TaskSnapshot {
         formatter
             .debug_struct("TaskSnapshot")
             .field("task_id", &self.task_id)
+            .field("handoff_phase", &self.handoff_phase)
             .field("display_name", &"<redacted>")
             .field("destination", &"<redacted>")
             .field("source_origin", &self.source_origin)
@@ -1647,6 +1655,7 @@ impl ManagedState {
         let resource = self.metadata.resource();
         TaskSnapshot {
             task_id: self.metadata.task_id(),
+            handoff_phase: self.metadata.handoff_phase(),
             display_name: self
                 .metadata
                 .final_path()

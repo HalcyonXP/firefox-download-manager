@@ -22,7 +22,7 @@ Browser journal/recovery, pending presentation and conservative click/eligibilit
 
 ## Opt-in wire2 commands
 
-All commands require negotiated `prepared_handoff`. `prepare_handoff` takes `{task_id, download}`; `download` uses Add fields but forbids any `request_context` member, including null. Destination/name/workers resolve once using validated input or current settings. Those resolved values form the immutable tuple: changed defaults may refuse a repeated omitted-field prepare; use status for the same ID instead of inventing a replacement ID. `commit_handoff`, `abort_handoff` and `get_handoff` each take `{task_id}`. Successful results are `{phase, task}`, where task is the existing sanitized full task projection. Unknown IDs are errors, not empty successful receipts. Frames and typed payloads retain existing size/shape limits.
+All commands require negotiated `prepared_handoff`. `prepare_handoff` takes `{task_id, download}`; `download` uses Add fields but forbids any `request_context` member, including null. Destination/name/workers resolve once using validated input or current settings. Those resolved values form the immutable tuple: changed defaults may refuse a repeated omitted-field prepare; use status for the same ID instead of inventing a replacement ID. `commit_handoff`, `abort_handoff` and `get_handoff` each take `{task_id}`. Successful results are `{phase, task}`, where task is the sanitized full task projection, including matching `handoff_phase` when `task_handoff_phase` is advertised. Unknown IDs are errors, not empty successful receipts. Frames and typed payloads retain existing size/shape limits.
 
 Preparation is authorization to wait, not proof of browser eligibility, cancellation, credentials, redirect safety or native output. Only an explicit commit can start engine work. The extension can recover existing pending IDs through these commands; it does not register an ordinary-download interceptor.
 
@@ -44,3 +44,13 @@ CI34558329318 at6ff1843 passed debug quality but failed the release-target `lost
 The test now retains response count, last reported closed-enum task state, byte count, allowlisted failure code and a fixed pending-operation label. It never formats raw responses, identifiers, URLs, paths or failure context. Deadline failure drops its peer, explicitly joins the exact worker, retires the fixture and preserves the failed domain before refusing. Production behavior, deadlines, concurrency and dependency graph are unchanged.
 
 Nine bridge tests pass locally in debug and reviewed LLVM/UCRT release configurations, including a fileless observation-filter control. A deliberately retained HTTP response gate rejected completion after the existing deadline and reached explicit worker join/fixture retirement; this diagnoses the test boundary, not the hosted failure. The initial diagnostic edit exceeded the function-length lint; extracting an ownership-preserving completion/retirement helper resolved it without a lint exception.
+
+
+## Phase-aware controls
+
+Full task snapshots now carry durable handoff phase through `task_handoff_phase`; it is not inferred from queued/cancelled state. The extension hides ordinary controls for Prepared, Aborted and unknown older-companion snapshots, retaining Open folder. Committed tasks retain normal transfer controls but not Remove: engine/store history retention still forbids forgetting their IDs. Both dashboard selection and the NativeConnection dispatch guard share these restrictions, so a stale UI command cannot bypass them. Engine enforcement is unchanged. Waiting/discarded reservations have explicit status text rather than apparent queued transfer progress.
+
+This does not implement replay-safe expiry, orphan reconciliation or automatic capture. The earlier installed-browser diagnostic used older native bytes and does not qualify this new projection/UI pairing.
+
+
+Local phase/recovery checkpoint checks pass workspace formatting/Clippy/tests/build, nine engine and nine actual bridge tests on debug and reviewed LLVM/UCRT release flags, plus TypeScript and Python driver models. Targeted mutations reject omitted snapshot phase, dashboard phase input, dispatch restriction, intent auto-commit and aborted-intent protection. These are component results, not new installed/browser qualification. Initial snapshot decoding must use the already validated Hello, not the connected-only support accessor; connection readiness itself depends on decoding that snapshot.

@@ -9,19 +9,19 @@ import unittest
 from unittest.mock import Mock, patch
 import zipfile
 
-from qualification.browser_installed import BrowserInstalledRun, BODY, PAYLOADS, build_probe, settled, restart_ui, pending_confirmation
+from qualification.browser_installed import BrowserInstalledRun, BODY, PAYLOADS, build_probe, settled, restart_ui, pending_confirmation, explicit_continue, phase_controls, CONTINUE_PROMPT, ELEMENT
 from qualification.installed import InstalledRun
 
 
 class BrowserInstalledTests(unittest.TestCase):
     def test_correlated_completion_requires_strict_positive_observations(self):
-        record = {"qualification": False, "connected": True, "overflow": False, "blocked": False,
-                  "pending": [], "taskCount": 1, "tasks": [{"state": "completed", "bytes": len(BODY)}],
+        record = {"qualification": False, "connected": True, "phaseMetadataAvailable": True, "overflow": False, "blocked": False,
+                  "pending": [], "taskCount": 1, "tasks": [{"state": "completed", "bytes": len(BODY), "phase": "committed"}],
                   "records": [{"request": 1, "stage": "decision", "cancelled": True},
                               {"request": 1, "stage": "terminal", "cancelled": True}]}
         self.assertTrue(settled(record, captured=True))
         for field, value in (("qualification", True), ("pending", ["intent"]), ("taskCount", True),
-                             ("taskCount", 2), ("overflow", True), ("connected", False), ("records", [])):
+                             ("taskCount", 2), ("phaseMetadataAvailable", False), ("overflow", True), ("connected", False), ("records", [])):
             with self.subTest(field=field, value=value):
                 with self.assertRaises(RuntimeError): settled({**record, field: value}, captured=True)
         for field, value in (("request", True), ("request", 2), ("cancelled", 1), ("cancelled", False)):
@@ -31,8 +31,8 @@ class BrowserInstalledTests(unittest.TestCase):
         with self.assertRaises(RuntimeError): settled(record, captured=False)
 
     def test_uncertain_intent_cannot_be_interpreted_as_committed_completion(self):
-        pending = {"qualification": False, "connected": True, "overflow": False, "blocked": False,
-                   "pending": ["intent"], "taskCount": 1, "tasks": [{"state": "queued", "bytes": 0}], "records": []}
+        pending = {"qualification": False, "connected": True, "phaseMetadataAvailable": True, "overflow": False, "blocked": False,
+                   "pending": ["intent"], "taskCount": 1, "tasks": [{"state": "queued", "bytes": 0, "phase": "prepared"}], "records": []}
         self.assertTrue(pending_confirmation(pending, captured=False))
         with self.assertRaises(RuntimeError): settled(pending, captured=False)
         with self.assertRaises(RuntimeError): pending_confirmation({**pending, "pending": []}, captured=False)
@@ -98,6 +98,24 @@ class BrowserInstalledTests(unittest.TestCase):
         restart_ui(browser, "task-fixture", "completed")
         self.assertEqual(pages["inspector"], "inspect.html")
         self.assertEqual(pages["test"], "manager.html")
+
+    def test_explicit_continuation_checks_actual_warning_before_accepting(self):
+        browser = Mock(); browser.script.return_value = {ELEMENT: "owned-button"}
+        browser.command.side_effect = [None, {"value": CONTINUE_PROMPT}, None]
+        explicit_continue(browser)
+        self.assertEqual([call.args[0] for call in browser.command.call_args_list],
+                         ["WebDriver:ElementClick", "WebDriver:GetAlertText", "WebDriver:AcceptAlert"])
+        self.assertIn(CONTINUE_PROMPT, Path("extension/src/manager.ts").read_text(encoding="utf-8"))
+        browser.reset_mock(); browser.command.side_effect = [None, {"value": "unexpected warning"}]
+        with self.assertRaises(RuntimeError): explicit_continue(browser)
+        self.assertNotIn("WebDriver:AcceptAlert", [call.args[0] for call in browser.command.call_args_list])
+
+    def test_phase_controls_refuse_mutating_buttons_or_missing_owned_row(self):
+        browser = Mock(); browser.script.return_value = ["Open folder"]
+        phase_controls(browser)
+        for labels in ([], ["Start", "Open folder"], ["Remove history", "Open folder"]):
+            browser.script.return_value = labels
+            with self.assertRaises(RuntimeError): phase_controls(browser)
 
     def test_compiler_deadline_keeps_exact_parent_even_with_broken_status_sink(self):
         process = Mock(); process.wait.side_effect = [subprocess.TimeoutExpired("owned-node", 60), 0]

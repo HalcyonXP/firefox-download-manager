@@ -2,10 +2,15 @@ import type { HandoffView } from "./browser-handoff";
 import type { HandoffStage, PendingHandoff } from "./handoff-journal";
 import type { NativeTask } from "./native-connection";
 
-type TaskLabel = Pick<NativeTask, "task_id" | "display_name">;
+type TaskLabel = Pick<NativeTask, "task_id" | "display_name"> &
+  Partial<Pick<NativeTask, "handoff_phase">>;
 export function handoffLabel(entry: PendingHandoff, tasks: readonly TaskLabel[]): string {
   const task = tasks.find((value) => value.task_id === entry.id);
   return `${task?.display_name ?? "Task details unavailable"} (${entry.id}): ${handoffStageText[entry.stage]}`;
+}
+
+export function canContinueInManager(id: string, tasks: readonly TaskLabel[]): boolean {
+  return tasks.some((task) => task.task_id === id && task.handoff_phase === "prepared");
 }
 
 export const handoffStageText: Record<HandoffStage, string> = {
@@ -48,7 +53,7 @@ export function renderHandoffs(
       const button = document.createElement("button");
       button.type = "button";
       button.disabled =
-        view.blocked || (choice === "manager" && !tasks.some((task) => task.task_id === entry.id));
+        view.blocked || (choice === "manager" && !canContinueInManager(entry.id, tasks));
       button.textContent =
         choice === "manager"
           ? "I checked Firefox stopped — continue in Manager"

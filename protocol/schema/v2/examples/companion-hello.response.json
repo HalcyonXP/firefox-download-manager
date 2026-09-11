@@ -12,7 +12,8 @@
       "coalesced_progress",
       "authenticated_requests",
       "sha256",
-      "prepared_handoff"
+      "prepared_handoff",
+      "task_handoff_phase"
     ],
     "max_message_bytes": 1048576
   }

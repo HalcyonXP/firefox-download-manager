@@ -252,6 +252,7 @@ async fn negotiate<W: Write>(
                         "coalesced_progress",
                         "authenticated_requests",
                         "sha256",
+                        "task_handoff_phase",
                     ];
                     if session.handoff_enabled {
                         capabilities.push("prepared_handoff");
@@ -1163,6 +1164,15 @@ fn task_description(snapshot: &TaskSnapshot) -> Result<TaskDescription, HostErro
         .ok_or(HostError::Projection)?
         .to_owned();
     Ok(TaskDescription {
+        handoff_phase: snapshot.handoff_phase().map(|phase| {
+            use download_manager_engine::persistence::HandoffPhase;
+            use download_manager_protocol::HandoffPhaseName;
+            match phase {
+                HandoffPhase::Prepared => HandoffPhaseName::Prepared,
+                HandoffPhase::Committed => HandoffPhaseName::Committed,
+                HandoffPhase::Aborted => HandoffPhaseName::Aborted,
+            }
+        }),
         task_id: snapshot.task_id().to_string(),
         display_name: snapshot.display_name().to_owned(),
         destination,
@@ -1561,6 +1571,12 @@ mod tests {
                 .unwrap()
                 .contains(&json!("prepared_handoff"))
         );
+        assert!(
+            output[0]["result"]["capabilities"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("task_handoff_phase"))
+        );
         for command in input.iter().skip(1) {
             let response = output
                 .iter()
@@ -1575,6 +1591,40 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn task_projection_reports_durable_phase_instead_of_guessing_from_state() {
+        use download_manager_engine::{scheduler::WorkerCount, task::HandoffRequest};
+        let directories = Directories::new("phase projection");
+        let engine = TaskEngine::open(&directories.state, TaskEngineOptions::default()).unwrap();
+        let url = "https://fixture.example.invalid/file";
+        let ordinary = engine
+            .create_task_default(url, &directories.destination, "normal.bin")
+            .unwrap();
+        let normal = serde_json::to_value(super::task_description(&ordinary).unwrap()).unwrap();
+        assert!(normal.as_object().unwrap().contains_key("handoff_phase"));
+        assert_eq!(normal["handoff_phase"], Value::Null);
+        let id = TaskId::new();
+        let request = HandoffRequest::new(
+            id,
+            url,
+            &directories.destination,
+            "capture.bin",
+            WorkerCount::One,
+            None,
+        )
+        .unwrap();
+        let prepared = engine.prepare_handoff(request).unwrap();
+        let projection =
+            serde_json::to_value(super::task_description(prepared.task()).unwrap()).unwrap();
+        assert_eq!(projection["state"], normal["state"]);
+        assert_eq!(projection["handoff_phase"], "prepared");
+        let aborted = engine.abort_handoff(id).unwrap();
+        let projection =
+            serde_json::to_value(super::task_description(aborted.task()).unwrap()).unwrap();
+        assert_eq!(projection["handoff_phase"], "aborted");
+        engine.shutdown().await.unwrap();
     }
 
     #[test]

@@ -216,3 +216,5 @@ See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed 
 
 - **Browser pending journal / cancellation intent**: own-storage UUID/stage/timestamp records, separate from engine envelope5. `intent` precedes the cancellation response but is not evidence Firefox applied it. `cancelled` records a positively correlated terminal observation; `confirmed` records an explicit continuation choice. Neither is Manager Completed. See BROWSER_HANDOFF.md.
 - **Capture eligibility / production selection**: eligibility is a conservative request predicate kept live through preparation. Having this component or granting storage does not register a webRequest interceptor, grant site authority or qualify persistent installation.
+
+- **task_handoff_phase**: additive wire2 capability requiring nullable durable phase on every full task projection. Null means ordinary; prepared/committed/aborted are independent of transfer state. Client-only unknown marks an older companion without authoritative snapshot phase, not an ordinary task or a new wire value.

@@ -13,7 +13,7 @@ import time
 import uuid
 import zipfile
 
-from .browser_cases import current_handle, value
+from .browser_cases import confirm, current_handle, value
 from .browser_peer import BrowserPeer
 from .capture import BODY, CaptureHandler, load_probe, message
 from .firefox import ADDON, ELEMENT, Firefox
@@ -100,12 +100,30 @@ def restart_ui(browser, label, state):
         raise RuntimeError("UI task identity changed across restart")
 
 
+CONTINUE_PROMPT = "Continue only if Firefox has stopped this download. If you cannot identify this download, do not continue. If Firefox is still downloading, continuing can create competing output. Continue in Manager?"
+
+
+def explicit_continue(browser):
+    text = "I checked Firefox stopped — continue in Manager"
+    browser.wait("return [...document.querySelectorAll('#handoffs button')].some(b=>b.textContent===arguments[0]&&!b.disabled);", [text])
+    reference = browser.script("return [...document.querySelectorAll('#handoffs button')].find(b=>b.textContent===arguments[0]);", [text])
+    browser.command("WebDriver:ElementClick", {"id": reference[ELEMENT]})
+    confirm(browser, CONTINUE_PROMPT)  # Read and verify the actual owned warning before accepting.
+
+
+def phase_controls(browser):
+    # These two live checkpoints are Prepared or Completed handoffs, never ordinary tasks.
+    if browser.script("return [...document.querySelectorAll('#tasks .actions button')].map(b=>b.textContent);") != ["Open folder"]:
+        raise RuntimeError("handoff UI exposed inappropriate ordinary controls")
+
+
 def check_snapshot(snapshot, *, captured, pending, state, size):
     if (not isinstance(snapshot, dict) or snapshot.get("qualification") is not False
-            or snapshot.get("connected") is not True or snapshot.get("overflow") is not False
+            or snapshot.get("connected") is not True or snapshot.get("phaseMetadataAvailable") is not True
+            or snapshot.get("overflow") is not False
             or snapshot.get("blocked") is not False or snapshot.get("pending") != pending
             or type(snapshot.get("taskCount")) is not int or snapshot.get("taskCount") != 1
-            or snapshot.get("tasks") != [{"state": state, "bytes": size}]):
+            or snapshot.get("tasks") != [{"state": state, "bytes": size, "phase": "prepared" if pending else "committed"}]):
         raise RuntimeError("one completed native task with settled journal not observed")
     expected = [{"request": 1, "stage": "decision", "cancelled": True},
                 {"request": 1, "stage": "terminal", "cancelled": True}] if captured else []
@@ -174,7 +192,7 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
         browser.navigate(inspector_url)
         inspector = current_handle(browser)
         snapshot = message(browser, inspector, {"action": "ready", "destination": str(self.destination), "origin": origin})
-        if not isinstance(snapshot, dict) or (snapshot.get("connected") is not True or snapshot.get("destinationVerified") is not True):
+        if not isinstance(snapshot, dict) or (snapshot.get("connected") is not True or snapshot.get("destinationVerified") is not True or snapshot.get("phaseMetadataAvailable") is not True):
             raise RuntimeError("real Firefox native connection or owned destination unavailable")
         return browser, inspector
 
@@ -226,6 +244,7 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
             raise RuntimeError("native output differs from independent fixture")
         browser.navigate(browser.manager)
         label = browser.task("owned-capture.bin", "queued" if missing else "completed")
+        phase_controls(browser)
         task_id = label.removeprefix("task-")
         if label != "task-" + str(uuid.UUID(task_id, version=4)):
             raise RuntimeError("UI task identity not established")
@@ -244,12 +263,10 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
             raise RuntimeError("restart committed uncertain cancellation automatically")
         # Temporary reinstallation is explicit, NOT persistent-XPI qualification.
         restart_ui(browser, label, "queued" if missing else "completed")
+        phase_controls(browser)
         if missing:
             self.stage = "explicit-continuation"
-            text = "I checked Firefox stopped — continue in Manager"
-            browser.wait("return [...document.querySelectorAll('#handoffs button')].some(b=>b.textContent===arguments[0]&&!b.disabled);", [text])
-            reference = browser.script("return [...document.querySelectorAll('#handoffs button')].find(b=>b.textContent===arguments[0]);", [text])
-            browser.command("WebDriver:ElementClick", {"id": reference[ELEMENT]})
+            explicit_continue(browser)
             browser.task("owned-capture.bin", "completed")
             def resolved():
                 try:
@@ -294,7 +311,7 @@ succeeded:d.succeeded,stopped:d.stopped,error:!!d.error,canceled:d.canceled,byte
         if set(host.tasks) != {task_id} or host.tasks[task_id]["state"] != "completed":
             raise RuntimeError("independent native reconnect did not observe the same completed task")
         receipt = host.command("get_handoff", {"task_id": task_id})
-        if receipt["phase"] != "committed" or receipt["task"]["task_id"] != task_id or receipt["task"]["state"] != "completed":
+        if receipt["phase"] != "committed" or receipt["task"]["task_id"] != task_id or receipt["task"]["state"] != "completed" or receipt["task"].get("handoff_phase") != "committed":
             raise RuntimeError("independent committed handoff identity not established")
         if file_sha256(xpi) != self.probe_sha256:
             raise RuntimeError("diagnostic XPI changed")

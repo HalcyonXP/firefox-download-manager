@@ -1161,6 +1161,7 @@ pub struct SettingsDescription {
 /// Complete protocol-v2 task projection.
 #[derive(Clone, Serialize)]
 pub struct TaskDescription {
+    pub handoff_phase: Option<HandoffPhaseName>,
     pub task_id: String,
     pub source_origin: String,
     pub display_name: String,
@@ -1175,6 +1176,14 @@ pub struct TaskDescription {
     pub created_at: String,
     pub updated_at: String,
     pub error: Option<ProtocolError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffPhaseName {
+    Prepared,
+    Committed,
+    Aborted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

@@ -42,3 +42,10 @@ All nine injected cleanup checkpoints were then exercised against that package w
 Two earlier runs refused after restart: UI navigation had replaced the dedicated inspector page, so its strict sender check no longer accepted messages. The second run independently observed a successful fallback download before that refusal. Keeping the inspector in its own tab corrected the harness; original failures and successful cleanup/uninstall remain separate evidence. A modeled tab-role regression covers this distinction. Observer navigation is not a browser-cancellation or native-completion signal.
 
 `--scenario missing-terminal` is an additional, currently unobserved live scenario. It withholds a real correlated terminal callback only from the coordinator, preserving an uncertain `intent`. It requires no native transfer/output before or after restart, then uses the actual confirmation UI to continue the same task and checks correct output/fallback/retirement. Model coverage does not establish this browser result; its first attempted execution was refused by the unchanged preflight before any test domain or setup launch.
+
+
+## Updated phase-aware diagnostic
+
+The current driver requires a paired helper advertising `task_handoff_phase` before arming. Closed probe observations now carry only the native task's phase/state/byte count; Prepared-before-confirmation and Committed-after-completion must match. The actual Manager rows must offer only Open folder at the Prepared and Completed checkpoints, including after restart. This intentionally excludes the olderc5f1ee9 package from new runs without changing the scope of its earlier successful report.
+
+The missing-terminal scenario verifies the actual continuation warning through GetAlertText before AcceptAlert, using the existing owned-browser confirmation helper. The original unexecuted scenario omitted this dialog step; model tests now require its ordering and refuse an unexpected warning. No automatic prompt acceptance preference or normal profile is changed. New-pair live observations remain pending.

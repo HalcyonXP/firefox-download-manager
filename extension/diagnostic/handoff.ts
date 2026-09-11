@@ -53,15 +53,18 @@ function snapshot() {
   return {
     qualification: false,
     connected: state.connected,
+    phaseMetadataAvailable: nativeConnection.supports("task_handoff_phase"),
     enabled,
     overflow,
     terminalSuppressed,
     records: records.slice(),
     blocked: handoff.blocked,
     pending: handoff.pending.map((entry) => entry.stage),
-    tasks: state.tasks
-      .slice(0, 32)
-      .map((task) => ({ state: task.state, bytes: task.bytes_completed })),
+    tasks: state.tasks.slice(0, 32).map((task) => ({
+      state: task.state,
+      bytes: task.bytes_completed,
+      phase: task.handoff_phase,
+    })),
     taskCount: state.tasks.length,
   };
 }

@@ -591,13 +591,16 @@ async fn lost_prepare_and_commit_replies_recover_by_id_without_a_second_transfer
     drop(first); // No application receipt read, even if a reply reached the pipe.
     assert!(http.requests().is_empty());
     let mut second = Peer::new(connect(endpoint, &key).await.unwrap());
-    assert_eq!(second.hello().await.len(), 1);
+    let prepared_tasks = second.hello().await;
+    assert_eq!(prepared_tasks.len(), 1);
+    assert_eq!(prepared_tasks[0]["handoff_phase"], "prepared");
     second
         .send("prepare_handoff", payload, "repeat-prepare")
         .await;
     let prepared = second.response("repeat-prepare").await;
     assert_eq!(prepared["ok"], true);
     assert_eq!(prepared["result"]["phase"], "prepared");
+    assert_eq!(prepared["result"]["task"]["handoff_phase"], "prepared");
     second
         .send("resume", json!({"task_id":id}), "forbidden")
         .await;
@@ -615,6 +618,7 @@ async fn lost_prepare_and_commit_replies_recover_by_id_without_a_second_transfer
     let tasks = third.hello().await;
     assert_eq!(tasks.len(), 1);
     assert_eq!(tasks[0]["task_id"], id);
+    assert_eq!(tasks[0]["handoff_phase"], "committed");
     third
         .send("commit_handoff", json!({"task_id":id}), "repeat-commit")
         .await;
@@ -641,12 +645,16 @@ async fn lost_prepare_and_commit_replies_recover_by_id_without_a_second_transfer
     third.closed_after_events().await.unwrap();
     drop(third);
     assert_eq!(http.requests().len(), count);
+    assert_reopened_handoff(&domain, &id).await;
+}
+
+async fn assert_reopened_handoff(domain: &Domain, id: &str) {
     let reopened = EngineOwner::open(&domain.config()).unwrap();
     assert_eq!(reopened.engine().snapshots().len(), 1);
     assert_eq!(
         reopened
             .engine()
-            .commit_handoff(download_manager_engine::persistence::TaskId::parse(&id).unwrap())
+            .commit_handoff(download_manager_engine::persistence::TaskId::parse(id).unwrap())
             .unwrap()
             .task()
             .state(),
