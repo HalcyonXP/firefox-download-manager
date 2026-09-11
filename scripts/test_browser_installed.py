@@ -9,7 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 import zipfile
 
-from qualification.browser_installed import BrowserInstalledRun, BODY, PAYLOADS, build_probe, settled, restart_ui, pending_confirmation, explicit_continue, phase_controls, CONTINUE_PROMPT, ELEMENT
+from qualification.browser_installed import BrowserInstalledRun, BODY, PAYLOADS, build_probe, settled, restart_ui, pending_confirmation, explicit_continue, phase_controls, CONTINUE_PROMPT, ELEMENT, cross_origin_handler, CaptureHandler, Fixture
 from qualification.installed import InstalledRun
 
 
@@ -45,7 +45,7 @@ class BrowserInstalledTests(unittest.TestCase):
         browser = Mock(); browser.start.side_effect = RuntimeError("synthetic startup")
         with patch("qualification.browser_installed.Firefox", return_value=browser):
             with self.assertRaises(RuntimeError):
-                run.open_browser(Mock(), Path("unused"), Path("unused"), Path("unused"), "http://127.0.0.1")
+                run.open_browser(Mock(), Path("unused"), Path("unused"), Path("unused"), ["http://127.0.0.1"])
         self.assertEqual(run.browsers, [browser])
         run.close_resources()
         browser.close.assert_called_once()
@@ -116,6 +116,34 @@ class BrowserInstalledTests(unittest.TestCase):
         for labels in ([], ["Start", "Open folder"], ["Remove history", "Open folder"]):
             browser.script.return_value = labels
             with self.assertRaises(RuntimeError): phase_controls(browser)
+
+    def test_cross_origin_fixture_retains_two_servers_and_exact_query(self):
+        import http.client
+        from urllib.parse import urlsplit
+        from contextlib import closing
+        owners = []
+        try:
+            target = Fixture(handler=CaptureHandler, owners=owners)
+            source = Fixture(handler=cross_origin_handler(target), owners=owners)
+            self.assertNotEqual(source.url(""), target.url(""))
+            address = urlsplit(source.url("redirect?fixture=a%2Fb&x=1&x=2"))
+            with closing(http.client.HTTPConnection(address.hostname, address.port, timeout=5)) as connection:
+                connection.request("GET", address.path+"?"+address.query)
+                with closing(connection.getresponse()) as response:
+                    self.assertEqual(response.status, 302)
+                    self.assertEqual(response.getheader("Location"), target.url("attachment?fixture=a%2Fb&x=1&x=2"))
+                    self.assertEqual(response.read(1), b"")
+            address = urlsplit(target.url("attachment?fixture=a%2Fb&x=1&x=2"))
+            with closing(http.client.HTTPConnection(address.hostname, address.port, timeout=5)) as connection:
+                connection.request("GET", address.path+"?"+address.query)
+                with closing(connection.getresponse()) as response:
+                    self.assertEqual(response.status, 200)
+                    self.assertEqual(response.getheader("Content-Length"), str(len(BODY)))
+                    self.assertEqual(response.read(len(BODY)+1), BODY)
+            self.assertEqual(len(owners), 2)
+        finally:
+            for fixture in owners: fixture.close()
+        self.assertTrue(all(f.closed and not f.thread.is_alive() for f in owners))
 
     def test_compiler_deadline_keeps_exact_parent_even_with_broken_status_sink(self):
         process = Mock(); process.wait.side_effect = [subprocess.TimeoutExpired("owned-node", 60), 0]

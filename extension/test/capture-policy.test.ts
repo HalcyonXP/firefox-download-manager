@@ -15,7 +15,7 @@ const request: CaptureRequest = {
   cookieStoreId: "firefox-default",
   originUrl: page,
 };
-function setup() {
+function setup(crossOriginRedirects = false) {
   let enabled = true;
   let now = 0;
   const capture = vi.fn<BrowserHandoff["capture"]>(async (_key, _download, eligible) =>
@@ -26,6 +26,7 @@ function setup() {
     { capture, terminal },
     () => enabled,
     () => now,
+    { crossOriginRedirects },
   );
   const arm = (details = request) => {
     policy.click(details.url, page, details.tabId, true);
@@ -118,7 +119,7 @@ describe("supported request eligibility", () => {
     const { policy, capture, arm } = setup();
     arm();
     const next = { ...request, url: "https://example.invalid/final?opaque=fixture" };
-    policy.redirect(request, next.url);
+    policy.redirect(request, next.url, 302, [{ name: "Location", value: next.url }]);
     policy.before(next);
     await expect(policy.headers(next, 200, attachment)).resolves.toEqual({});
     policy.sent(next, []);
@@ -130,7 +131,7 @@ describe("supported request eligibility", () => {
     arm();
     policy.sent(request, [{ name: "Cookie", value: "synthetic-session" }]);
     const next = { ...request, url: "https://example.invalid/final" };
-    policy.redirect(request, next.url);
+    policy.redirect(request, next.url, 302, [{ name: "Location", value: next.url }]);
     policy.before(next);
     policy.sent(next, []);
     await expect(policy.headers(next, 200, attachment)).resolves.toEqual({});
@@ -139,7 +140,9 @@ describe("supported request eligibility", () => {
   it("refuses cross-origin redirects even if later callbacks return to the initial origin", async () => {
     const { policy, capture, arm } = setup();
     arm();
-    policy.redirect(request, "https://other.example.invalid/file");
+    policy.redirect(request, "https://other.example.invalid/file", 302, [
+      { name: "Location", value: "https://other.example.invalid/file" },
+    ]);
     policy.before(request);
     policy.sent(request, []);
     await expect(policy.headers(request, 200, attachment)).resolves.toEqual({});
@@ -226,4 +229,140 @@ it("uses Windows-safe attachment names without treating server metadata as paths
       url,
     ),
   ).toBeUndefined();
+});
+
+it("does not follow a different URL than the observed redirect target", async () => {
+  const { policy, capture, arm } = setup();
+  arm();
+  const declared = "https://example.invalid/declared";
+  policy.redirect(request, declared, 302, [{ name: "Location", value: declared }]);
+  const other = { ...request, url: "https://example.invalid/replaced" };
+  policy.before(other);
+  policy.sent(other, []);
+  await expect(policy.headers(other, 200, attachment)).resolves.toEqual({});
+  expect(capture).not.toHaveBeenCalled();
+});
+
+describe("opt-in anonymous cross-origin chains", () => {
+  const cdn = "https://cdn.example.invalid/download?opaque=synthetic";
+  const next = { ...request, url: cdn };
+  const location = [{ name: "Location", value: cdn }];
+  it("binds an observed redirect and commits only the matching final terminal", async () => {
+    const { policy, capture, terminal, arm } = setup(true);
+    arm();
+    policy.redirect(request, cdn, 302, location);
+    policy.before(next);
+    policy.sent(next, []);
+    await expect(policy.headers(next, 200, attachment)).resolves.toEqual({ cancel: true });
+    expect(capture.mock.calls[0]?.[1]).toEqual({ url: cdn, suggested_filename: "file.bin" });
+    policy.terminal(next, "NS_ERROR_ABORT");
+    expect(terminal).toHaveBeenCalledWith("request", "NS_ERROR_ABORT");
+  });
+  it("does not select cross-origin behavior by default", async () => {
+    const { policy, capture, arm } = setup();
+    arm();
+    policy.redirect(request, cdn, 302, location);
+    policy.before(next);
+    policy.sent(next, []);
+    await expect(policy.headers(next, 200, attachment)).resolves.toEqual({});
+    expect(capture).not.toHaveBeenCalled();
+  });
+  it.each([
+    "missing-transition",
+    "missing-headers",
+    "duplicate-location",
+    "different-location",
+    "cookie",
+    "challenge",
+    "status",
+    "downgrade",
+    "credentials",
+    "later-cookie",
+    "private",
+    "container",
+    "tab",
+    "document",
+    "double-transition",
+  ])("refuses %s without native preparation", async (variant) => {
+    const { policy, capture, arm } = setup(true);
+    arm();
+    if (variant === "credentials")
+      policy.sent(request, [{ name: "Authorization", value: "synthetic" }]);
+    const target = variant === "downgrade" ? cdn.replace("https:", "http:") : cdn;
+    let headers: { name: string; value: string }[] | undefined = [
+      { name: "Location", value: target },
+    ];
+    if (variant === "missing-headers") headers = undefined;
+    if (variant === "duplicate-location") headers!.push(...location);
+    if (variant === "different-location") headers = [{ name: "Location", value: url }];
+    if (variant === "cookie") headers!.push({ name: "Set-Cookie", value: "synthetic=1" });
+    if (variant === "challenge") headers!.push({ name: "WWW-Authenticate", value: "Basic" });
+    if (variant !== "missing-transition")
+      policy.redirect(request, target, variant === "status" ? 200 : 302, headers);
+    if (variant === "double-transition") policy.redirect(request, target, 302, headers);
+    const details = {
+      ...next,
+      url: target,
+      ...(variant === "private" ? { incognito: true } : {}),
+      ...(variant === "container" ? { cookieStoreId: "firefox-container-1" } : {}),
+      ...(variant === "tab" ? { tabId: 2 } : {}),
+      ...(variant === "document" ? { originUrl: "https://other.example.invalid/page" } : {}),
+    };
+    policy.before(details);
+    policy.sent(
+      details,
+      variant === "later-cookie" ? [{ name: "Cookie", value: "synthetic=1" }] : [],
+    );
+    await expect(policy.headers(details, 200, attachment)).resolves.toEqual({});
+    expect(capture).not.toHaveBeenCalled();
+  });
+  it("bounds transitions and never permits an HTTPS downgrade after an upgrade", async () => {
+    for (const count of [8, 9]) {
+      const { policy, arm } = setup(true);
+      arm();
+      let details = request;
+      for (let i = 0; i < count; i++) {
+        const target = `https://cdn${i}.example.invalid/file`;
+        policy.redirect(details, target, 307, [{ name: "Location", value: target }]);
+        details = { ...details, url: target };
+        policy.before(details);
+        policy.sent(details, []);
+      }
+      await expect(policy.headers(details, 200, attachment)).resolves.toEqual(
+        count === 8 ? { cancel: true } : {},
+      );
+    }
+    const { policy, arm } = setup(true);
+    const start = { ...request, url: "http://example.invalid/file" };
+    arm(start);
+    policy.redirect(start, url, 301, [{ name: "Location", value: url }]);
+    policy.before(request);
+    policy.sent(request, []);
+    policy.redirect(request, start.url, 302, [{ name: "Location", value: start.url }]);
+    policy.before(start);
+    policy.sent(start, []);
+    await expect(policy.headers(start, 200, attachment)).resolves.toEqual({});
+  });
+});
+
+it("requires every redirect origin to remain inside the caller's independently owned scope", async () => {
+  const capture = vi.fn<BrowserHandoff["capture"]>(async () => ({ cancel: true }));
+  const policy = new CapturePolicy(
+    { capture, terminal: vi.fn() },
+    () => true,
+    () => 0,
+    { crossOriginRedirects: true, originAllowed: (origin) => origin === "https://example.invalid" },
+  );
+  policy.click(url, page, 1, true);
+  policy.before(request);
+  policy.sent(request, []);
+  const outside = { ...request, url: "https://other.example.invalid/file" };
+  policy.redirect(request, outside.url, 302, [{ name: "Location", value: outside.url }]);
+  policy.before(outside);
+  policy.sent(outside, []);
+  policy.redirect(outside, url, 302, [{ name: "Location", value: url }]);
+  policy.before(request);
+  policy.sent(request, []);
+  await expect(policy.headers(request, 200, attachment)).resolves.toEqual({});
+  expect(capture).not.toHaveBeenCalled();
 });

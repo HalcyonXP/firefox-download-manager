@@ -218,3 +218,7 @@ See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed 
 - **Capture eligibility / production selection**: eligibility is a conservative request predicate kept live through preparation. Having this component or granting storage does not register a webRequest interceptor, grant site authority or qualify persistent installation.
 
 - **task_handoff_phase**: additive wire2 capability requiring nullable durable phase on every full task projection. Null means ordinary; prepared/committed/aborted are independent of transfer state. Client-only unknown marks an older companion without authoritative snapshot phase, not an ordinary task or a new wire value.
+
+
+- **Redirect binding:** authorization of the next same-ID browser request only after an observed redirect response identifies that exact resource URL. A common origin alone is not a matching transition.
+- **Cross-origin diagnostic:** an opt-in, temporary-XPI test using two exact owned loopback origins (distinct ports). It is not distinct-host/TLS/provider or persistent-install qualification. Production capture remains unselected; see [BROWSER_HANDOFF.md](BROWSER_HANDOFF.md#opt-in-cross-origin-chain-binding).

@@ -55,21 +55,24 @@ it("requires exact inspector and independently matched destination before arming
   expect(await control({ action: "arm" }, inspector)).toBeNull();
   expect(
     control(
-      { action: "ready", destination: "owned-output", origin: "http://127.0.0.1" },
+      { action: "ready", destination: "owned-output", origins: ["http://127.0.0.1"] },
       { ...inspector, url: "http://127.0.0.1/page" },
     ),
   ).toBeUndefined();
   expect(control({ action: "arm", extra: true }, inspector)).toBeUndefined();
   expect(control({ action: "commit_handoff" }, inspector)).toBeUndefined();
   expect(
-    await control({ action: "ready", destination: "other", origin: "http://127.0.0.1" }, inspector),
+    await control(
+      { action: "ready", destination: "other", origins: ["http://127.0.0.1"] },
+      inspector,
+    ),
   ).toMatchObject({
     destinationVerified: false,
   });
   expect(await control({ action: "arm" }, inspector)).toBeNull();
   expect(
     await control(
-      { action: "ready", destination: "owned-output", origin: "http://127.0.0.1" },
+      { action: "ready", destination: "owned-output", origins: ["http://127.0.0.1"] },
       inspector,
     ),
   ).toMatchObject({
@@ -93,7 +96,7 @@ it("bounds authority to loopback and reports only correlated decisions/terminal 
   ).toEqual({});
   expect(mocks.capture).not.toHaveBeenCalled();
   await control(
-    { action: "ready", destination: "owned-output", origin: "http://127.0.0.1" },
+    { action: "ready", destination: "owned-output", origins: ["http://127.0.0.1"] },
     inspector,
   );
   await control({ action: "arm" }, inspector);
@@ -127,7 +130,7 @@ it("bounds authority to loopback and reports only correlated decisions/terminal 
 
 it("withholds only the selected terminal observation, never manufacture a cancellation", async () => {
   await control(
-    { action: "ready", destination: "owned-output", origin: "http://127.0.0.1" },
+    { action: "ready", destination: "owned-output", origins: ["http://127.0.0.1"] },
     inspector,
   );
   await control({ action: "arm-missing-terminal" }, inspector);
@@ -144,4 +147,37 @@ it("withholds only the selected terminal observation, never manufacture a cancel
   });
   handoff.terminal("other");
   expect(mocks.terminal).toHaveBeenCalledWith("other", undefined);
+});
+
+it("bounds independent fixture origins and revokes arming during reconfiguration", async () => {
+  const [handoff, enabled, , options] = vi.mocked(registerCapture).mock.calls[0]!;
+  const origins = ["http://127.0.0.1:39001", "http://127.0.0.1:39002"];
+  expect(
+    await control({ action: "ready", destination: "owned-output", origins }, inspector),
+  ).toMatchObject({ destinationVerified: true });
+  expect(options?.crossOriginRedirects).toBe(true);
+  expect(origins.every((origin) => options?.originAllowed?.(origin))).toBe(true);
+  expect(options?.originAllowed?.("http://127.0.0.1:39003")).toBe(false);
+  await control({ action: "arm" }, inspector);
+  await handoff.capture(
+    "cdn",
+    { url: origins[1] + "/attachment", suggested_filename: "owned.bin" },
+    () => true,
+  );
+  expect(mocks.capture).toHaveBeenCalledTimes(1);
+  for (const refused of [
+    [],
+    [...origins, "http://127.0.0.1:39003"],
+    [origins[0], origins[0]],
+    ["https://example.invalid"],
+    ["http://127.0.0.1/path"],
+    [origins[0], 1],
+  ]) {
+    expect(
+      await control({ action: "ready", destination: "owned-output", origins: refused }, inspector),
+    ).toMatchObject({ destinationVerified: false });
+    expect(enabled()).toBe(false);
+    expect(origins.some((origin) => options?.originAllowed?.(origin))).toBe(false);
+    expect(await control({ action: "arm" }, inspector)).toBeNull();
+  }
 });

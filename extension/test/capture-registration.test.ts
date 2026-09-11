@@ -22,7 +22,7 @@ const response = {
 const message = { action: "ordinary-download-click", target: url, trusted: true };
 const sender = { id: "owned-extension", frameId: 0, tab: { id: 1, incognito: false }, url: page };
 afterEach(() => vi.unstubAllGlobals());
-function setup() {
+function setup(crossOriginRedirects = false) {
   const callbacks = new Map<string, (...args: unknown[]) => unknown>();
   const registrations = new Map<string, unknown[]>();
   const event = (name: string) => ({
@@ -47,7 +47,7 @@ function setup() {
     eligible() ? { cancel: true } : {},
   );
   const terminal = vi.fn<BrowserHandoff["terminal"]>();
-  registerCapture({ capture, terminal }, () => true);
+  registerCapture({ capture, terminal }, () => true, undefined, { crossOriginRedirects });
   const emit = (name: string, ...args: unknown[]) => callbacks.get(name)!(...args);
   return { emit, capture, terminal, registrations };
 }
@@ -82,4 +82,28 @@ it("ignores messages with unknown fields and leaves missing sent-header evidence
   emit("onBeforeRequest", request);
   await expect(emit("onHeadersReceived", response)).resolves.toEqual({});
   expect(capture).not.toHaveBeenCalled();
+});
+
+it("supplies redirect status and read-only response headers to the bounded chain policy", async () => {
+  const { emit, capture, terminal, registrations } = setup(true);
+  expect(registrations.get("onBeforeRedirect")?.[1]).toEqual(["responseHeaders"]);
+  emit("message", message, sender);
+  emit("onBeforeRequest", request);
+  emit("onBeforeSendHeaders", { ...request, requestHeaders: [] });
+  const target = "https://cdn.example.invalid/attachment";
+  emit("onBeforeRedirect", {
+    ...request,
+    redirectUrl: target,
+    statusCode: 302,
+    responseHeaders: [{ name: "Location", value: target }],
+  });
+  const next = { ...request, url: target };
+  emit("onBeforeRequest", next);
+  emit("onBeforeSendHeaders", { ...next, requestHeaders: [] });
+  await expect(emit("onHeadersReceived", { ...response, ...next })).resolves.toEqual({
+    cancel: true,
+  });
+  expect(capture.mock.calls[0]?.[1].url).toBe(target);
+  emit("onErrorOccurred", { ...next, error: "NS_ERROR_ABORT" });
+  expect(terminal).toHaveBeenCalledWith("r", "NS_ERROR_ABORT");
 });

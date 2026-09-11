@@ -46,6 +46,8 @@ interface Click {
 interface Request {
   readonly tab: number;
   readonly initial: string;
+  current: string;
+  redirectTarget: string | undefined;
   valid: boolean;
   click: Click | undefined;
   sentUrl: string | undefined;
@@ -97,11 +99,18 @@ export function attachmentFilename(headers: readonly Header[], url: string): str
   return quoted !== undefined ? safeFilename(quoted) : suggestedFilename(url);
 }
 
-/** Conservative first slice: same-origin redirect chains and anonymous final GETs only. */
+export interface CaptureOptions {
+  readonly crossOriginRedirects?: boolean;
+  readonly originAllowed?: (origin: string) => boolean;
+}
+
+/** Anonymous redirect chains; cross-origin is opt-in until separately qualified. */
 export class CapturePolicy {
   readonly #handoff: Pick<BrowserHandoff, "capture" | "terminal">;
   readonly #enabled: () => boolean;
   readonly #now: () => number;
+  readonly #crossOrigin: boolean;
+  readonly #originAllowed: (origin: string) => boolean;
   readonly #clicks = new Map<number, Click>();
   readonly #requests = new Map<string, Request>();
   #overflowUntil = 0;
@@ -109,10 +118,20 @@ export class CapturePolicy {
     handoff: Pick<BrowserHandoff, "capture" | "terminal">,
     enabled: () => boolean,
     now = () => performance.now(),
+    options: CaptureOptions = {},
   ) {
     this.#handoff = handoff;
     this.#enabled = enabled;
     this.#now = now;
+    this.#crossOrigin = options.crossOriginRedirects === true;
+    this.#originAllowed = options.originAllowed ?? (() => true);
+  }
+  #allowed(url: string): boolean {
+    try {
+      return this.#originAllowed(new URL(url).origin) === true;
+    } catch {
+      return false;
+    }
   }
   click(target: string, document: string, tab: number, trusted: boolean): void {
     const now = this.#now();
@@ -143,14 +162,18 @@ export class CapturePolicy {
       existing.sentUrl = undefined;
       if (
         !safeContext(details) ||
+        !this.#allowed(details.url) ||
         details.tabId !== existing.tab ||
-        new URL(details.url).origin !== new URL(existing.initial).origin ||
+        existing.decisionUrl !== undefined ||
+        existing.redirectTarget !== resourceUrl(details.url) ||
         ++existing.redirects > 8
       )
         existing.valid = false;
+      existing.current = resourceUrl(details.url) ?? "";
+      existing.redirectTarget = undefined;
       return;
     }
-    if (!this.#enabled() || !safeContext(details)) return;
+    if (!this.#enabled() || !safeContext(details) || !this.#allowed(details.url)) return;
     if (this.#requests.size >= 64) {
       this.#overflowUntil = this.#now() + 5000;
       for (const value of this.#requests.values()) value.valid = false;
@@ -169,6 +192,8 @@ export class CapturePolicy {
     this.#requests.set(details.requestId, {
       tab: details.tabId,
       initial: resourceUrl(details.url)!,
+      current: resourceUrl(details.url)!,
+      redirectTarget: undefined,
       valid: true,
       anonymous: false,
       sentUrl: undefined,
@@ -185,6 +210,8 @@ export class CapturePolicy {
     request.anonymous =
       safeContext(details) &&
       details.tabId === request.tab &&
+      request.sentUrl === request.current &&
+      request.redirectTarget === undefined &&
       headers !== undefined &&
       headers.length <= 128 &&
       headers.every((header) => ANONYMOUS_HEADERS.has(header.name.toLowerCase()));
@@ -205,10 +232,13 @@ export class CapturePolicy {
       this.#now() < this.#overflowUntil
     )
       return Promise.resolve({});
-    if (new URL(details.url).origin !== new URL(request.initial).origin) return Promise.resolve({});
+    if (resourceUrl(details.url) !== request.current) return Promise.resolve({});
     const eligible = (): boolean =>
       this.#enabled() &&
       request.valid &&
+      request.redirectTarget === undefined &&
+      request.current === resourceUrl(details.url) &&
+      this.#allowed(details.url) &&
       request.anonymous &&
       !!request.click?.valid &&
       request.click.document === resourceUrl(details.originUrl ?? "") &&
@@ -250,17 +280,46 @@ export class CapturePolicy {
       eligible,
     );
   }
-  redirect(details: CaptureRequest, target: string): void {
+  redirect(
+    details: CaptureRequest,
+    target: string,
+    status: number,
+    headers: readonly Header[] | undefined,
+  ): void {
     const request = this.#requests.get(details.requestId);
     if (!request) return;
     const url = resourceUrl(target);
+    const location = headers && headers.length <= 128 ? field(headers, "location") : undefined;
+    let declared: string | undefined;
+    try {
+      if (location !== undefined) declared = resourceUrl(new URL(location, details.url).href);
+    } catch {
+      /* Invalid Location cannot authorize another request. */
+    }
     if (
       !safeContext(details) ||
       details.tabId !== request.tab ||
+      !request.valid ||
+      !request.anonymous ||
+      request.sentUrl !== request.current ||
+      resourceUrl(details.url) !== request.current ||
+      request.redirectTarget !== undefined ||
+      request.decisionUrl !== undefined ||
+      ![301, 302, 303, 307, 308].includes(status) ||
       !url ||
-      new URL(url).origin !== new URL(request.initial).origin
+      !this.#allowed(url) ||
+      declared !== url ||
+      !headers ||
+      headers.some((header) =>
+        ["set-cookie", "www-authenticate", "proxy-authenticate", "content-range"].includes(
+          header.name.toLowerCase(),
+        ),
+      ) ||
+      (new URL(request.current).protocol === "https:" && new URL(url).protocol !== "https:") ||
+      (!this.#crossOrigin && new URL(url).origin !== new URL(request.initial).origin)
     )
       request.valid = false;
+    request.redirectTarget = request.valid ? url : undefined;
     request.anonymous = false;
     request.sentUrl = undefined;
   }

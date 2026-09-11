@@ -6,7 +6,7 @@ let enabled = false;
 let destinationVerified = false;
 let suppressTerminal = false;
 let terminalSuppressed = false;
-let fixtureOrigin: string | undefined;
+const fixtureOrigins = new Set<string>();
 let overflow = false;
 const keys = new Map<string, number>();
 const records: { request: number; stage: "decision" | "terminal"; cancelled: boolean }[] = [];
@@ -24,7 +24,7 @@ registerCapture(
         !destinationVerified ||
         url.protocol !== "http:" ||
         url.hostname !== "127.0.0.1" ||
-        url.origin !== fixtureOrigin ||
+        !fixtureOrigins.has(url.origin) ||
         keys.size >= 32
       )
         return {};
@@ -46,6 +46,7 @@ registerCapture(
   },
   () => enabled && !overflow,
   ["http://127.0.0.1/*"],
+  { crossOriginRedirects: true, originAllowed: (origin) => fixtureOrigins.has(origin) },
 );
 function snapshot() {
   const state = nativeConnection.state();
@@ -78,7 +79,7 @@ browser.runtime.onMessage.addListener((message: unknown, sender) => {
   )
     return undefined;
   const keys = Object.keys(message).sort().join(",");
-  if (keys !== (message.action === "ready" ? "action,destination,origin" : "action"))
+  if (keys !== (message.action === "ready" ? "action,destination,origins" : "action"))
     return undefined;
   if (message.action === "snapshot") return Promise.resolve(snapshot());
   if (message.action === "arm" || message.action === "arm-missing-terminal") {
@@ -99,25 +100,37 @@ browser.runtime.onMessage.addListener((message: unknown, sender) => {
   }
   if (message.action === "ready")
     return (async () => {
+      enabled = false;
+      destinationVerified = false;
+      fixtureOrigins.clear();
       await nativeConnection.connect();
       await nativeConnection.command("get_settings", {});
       await browserHandoff.recover();
-      fixtureOrigin = undefined;
-      if ("origin" in message && typeof message.origin === "string") {
+      if (
+        "origins" in message &&
+        Array.isArray(message.origins) &&
+        message.origins.length >= 1 &&
+        message.origins.length <= 2
+      ) {
         try {
-          const url = new URL(message.origin);
-          if (
-            url.protocol === "http:" &&
-            url.hostname === "127.0.0.1" &&
-            url.origin === message.origin
-          )
-            fixtureOrigin = url.origin;
+          for (const origin of message.origins) {
+            if (typeof origin !== "string") throw new Error("origin refused");
+            const url = new URL(origin);
+            if (
+              url.protocol !== "http:" ||
+              url.hostname !== "127.0.0.1" ||
+              url.origin !== origin ||
+              fixtureOrigins.has(origin)
+            )
+              throw new Error("origin refused");
+            fixtureOrigins.add(origin);
+          }
         } catch {
-          /* No fixture authority. */
+          fixtureOrigins.clear();
         }
       }
       destinationVerified =
-        fixtureOrigin !== undefined &&
+        fixtureOrigins.size > 0 &&
         "destination" in message &&
         typeof message.destination === "string" &&
         nativeConnection.state().settings?.destination === message.destination;

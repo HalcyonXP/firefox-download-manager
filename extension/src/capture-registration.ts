@@ -1,5 +1,5 @@
 import type { BrowserHandoff } from "./browser-handoff";
-import { CapturePolicy } from "./capture-policy";
+import { CapturePolicy, type CaptureOptions } from "./capture-policy";
 
 /** Requires separately reviewed/granted webRequest, blocking and site authority.
  * Not called by the production background until browser/native integration passes.
@@ -8,8 +8,9 @@ export function registerCapture(
   handoff: Pick<BrowserHandoff, "capture" | "terminal">,
   enabled: () => boolean,
   urls: string[] = ["http://*/*", "https://*/*"],
+  options: CaptureOptions = {},
 ): void {
-  const policy = new CapturePolicy(handoff, enabled);
+  const policy = new CapturePolicy(handoff, enabled, undefined, options);
   const filter: browser.webRequest.RequestFilter = {
     urls,
     types: ["main_frame"],
@@ -43,9 +44,13 @@ export function registerCapture(
     filter,
     ["requestHeaders"],
   );
-  browser.webRequest.onBeforeRedirect.addListener((details) => {
-    policy.redirect(details, details.redirectUrl);
-  }, filter);
+  browser.webRequest.onBeforeRedirect.addListener(
+    (details) => {
+      policy.redirect(details, details.redirectUrl, details.statusCode, details.responseHeaders);
+    },
+    filter,
+    ["responseHeaders"],
+  );
   browser.webRequest.onHeadersReceived.addListener(
     (details) => {
       try {

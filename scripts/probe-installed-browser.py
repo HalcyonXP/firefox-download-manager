@@ -11,7 +11,7 @@ def main():
     parser.add_argument("--firefox", type=Path, required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--fault", choices=FAULTS)
-    parser.add_argument("--scenario", choices=("nominal", "missing-terminal"), default="nominal")
+    parser.add_argument("--scenario", choices=("nominal", "missing-terminal", "cross-origin"), default="nominal")
     args = parser.parse_args()
     qualify(args.package, args.firefox, args.report, args.fault, args.scenario)
 

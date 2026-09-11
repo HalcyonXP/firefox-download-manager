@@ -78,6 +78,16 @@ def build_probe(domain):
     return xpi
 
 
+def cross_origin_handler(target):
+    # Only the reviewed attachment redirect is changed; no arbitrary proxying.
+    class CrossOriginHandler(CaptureHandler):
+        def send_header(self, keyword, value):
+            if keyword.lower() == "location" and value == "/attachment?fixture=a%2Fb&x=1&x=2":
+                value = target.url("attachment?fixture=a%2Fb&x=1&x=2")
+            super().send_header(keyword, value)
+    return CrossOriginHandler
+
+
 def correct_output(path):
     ordinary(path)
     if path.stat().st_size != len(BODY):
@@ -144,7 +154,7 @@ def pending_confirmation(snapshot, *, captured):
 class BrowserInstalledRun(InstalledRun):
     def __init__(self, package, executable, report, fault=None, scenario="nominal"):
         super().__init__(package, report, fault)
-        if scenario not in ("nominal", "missing-terminal") or (scenario != "nominal" and fault is not None):
+        if scenario not in ("nominal", "missing-terminal", "cross-origin") or (scenario != "nominal" and fault is not None):
             raise RuntimeError("unsupported combined scenario/fault pair")
         self.scenario = scenario
         self.executable = executable
@@ -177,7 +187,7 @@ class BrowserInstalledRun(InstalledRun):
         return {"qualification": False, "temporary_xpi": True, "scenario": self.scenario, "browser_checks": self.browser_checks,
                 "probe_xpi_sha256": self.probe_sha256, "firefox_exe_sha256": self.firefox_sha256}
 
-    def open_browser(self, peer, profile, downloads, xpi, origin):
+    def open_browser(self, peer, profile, downloads, xpi, origins):
         environment = {**self.environment, "MOZ_CRASHREPORTER_DISABLE": "1"}
         browser = Firefox(self.executable, profile, environment, owned_peer=peer)
         self.browsers.append(browser)  # Before any launch or profile write.
@@ -191,7 +201,7 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
         browser.manager = inspector_url.removesuffix("inspect.html") + "manager.html"
         browser.navigate(inspector_url)
         inspector = current_handle(browser)
-        snapshot = message(browser, inspector, {"action": "ready", "destination": str(self.destination), "origin": origin})
+        snapshot = message(browser, inspector, {"action": "ready", "destination": str(self.destination), "origins": origins})
         if not isinstance(snapshot, dict) or (snapshot.get("connected") is not True or snapshot.get("destinationVerified") is not True or snapshot.get("phaseMetadataAvailable") is not True):
             raise RuntimeError("real Firefox native connection or owned destination unavailable")
         return browser, inspector
@@ -209,9 +219,19 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
         peer = BrowserPeer(self.owner, self.binding, self.current_binding)
         profile, downloads = self.plan.path / "Firefox", self.plan.path / "FirefoxDownloads"
         downloads.mkdir()
-        fixture = Fixture(handler=CaptureHandler, owners=self.fixtures)
+        cross = self.scenario == "cross-origin"
+        target = Fixture(handler=CaptureHandler, owners=self.fixtures) if cross else None
+        fixture = Fixture(handler=cross_origin_handler(target) if cross else CaptureHandler, owners=self.fixtures)
+        origins = [fixture.url("").rstrip("/")]
+        if target is not None:
+            origins.append(target.url("").rstrip("/"))
+            if len(set(origins)) != 2:
+                raise RuntimeError("distinct owned redirect origins required")
+        selector = "#redirect" if cross else "#direct"
+        fallback_sources = ([fixture.url("redirect?fixture=a%2Fb&x=1&x=2"), target.url("attachment?fixture=a%2Fb&x=1&x=2")]
+                            if target is not None else [fixture.url("direct")])
         self.stage = "browser-startup"
-        browser, inspector = self.open_browser(peer, profile, downloads, xpi, fixture.url("").rstrip("/"))
+        browser, inspector = self.open_browser(peer, profile, downloads, xpi, origins)
         self.checkpoint("bridge-started")
         missing = self.scenario == "missing-terminal"
         armed = message(browser, inspector, {"action": "arm-missing-terminal" if missing else "arm"})
@@ -220,7 +240,7 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
         test_tab = value(browser.command("WebDriver:NewWindow", {"type": "tab"}))["handle"]
         browser.command("WebDriver:SwitchToWindow", {"handle": test_tab})
         browser.navigate(fixture.url("page"))
-        browser.click("#direct")
+        browser.click(selector)
         self.stage = "browser-cancellation-completion"
         def completed():
             snapshot = message(browser, inspector, {"action": "snapshot"})
@@ -249,14 +269,15 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
         if label != "task-" + str(uuid.UUID(task_id, version=4)):
             raise RuntimeError("UI task identity not established")
         self.browser_checks.append("actual_cancellation_withheld_from_coordinator_prepared_only" if missing else
-                                   "trusted_click_cancelled_one_completed_native_task_ui_independent_output")
+                                   ("cross_origin_redirect_click_cancelled_one_completed_native_task_ui_independent_output" if cross else
+                                    "trusted_click_cancelled_one_completed_native_task_ui_independent_output"))
         if not missing:
             self.checkpoint("completed")
         self.close_browser(browser)
         if self.owner._observe()[1] != identity or not self.ui.tray(self.manager_window):
             raise RuntimeError("companion did not survive Firefox exit")
         self.stage = "browser-restart"
-        browser, inspector = self.open_browser(peer, profile, downloads, xpi, fixture.url("").rstrip("/"))
+        browser, inspector = self.open_browser(peer, profile, downloads, xpi, origins)
         self.stage = "restarted-native-snapshot"
         (pending_confirmation if missing else settled)(message(browser, inspector, {"action": "snapshot"}), captured=False)
         if missing and (any(self.destination.iterdir()) or fixture.requests[("GET", "/direct")] != 1):
@@ -279,16 +300,16 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
             self.browser_checks.append("intent_survives_restart_no_auto_commit_explicit_ui_continuation_same_task")
         self.stage = "unarmed-browser-click"
         browser.navigate(fixture.url("page"))
-        browser.click("#direct")  # Unarmed after restart: Firefox retains this request.
+        browser.click(selector)  # Unarmed after restart: Firefox retains this request.
         fallback = downloads / "owned-capture.bin"
         self.stage = "unarmed-browser-terminal"
         def fallback_completed():
             observed = browser.chrome("""const done=arguments[arguments.length-1];
 const {Downloads}=ChromeUtils.importESModule('resource://gre/modules/Downloads.sys.mjs');
 Downloads.getList(Downloads.PUBLIC).then(l=>l.getAll()).then(items=>done({count:items.length,
-items:items.slice(0,8).map(d=>({source:d.source.url===arguments[0],target:d.target.path===arguments[1],
+items:items.slice(0,8).map(d=>({source:arguments[0].includes(d.source.url),target:d.target.path===arguments[1],
 succeeded:d.succeeded,stopped:d.stopped,error:!!d.error,canceled:d.canceled,bytes:d.currentBytes}))}),()=>done(null));""",
-                         [fixture.url("direct"), str(fallback)], True)
+                         [fallback_sources, str(fallback)], True)
             with (self.plan.path / "fallback-observation.private.json").open("w", encoding="utf-8") as stream:
                 json.dump(observed, stream)
             return observed == {"count": 1, "items": [{"source": True, "target": True, "succeeded": True,

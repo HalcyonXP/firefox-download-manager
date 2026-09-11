@@ -147,3 +147,6 @@ CI34560426064 at6837d3b passed quality/dependency policy and the nine release br
 
 
 CI34564989638 at61df8b6 failed two distinct observations. Package stopped in the bridge lost-reply test before setup tests: four replies had been observed, the last task was Promoting with65536 bytes/no failure code, and the fifth response was still awaited at the unchanged deadline; exact worker join and fixture retirement followed. Quality failed one directory test after **successful startup/request/readiness** observations at4851/4851/4954ms, close transmission4954ms, retirement request5002ms, completion bytes5014ms and process/worker joins5021ms. This is not another pre-marker failure and no readiness-timeout CPU sample applies. Dependency policy passed; emulation was skipped. The observations neither establish a common cause nor justify a runtime/deadline/concurrency change. See also [NATIVE_HANDOFF.md](NATIVE_HANDOFF.md).
+
+
+CI34567722468 at2df904b subsequently passed all four jobs: quality, package qualification (including both clean builds/comparison), dependency policy and Windows11 emulation. This observed pass does not explain the earlier distinct bridge, pre-marker or post-readiness failures, nor qualify subsequent source changes. No deadline, concurrency or protection change was made.
