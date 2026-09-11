@@ -21,10 +21,35 @@ PROTECTIONS = """const names=['xpinstall.signatures.required','extensions.experi
 return Object.fromEntries(names.map(name=>{const kind=Services.prefs.getPrefType(name);
 if(kind!==0&&kind!==128)throw new Error('protection preference type refused');
 return [name,kind===0?null:Services.prefs.getBoolPref(name)];}));"""
-LOAD = """const done=arguments[arguments.length-1];
-const {AddonManager}=ChromeUtils.importESModule('resource://gre/modules/AddonManager.sys.mjs');
-const file=Components.classes['@mozilla.org/file/local;1'].createInstance(Components.interfaces.nsIFile);
-file.initWithPath(arguments[0]);AddonManager.installTemporaryAddon(file).then(a=>done(a.id===arguments[1]),()=>done(false));"""
+LOAD = Path(__file__).with_name('protection_loader.js').read_text(encoding='utf-8')
+LOAD_TERMS = {'invalid-extension','experiment-apis','privilege-required','manifest-version','csp','schema',
+              'unexpected-property','async-returns','enum','signature','incognito'}
+
+
+def load_observation(value):
+    if (not isinstance(value,dict) or set(value)!={'version','state','phase','terms','complete'}
+            or type(value['version']) is not int or value['version']!=1
+            or value['state'] not in ('loaded','refused')
+            or value['phase'] not in ('bootstrap','file-init','install','identity')
+            or type(value['complete']) is not bool or not isinstance(value['terms'],list)
+            or len(value['terms'])>len(LOAD_TERMS)
+            or any(not isinstance(term,str) or term not in LOAD_TERMS for term in value['terms'])
+            or sorted(set(value['terms']))!=value['terms']
+            or (value['state']=='loaded' and (value['phase']!='identity' or value['terms'] or not value['complete']))):
+        raise RuntimeError('temporary load observation refused')
+    return value
+
+
+def cleanup_observation(browser):
+    result={'browser_created':browser is not None,'browser_started':False,'browser_joined':False,'browser_exit':None}
+    if browser is not None and browser.process is not None:
+        result['browser_started']=True
+        if browser.closed:
+            code=browser.process.wait(timeout=0)
+            if type(code) is not int: raise RuntimeError('retained browser wait receipt refused')
+            result.update(browser_joined=True,browser_exit=code)
+    return result
+
 INFO = """const {ExtensionParent}=ChromeUtils.importESModule('resource://gre/modules/ExtensionParent.sys.mjs');
 const {AppConstants}=ChromeUtils.importESModule('resource://gre/modules/AppConstants.sys.mjs');
 const ext=ExtensionParent.GlobalManager.getExtension(arguments[0]);
@@ -66,6 +91,7 @@ class ProtectionRun:
         self.browser = None
         self.plan = None
         self.stage = "preflight"
+        self.before = self.after = self.load_result = None
 
     def open(self, profile, environment):
         preflight()
@@ -96,9 +122,10 @@ class ProtectionRun:
                            'PATH':str(Path(os.environ['WINDIR'])/'System32'), 'MOZ_CRASHREPORTER_DISABLE':'1'}
             self.stage = 'browser-start'
             browser = self.open(self.plan.path/'Firefox',environment)
-            before = protections(browser)
+            self.before = before = protections(browser)
             self.stage = "temporary-load"
-            if browser.chrome(LOAD,[str(xpi),identity['addon_id']],True) is not True:
+            self.load_result = load_observation(browser.chrome(LOAD,[str(xpi),identity['addon_id']],True))
+            if self.load_result['state']!='loaded':
                 raise RuntimeError('owned temporary protection probe unavailable')
             info = browser.chrome(INFO,[identity['addon_id']])
             if (not isinstance(info,dict) or set(info)!={'base','privateAllowed','channel'} or info['privateAllowed'] is not False
@@ -119,7 +146,8 @@ class ProtectionRun:
             browser.navigate('about:blank')
             browser.navigate(page)
             browser.wait("return document.querySelector('#receipt')?.textContent==='unavailable';",timeout=20)
-            if protections(browser)!=before: raise RuntimeError('protection settings changed')
+            self.after = protections(browser)
+            if self.after!=before: raise RuntimeError('protection settings changed')
             self.stage = "joined-shutdown"
             browser.close()
             require_joined(browser)
@@ -131,21 +159,32 @@ class ProtectionRun:
                                       'scope':'fileless fixed loopback service query; no native publication authority','identity':identity,
                                       'harness_revision':commit,'harness_worktree_dirty':False,'temporary_loading_used':True,
                                       'initial_owned_protections':before,'protections_unchanged':True,'receipt':observed,
+                                      'temporary_load':self.load_result,
                                       'wrong_page_refused':True,'repeated_start_same_receipt':True,'closed_context_refused':True,
                                       'firefox_exe_sha256':browser_hash,'successful_browser_exits':1,'joined':True,
                                       'registration_unchanged_absent':True,'native_publication_qualified':False})
         except BaseException as error:
+            frames = []
             try:
-                frames = []; trace = error.__traceback__
+                trace = error.__traceback__
                 while trace is not None and len(frames)<12:
                     frames.append({'function':trace.tb_frame.f_code.co_name,'line':trace.tb_lineno});trace=trace.tb_next
-                if self.plan.created:
-                    with (self.plan.path/'failure.private.json').open('x',encoding='utf-8') as output:
-                        json.dump({'stage':self.stage,'frames':frames},output)
-            except BaseException: pass  # Recording must never skip retained-owner retirement.
+            except BaseException: pass  # Diagnostic collection cannot skip retirement.
+            if self.before is not None and self.browser is not None and not self.browser.closed:
+                try: self.after = protections(self.browser)
+                except BaseException: self.after = None
             if not self.retire():
                 print('Protection probe cleanup incomplete; retaining exact owned Firefox owner.',flush=True)
                 while not self.retire(): time.sleep(1)
+            # Observation failure cannot skip retirement, and absence alone is not a join.
+            try:
+                if self.plan.created:
+                    with (self.plan.path/'failure.private.json').open('x',encoding='utf-8') as output:
+                        json.dump({'version':2,'stage':self.stage,'frames':frames,
+                                   'temporary_load':self.load_result,'cleanup':cleanup_observation(self.browser),
+                                   'initial_owned_protections':self.before,'final_owned_protections':self.after,
+                                   'protections_unchanged':None if self.before is None or self.after is None else self.before==self.after},output)
+            except BaseException: pass  # Failed recording must not claim success or lose an owner.
             raise RuntimeError('protection probe refused; owned domain preserved; no acceptance claimed') from None
 
 

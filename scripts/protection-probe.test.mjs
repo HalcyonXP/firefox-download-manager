@@ -264,3 +264,123 @@ test("Firefox API schema uses integer bounds and no synchronous returns on async
     assert.deepEqual(fn.parameters, []);
   }
 });
+
+const loaderSource = readFileSync(
+  new URL("./qualification/protection_loader.js", import.meta.url),
+  "utf8",
+);
+async function loadModel({
+  addon = { id: "owned" },
+  error,
+  bootstrap = false,
+  fileInit = false,
+  sync = false,
+} = {}) {
+  let calls = 0;
+  const replies = [];
+  const promise = new Promise((resolve) => {
+    runInNewContext(`(function(){${loaderSource}}).apply(null, args)`, {
+      args: [
+        "owned.xpi",
+        "owned",
+        (value) => {
+          replies.push(JSON.parse(JSON.stringify(value)));
+          resolve();
+        },
+      ],
+      ChromeUtils: {
+        importESModule(path) {
+          assert.equal(path, "resource://gre/modules/AddonManager.sys.mjs");
+          if (bootstrap) throw error;
+          return {
+            AddonManager: {
+              installTemporaryAddon() {
+                calls++;
+                if (sync) throw error;
+                return error ? Promise.reject(error) : Promise.resolve(addon);
+              },
+            },
+          };
+        },
+      },
+      Components: {
+        interfaces: { nsIFile: 1 },
+        classes: {
+          "@mozilla.org/file/local;1": {
+            createInstance() {
+              return {
+                initWithPath(path) {
+                  assert.equal(path, "owned.xpi");
+                  if (fileInit) throw error;
+                },
+              };
+            },
+          },
+        },
+      },
+    });
+  });
+  await promise;
+  assert.equal(replies.length, 1);
+  return { calls, value: replies[0] };
+}
+
+test("temporary loader distinguishes identity, refusal and dispatch stages without retry", async () => {
+  const loaded = await loadModel();
+  assert.equal(loaded.calls, 1);
+  assert.deepEqual(loaded.value, {
+    version: 1,
+    state: "loaded",
+    phase: "identity",
+    terms: [],
+    complete: true,
+  });
+  assert.equal((await loadModel({ addon: { id: "foreign" } })).value.state, "refused");
+  for (const [options, phase, calls] of [
+    [{ bootstrap: true }, "bootstrap", 0],
+    [{ fileInit: true }, "file-init", 0],
+    [{ sync: true }, "install", 1],
+    [{}, "install", 1],
+  ]) {
+    const result = await loadModel({ ...options, error: new Error("Extension is invalid") });
+    assert.equal(result.calls, calls);
+    assert.deepEqual(result.value, {
+      version: 1,
+      state: "refused",
+      phase,
+      terms: ["invalid-extension"],
+      complete: true,
+    });
+  }
+});
+
+test("temporary loader records only bounded fixed terms from the exact load error", async () => {
+  const error = new Error("Extension is invalid");
+  error.additionalErrors = [
+    "Using 'experiment_apis' requires a privileged add-on. opaque-fixture-value",
+  ];
+  const result = await loadModel({ error });
+  assert.deepEqual(result.value.terms, [
+    "experiment-apis",
+    "invalid-extension",
+    "privilege-required",
+  ]);
+  assert.equal(result.value.complete, true);
+  assert.equal(JSON.stringify(result).includes("opaque-fixture-value"), false);
+  for (const additionalErrors of [
+    Array(9).fill("enum"),
+    ["x".repeat(2049)],
+    [null],
+    "not-an-array",
+  ]) {
+    error.additionalErrors = additionalErrors;
+    assert.equal((await loadModel({ error })).value.complete, false);
+  }
+  const unreadable = {
+    get message() {
+      throw new Error("opaque-fixture-value");
+    },
+  };
+  assert.deepEqual((await loadModel({ error: unreadable })).value.terms, []);
+  assert.equal((await loadModel({ error: unreadable })).value.complete, false);
+});

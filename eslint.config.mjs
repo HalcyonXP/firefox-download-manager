@@ -29,6 +29,13 @@ export default tseslint.config(
     languageOptions: { sourceType: "script", globals: { ...globals.browser, browser: "readonly" } },
   },
   {
+    files: ["scripts/qualification/protection_loader.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: { ChromeUtils: "readonly", Components: "readonly", arguments: "readonly" },
+    },
+  },
+  {
     files: ["scripts/**/*.mjs", "*.config.mjs"],
     languageOptions: {
       globals: globals.node,

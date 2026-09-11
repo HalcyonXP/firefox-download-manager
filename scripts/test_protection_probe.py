@@ -114,4 +114,53 @@ class ProtectionProbeTests(unittest.TestCase):
             self.assertIn(key,driver.PROTECTIONS)
 
 
+    def test_load_result_is_closed_and_never_boolean_or_incomplete_success(self):
+        value={'version':1,'state':'loaded','phase':'identity','terms':[],'complete':True}
+        self.assertEqual(driver.load_observation(value),value)
+        for other in [True,False,{**value,'version':True},{**value,'phase':'install'},
+                      {**value,'terms':['enum']},{**value,'complete':False},
+                      {**value,'path':'unowned'},{**value,'state':'refused','terms':['raw message']},
+                      {**value,'state':'refused','terms':['enum','enum']}]:
+            with self.assertRaises(RuntimeError):driver.load_observation(other)
+        refused={**value,'state':'refused','phase':'install','terms':['experiment-apis','privilege-required']}
+        self.assertEqual(driver.load_observation(refused),refused)
+
+    def test_failure_cleanup_receipt_requires_retained_wait_not_absence(self):
+        self.assertEqual(driver.cleanup_observation(None),{'browser_created':False,'browser_started':False,'browser_joined':False,'browser_exit':None})
+        class Process:
+            def __init__(self):self.waits=0
+            def wait(self, timeout):
+                self.waits+=1;self.timeout=timeout;return 1
+        process=Process();browser=SimpleNamespace(closed=False,process=process)
+        self.assertFalse(driver.cleanup_observation(browser)['browser_joined']);self.assertEqual(process.waits,0)
+        browser.closed=True;receipt=driver.cleanup_observation(browser)
+        self.assertTrue(receipt['browser_joined']);self.assertEqual(receipt['browser_exit'],1)
+        self.assertEqual(process.waits,1);self.assertEqual(process.timeout,0)
+        with self.assertRaises(RuntimeError):driver.require_joined(browser)
+
+    def test_failed_load_records_classification_protections_and_join_after_retirement(self):
+        domain=self.directory;domain.mkdir()
+        loaded={'version':1,'state':'refused','phase':'install','terms':['experiment-apis'],'complete':True}
+        class Process:
+            def wait(self, timeout):return 0
+        class Browser:
+            closed=False
+            process=Process()
+            def chrome(self,*args):return loaded
+            def close(self):self.closed=True
+        browser=Browser();run=driver.ProtectionRun(domain,Path('unused'),domain/'report.json')
+        plan=SimpleNamespace(path=domain,created=True,create=lambda:None)
+        def opened(*args):run.browser=browser;return browser
+        with patch.object(driver,'preflight'),patch.object(driver,'inspect',return_value=(domain/'owned.xpi',{'source_commit':'fixed','addon_id':'owned'})), \
+             patch.object(driver,'ordinary'),patch.object(driver,'revision',return_value='fixed'),patch.object(driver,'file_sha256',return_value='fixture'), \
+             patch.object(driver.subprocess,'check_output',return_value=b''),patch.object(driver.DomainPlan,'record',return_value=plan), \
+             patch.object(run,'open',side_effect=opened),patch.object(driver,'protections',return_value={'fixture':True}):
+            with self.assertRaises(RuntimeError):run.execute()
+        failure=json.loads((domain/'failure.private.json').read_text(encoding='utf-8'))
+        self.assertEqual(failure['temporary_load'],loaded);self.assertEqual(failure['stage'],'temporary-load')
+        self.assertEqual(failure['cleanup'],{'browser_created':True,'browser_started':True,'browser_joined':True,'browser_exit':0})
+        self.assertTrue(failure['protections_unchanged']);self.assertTrue(browser.closed)
+        self.assertFalse((domain/'report.json').exists())
+
+
 if __name__=='__main__':unittest.main()
