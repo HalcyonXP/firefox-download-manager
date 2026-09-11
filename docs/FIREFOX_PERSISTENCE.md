@@ -1,12 +1,12 @@
 # Owned normal-XPI installation observation
 
-Status: implemented/model-tested; **not executed in Firefox**. This is a separate, opt-in installation observation, not M5 install-ready or native-handoff acceptance.
+Status: an owned default-profile run observed a signature requirement; **persistent installation was not observed**. This is a separate, opt-in installation observation, not M5 install-ready or native-handoff acceptance.
 
 ## Scope and input
 
 `python scripts/probe-xpi-persistence.py --package <paired-package> --firefox <Developer-Edition> --report <new-report> --execute-owned-browser`
 
-The existing paired-package validator binds the exact XPI to its package descriptor/payload hashes. `xpi_policy.py` additionally bounds ZIP size/expansion/member counts, checks every CRC, rejects duplicate manifest members and accepts only the current manual product manifest: stable Manager identity/version, nativeMessaging/menus/storage, optional cookies/HTTP(S) authority, private execution disallowed. Broader capture permissions or another manifest/version require an explicit policy review. No diagnostic XPI is substituted and no native/setup executable is launched. The existing paired2df904b XPI passes this input policy; this is file inspection, not observed installation.
+The existing paired-package validator binds the exact XPI to its package descriptor/payload hashes. `xpi_policy.py` additionally bounds ZIP size/expansion/member counts, checks every CRC, rejects duplicate manifest members and accepts only the current manual product manifest: stable Manager identity/version, nativeMessaging/menus/storage, optional cookies/HTTP(S) authority, private execution disallowed. Broader capture permissions or another manifest/version require an explicit policy review. No diagnostic XPI is substituted and no native/setup executable is launched. The existing paired2df904b XPI passes this input policy; the execution below refused installation, not input validation.
 
 The driver retains original closed-app checks, an independent strict process inventory and absence of native registration in all views. A ticket precedes exclusive domain creation. Only the new owned profile/environment is used, with retained browser/fixture objects before launch and conservative retirement. Existing Firefox driver signing-override refusal and protection comparisons remain. Normal profiles are never inspected, copied or injected; registration is never written. This driver makes no concurrent-normal-browser exception.
 
@@ -24,6 +24,19 @@ An active result requires a preceding permission-button attempt followed by an e
 
 All reports have `qualification:false` and `m5_install_ready:false`. An isolated default environment's refusal is not evidence about normal-profile compatibility and does not introduce signing/accounts or a settings-change requirement. Conversely, a successful result qualifies only the recorded XPI and normal-UI/restart slice—not ordinary automatic capture, the installed companion, a newer package, physical input or final-main artifacts. Package, harness and executable identities remain separate.
 
-## Local verification
+## Model verification at preparation checkpointb34e01e
 
 Eleven new models/fixture tests cover archive/permission bounds, actual-button dispatch without uncertain replay, temporary/private/ambiguous receipt refusal, retained failed starts/exits, two-lifetime report guards and active-receipt/permission ordering. A real bounded loopback response is byte-checked and joined. Embedded observation JavaScript is compiled and its exact failure/source/constant handling executed with fake browser globals. Six restored-source mutations reject source/schema, temporary receipt, uncertain-click, undefined signature constant and omitted restart-count guards. Complete npm gates (242 TypeScript tests/14 protocol examples) and108 Python tests pass. This verifies the prepared driver, not the real Firefox UI/persistence path.
+
+## Actual default-profile observation (bc36eb5 / packaged2df904b)
+
+The first b34e01e run failed before its install click during protection observation and produced no result report. A fileless regression reproduced the absent-preference read failure. Commitbc36eb5 reads the preference type first: absent `xpinstall.enabled` is recorded as `null`, not invented as On/Off, and unexpected types still refuse. Signature enforcement must remain a real boolean. No preference is created or changed, and before/after comparisons remain exact.
+
+The absent-preference regression brings the focused persistence suite to12 passing models. A new cleanbc36eb5 run against the unchanged packaged2df904b manual XPI then observed Firefox's exact signature-required failure, bound to the owned browser/source, before any approval-button attempt. Report `persistence62-normal-ui.json` has `outcome:signature-requirement-observed`, CLI exit1, one successful browser exit/join, joined fixture, no installed receipt, no temporary loading and unchanged absent registration. Fresh final app/registration absence and input SHA256 were independently checked. The owned profile reported `signatures_required:true` and absent `install_enabled:null` throughout.
+
+- Packaged XPI SHA256: `d4b6140dd5ab129177bc9e607ae743ff69e35d932aa9a2d25adf1ce6d53b9408`.
+- Harness: `bc36eb5f0a556b5c9dae815bd0155a229c7e8e4d`, clean.
+- Package source: `2df904b9e04a83a6bd48c1ae4d3e728d9c30f1fb`.
+- Firefox Developer Edition156 executable SHA256: `8a6a2339da19ccd55be1832583d6ed83a7f25c03a3fab5fe5af52ebd2e68708c`; Windows11 build26200.
+
+Neither approval UI nor restart persistence was reached. This establishes a default-profile test-environment compatibility limit for these bytes, not normal-profile compatibility, a signing/account requirement, a settings-change recommendation or rejection of unsigned distribution. Exact persistent installation remains unverified; repeating the same unchanged default-profile attempt would not resolve that gap. No installation workaround or protection override was introduced.

@@ -156,11 +156,12 @@ def pending_confirmation(snapshot, *, captured):
 class BrowserInstalledRun(InstalledRun):
     def __init__(self, package, executable, report, fault=None, scenario="nominal"):
         super().__init__(package, report, fault)
-        if scenario not in ("nominal", "missing-terminal", "cross-origin", "capture-toggle") or (scenario != "nominal" and fault is not None):
+        if scenario not in ("nominal", "missing-terminal", "cross-origin", "capture-toggle", "unsupported-contexts") or (scenario != "nominal" and fault is not None):
             raise RuntimeError("unsupported combined scenario/fault pair")
         self.scenario = scenario
         self.executable = executable
         self.browser_checks = []
+        self.context_checks = []
         self.probe_sha256 = self.firefox_sha256 = None
 
     def failure_record(self, error):
@@ -186,7 +187,11 @@ class BrowserInstalledRun(InstalledRun):
             raise RuntimeError("successful retained browser exits required")
         if self.firefox_sha256 != file_sha256(self.executable):
             raise RuntimeError("Firefox executable identity changed")
-        return {"qualification": False, "temporary_xpi": True, "scenario": self.scenario, "browser_checks": self.browser_checks,
+        contexts = {}
+        if self.scenario == "unsupported-contexts":
+            from .browser_contexts import context_evidence
+            contexts["context_checks"] = context_evidence(self.context_checks)
+        return {**contexts, "qualification": False, "temporary_xpi": True, "scenario": self.scenario, "browser_checks": self.browser_checks,
                 "probe_xpi_sha256": self.probe_sha256, "firefox_exe_sha256": self.firefox_sha256}
 
     def open_browser(self, peer, profile, downloads, xpi, origins):
@@ -239,6 +244,9 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
             from .capture_toggle import exercise_off
             new_tab(browser)
             exercise_off(self, browser, inspector, fixture, downloads)
+        if self.scenario == "unsupported-contexts":
+            from .browser_contexts import exercise_contexts
+            self.context_checks = exercise_contexts(self, browser, inspector, fixture, downloads)
         self.checkpoint("bridge-started")
         missing = self.scenario == "missing-terminal"
         armed = message(browser, inspector, {"action": "arm-missing-terminal" if missing else "arm"})

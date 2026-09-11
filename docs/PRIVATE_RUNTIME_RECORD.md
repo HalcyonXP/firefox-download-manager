@@ -170,3 +170,5 @@ CI34577036411 at6f8b209 passed all four jobs, including both clean package build
 
 
 CI34580824359 at4f5c006 passed all four jobs, including clean package comparison and Windows11 emulation. The separate installed/browser batch used clean4f5c006 harness with unchanged paired2df904b, not a new installed native package. Neither pass identifies a cause or establishes a fix for prior adapter/bridge deadline failures.
+
+CI34585065496 atb34e01e passed all four jobs, including clean package comparison and Windows11 emulation. That checkpoint changed the normal-XPI observation harness, not the native adapter/bridge implementation. This pass does not establish a cause or fix for historical deadline failures; budgets, concurrency and protections remain unchanged.

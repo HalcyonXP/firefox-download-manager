@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   state: vi.fn(),
   view: vi.fn(),
   listen: vi.fn(),
+  contextListen: vi.fn(),
 }));
 vi.mock("../src/background", () => ({
   captureControl: {
@@ -48,6 +49,7 @@ beforeEach(async () => {
   mocks.preference.mockReturnValue(true);
   mocks.capture.mockResolvedValue({ cancel: true });
   vi.stubGlobal("browser", {
+    webRequest: { onBeforeRequest: { addListener: mocks.contextListen } },
     runtime: {
       id: "owned",
       getURL: (name: string) => `moz-extension://owned/${name}`,
@@ -251,4 +253,31 @@ it("applies the shared saved preference even when the diagnostic gate is armed",
   expect(enabled()).toBe(true);
   mocks.preference.mockReturnValue(false);
   expect(enabled()).toBe(false);
+});
+
+it("projects only bounded owned-origin context classes without raw URLs or store IDs", async () => {
+  await control(
+    { action: "ready", destination: "owned-output", origins: ["http://127.0.0.1:8123"] },
+    inspector,
+  );
+  const observe = mocks.contextListen.mock.calls[0]![0] as (event: object) => void;
+  observe({ url: "http://127.0.0.1:9999/direct", method: "GET" });
+  observe({
+    url: "http://127.0.0.1:8123/direct",
+    method: "GET",
+    type: "main_frame",
+    cookieStoreId: "firefox-container-999",
+    incognito: false,
+  });
+  const snapshot = (await control({ action: "snapshot" }, inspector)) as {
+    contexts: unknown[];
+    overflow: boolean;
+  };
+  expect(snapshot.contexts).toEqual([
+    { method: "GET", frame: "main", store: "other", private: false },
+  ]);
+  for (let i = 0; i < 64; i++) observe({ url: "http://127.0.0.1:8123/direct" });
+  expect(
+    ((await control({ action: "snapshot" }, inspector)) as { overflow: boolean }).overflow,
+  ).toBe(true);
 });

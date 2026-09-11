@@ -66,6 +66,37 @@ captureControl.activate((preferenceEnabled) =>
     { crossOriginRedirects: true, originAllowed: (origin) => fixtureOrigins.has(origin) },
   ),
 );
+// Read-only context observations, scoped to the same exact owned origins.
+const contexts: { method: string; frame: string; store: string; private: boolean | "missing" }[] =
+  [];
+browser.webRequest.onBeforeRequest.addListener(
+  (details) => {
+    let url: URL;
+    try {
+      url = new URL(details.url);
+    } catch {
+      overflow = true;
+      return;
+    }
+    if (!fixtureOrigins.has(url.origin) || url.pathname !== "/direct") return;
+    if (contexts.length >= 64) {
+      overflow = true;
+      return;
+    }
+    contexts.push({
+      method: details.method === "GET" ? "GET" : "other",
+      frame: details.type === "main_frame" ? "main" : "other",
+      store:
+        details.cookieStoreId === "firefox-default"
+          ? "default"
+          : typeof details.cookieStoreId === "string"
+            ? "other"
+            : "missing",
+      private: typeof details.incognito === "boolean" ? details.incognito : "missing",
+    });
+  },
+  { urls: ["http://127.0.0.1/*"] },
+);
 function snapshot() {
   const state = nativeConnection.state();
   const handoff = browserHandoff.view();
@@ -78,6 +109,7 @@ function snapshot() {
     terminalSuppressed,
     commitReplaced,
     capturePreference: captureControl.state(),
+    contexts: contexts.slice(),
     records: records.slice(),
     blocked: handoff.blocked,
     pending: handoff.pending.map((entry) => entry.stage),
