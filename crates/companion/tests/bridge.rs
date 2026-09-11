@@ -445,22 +445,110 @@ async fn an_idle_live_peer_is_not_misclassified_as_closed() {
     drop(server);
 }
 
-async fn completed_handoff(peer: &mut Peer, id: &str) {
+#[derive(Debug, Default, PartialEq, Eq)]
+struct HandoffObservation {
+    responses: u64,
+    waiting: &'static str,
+    last_state: Option<TaskState>,
+    last_bytes: Option<u64>,
+    last_failure: Option<&'static str>,
+}
+impl HandoffObservation {
+    fn record(&mut self, response: &Value) {
+        self.responses = self.responses.saturating_add(1);
+        let task = &response["result"]["task"];
+        self.last_state = serde_json::from_value(task["state"].clone()).ok();
+        self.last_bytes = task["bytes_completed"].as_u64();
+        // Never format a wire response or accept an arbitrary diagnostic string.
+        self.last_failure = if task["error"].is_null() {
+            None
+        } else {
+            Some(
+                [
+                    "CHECKSUM_MISMATCH",
+                    "AUTH_REQUIRED",
+                    "AUTH_EXPIRED",
+                    "REDIRECT_REJECTED",
+                    "CANCELLED",
+                    "PROBE_FAILED",
+                    "HTTP_STATUS",
+                    "RANGE_RESPONSE_INVALID",
+                    "RESOURCE_CHANGED",
+                    "RETRY_EXHAUSTED",
+                    "STORAGE_ERROR",
+                    "DISK_FULL",
+                    "ACCESS_DENIED",
+                    "FILE_LOCKED",
+                    "FILE_EXISTS",
+                    "STATE_CORRUPT",
+                    "INTERNAL_ERROR",
+                ]
+                .into_iter()
+                .find(|code| task["error"]["code"].as_str() == Some(*code))
+                .unwrap_or("unrecognized"),
+            )
+        };
+    }
+}
+
+#[test]
+fn handoff_observation_retains_only_closed_classifications_and_counts() {
+    let mut observation = HandoffObservation::default();
+    observation.record(
+        &json!({"result":{"task":{"state":"failed", "bytes_completed":12,
+        "error":{"code":"PROBE_FAILED", "context":{"other":"synthetic-discarded"}}}}}),
+    );
+    assert_eq!(observation.last_state, Some(TaskState::Failed));
+    assert_eq!(observation.last_bytes, Some(12));
+    assert_eq!(observation.last_failure, Some("PROBE_FAILED"));
+    observation.record(
+        &json!({"result":{"task":{"state":"synthetic-discarded", "bytes_completed":-1,
+        "error":{"code":"synthetic-discarded"}}}}),
+    );
+    assert_eq!(observation.responses, 2);
+    assert_eq!(observation.last_state, None);
+    assert_eq!(observation.last_bytes, None);
+    assert_eq!(observation.last_failure, Some("unrecognized"));
+    assert!(!format!("{observation:?}").contains("synthetic-discarded"));
+}
+
+async fn completed_handoff(peer: &mut Peer, id: &str) -> Result<(), HandoffObservation> {
+    let mut observation = HandoffObservation::default();
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
+            observation.waiting = "send";
             peer.send("get_handoff", json!({"task_id":id}), "complete")
                 .await;
+            observation.waiting = "response";
             let response = peer.response("complete").await;
+            observation.record(&response);
             assert_eq!(response["ok"], true);
             assert_eq!(response["result"]["phase"], "committed");
             if response["result"]["task"]["state"] == "completed" {
                 break;
             }
+            observation.waiting = "poll delay";
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
     })
     .await
-    .expect("durable handoff completion");
+    .map_err(|_| observation)
+}
+
+async fn complete_or_retire(
+    mut peer: Peer,
+    id: &str,
+    worker: &mut Worker,
+    http: TestServer,
+) -> (Peer, TestServer) {
+    if let Err(observation) = completed_handoff(&mut peer, id).await {
+        eprintln!("handoff completion deadline: {observation:?}");
+        drop(peer);
+        joined(worker).await;
+        drop(http);
+        panic!("durable handoff completion not observed; worker joined and fixture retired");
+    }
+    (peer, http)
 }
 
 #[tokio::test]
@@ -535,7 +623,7 @@ async fn lost_prepare_and_commit_replies_recover_by_id_without_a_second_transfer
         "committed"
     );
     drop(gate);
-    completed_handoff(&mut third, &id).await;
+    let (mut third, http) = complete_or_retire(third, &id, &mut worker, http).await;
     let count = http.requests().len();
     assert_eq!(
         fs::read(domain.0.join("downloads/handoff.bin")).unwrap(),
