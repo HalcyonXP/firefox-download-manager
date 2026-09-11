@@ -448,3 +448,100 @@ fn persistence_cleanup_cannot_forget_an_aborted_handoff() {
     );
     assert!(domain.record(id).exists());
 }
+
+async fn seed_paused_metadata(domain: &Domain, server: &TestServer) -> TaskId {
+    use download_manager_engine::network::ProbeClient;
+    use download_manager_engine::persistence::{ResourceIdentity, TaskMetadata, TaskStore};
+    use download_manager_engine::storage::PartialFile;
+    let probe = ProbeClient::new()
+        .unwrap()
+        .probe(&server.url("/fixture"))
+        .await
+        .unwrap();
+    let store = TaskStore::open(&domain.state).unwrap();
+    let mut metadata =
+        TaskMetadata::new_with_workers(&server.url("/fixture"), &domain.downloads, "paused.bin", 1)
+            .unwrap();
+    let timestamp = metadata.updated_at();
+    metadata.transition(TaskState::Probing, timestamp).unwrap();
+    metadata
+        .apply_resource(ResourceIdentity::from_probe(&probe).unwrap(), timestamp)
+        .unwrap();
+    let partial = PartialFile::create(&domain.downloads, "paused.bin", 128 * 1024).unwrap();
+    metadata.attach_partial(&partial, timestamp).unwrap();
+    metadata
+        .transition(TaskState::Downloading, timestamp)
+        .unwrap();
+    metadata.transition(TaskState::Paused, timestamp).unwrap();
+    store.create(&metadata).unwrap();
+    metadata.task_id()
+}
+
+#[tokio::test]
+async fn shutdown_refuses_new_runs_without_changing_handoff_history_or_replaying_commits() {
+    let domain = Domain::new();
+    let server = server();
+    // Valid persisted paused state, not an observed interrupted transfer.
+    let paused = seed_paused_metadata(&domain, &server).await;
+    let engine = domain.engine();
+    let observations: Result<_, TaskEngineError> = async {
+        let queued =
+            engine.create_task_default(&server.url("/fixture"), &domain.downloads, "queued.bin")?;
+        let failed = engine.create_task_with_integrity(
+            &server.url("/fixture"),
+            &domain.downloads,
+            "failed.bin",
+            WorkerCount::One,
+            None,
+            ExpectedSha256::parse(&"f".repeat(64)),
+        )?;
+        engine.start(failed.task_id())?;
+        let failed_snapshot = engine.wait_until_inactive(failed.task_id()).await?;
+        let committed = TaskId::new();
+        engine.prepare_handoff(domain.request(committed, &server.url("/fixture")))?;
+        engine.commit_handoff(committed)?;
+        let completed = engine.wait_until_inactive(committed).await?;
+        let unused = TaskId::new();
+        engine.prepare_handoff(domain.request(unused, &server.url("/fixture")))?;
+        engine.shutdown().await?;
+        let before = engine.snapshots();
+        let requests = server.requests().len();
+        let refused = [
+            engine.start(queued.task_id()),
+            engine.retry(failed.task_id()),
+            engine.resume(failed.task_id()).await,
+            engine.resume(paused).await,
+        ];
+        let commit_refused = engine.commit_handoff(unused);
+        let repeated = engine.commit_handoff(committed)?;
+        // Join even if a mutation incorrectly admitted a new run.
+        engine.shutdown().await?;
+        Ok((
+            failed_snapshot,
+            completed,
+            before == engine.snapshots(),
+            requests == server.requests().len(),
+            refused,
+            commit_refused,
+            repeated,
+        ))
+    }
+    .await;
+    let cleanup = engine.shutdown().await;
+    drop(engine);
+    drop(server);
+    assert!(cleanup.is_ok(), "retained coordinator cleanup failed");
+    let (failed, completed, unchanged, no_requests, refused, commit_refused, repeated) =
+        observations.expect("closed admission observations");
+    assert_eq!(failed.state(), TaskState::Failed);
+    assert_eq!(completed.state(), TaskState::Completed);
+    assert!(unchanged && no_requests);
+    assert!(
+        refused
+            .into_iter()
+            .all(|result| result == Err(TaskEngineError::InvalidTaskState))
+    );
+    assert_eq!(commit_refused, Err(TaskEngineError::InvalidTaskState));
+    assert_eq!(repeated.phase(), HandoffPhase::Committed);
+    assert_eq!(repeated.task(), &completed);
+}

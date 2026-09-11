@@ -21,6 +21,8 @@ Blank input means structural validation only. Otherwise the UI accepts 64 hexade
 
 Cancellation is checked between bounded reads. The engine awaits blocking validation rather than abandoning its thread, releases the lease, then completes the existing stop/checkpoint path. A blocking filesystem call itself is not forcibly interruptible. The UI offers Cancel during validation, not Pause; it does not mislabel the last download rate/ETA as hashing progress. Promotion remains a non-cancellable atomic publication boundary.
 
+Engine inactivity is distinct from coordinator retirement. Callers closing an engine must await its retained coordinator joins; see [COORDINATOR_OWNERSHIP.md](COORDINATOR_OWNERSHIP.md).
+
 Windows byte-range locks reject ordinary competing file I/O during validation. They do not defeat malicious same-user processes, memory-mapped mutation, all namespace races, or hardware faults; other platforms may only provide advisory locking. The lease independently enforces helper-local ownership. Security/release review must not turn this into a claim of isolation from a compromised local account.
 
 ## Opt-in fingerprint interface

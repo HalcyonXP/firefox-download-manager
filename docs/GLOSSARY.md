@@ -16,6 +16,7 @@
 - **Persistent XPI installation** (M5): normal installation of the unsigned personal add-on that remains installed across Firefox restart. This is required behavior, not an already verified Manager result. Reinstalling a temporary add-on after restart, including automatically from a harness, does not satisfy it.
 - **Proposed filename**: a Windows-safe name derived from the URL or entered by the user. #19 resolves this before submission; server metadata cannot choose a path. Collision suffixes are selected safely at final promotion.
 - **Worker**: one transfer lane (1/2/4/8), not permission to exceed the separate global/per-host request caps.
+- **Coordinator / inactive / joined engine shutdown**: the coordinator owns one Tokio engine run; inactive is a state flag, not coordinator exit. Joined engine shutdown closes run admission and awaits retained coordinators. Transfer lanes, coordinator tasks and the companion runtime thread are distinct owners; see [COORDINATOR_OWNERSHIP.md](COORDINATOR_OWNERSHIP.md).
 - **Partial**: helper-managed, unvalidated download storage; not final output.
 - **Checkpoint**: flushed completed ranges followed by durable metadata, in that order.
 - **Snapshot**: the helper's authoritative task projection; cached UI state is explicitly stale when disconnected.
@@ -25,7 +26,7 @@
 - **Qualification gap**: a release criterion for which evidence is missing. Code presence or a mock test is not end-to-end evidence.
 - **Tray registration** (#50): the shell has acknowledged this owned window/icon through Shell_NotifyIcon. It may be in Windows tray overflow. This is different from the persistent Native Messaging registry binding installed for Firefox.
 - **Engine owner** (#50): the Rust object retaining the one TaskEngine state lock and settings; client observers do not own its lifetime. The state lock remains held after shutdown acknowledgement until the owner is dropped.
-- **Joined Quit** (#50): cooperative engine shutdown followed by joining the retained worker handle before removing the icon/closing. Sending a stop request alone is not a successful Quit.
+- **Joined Quit** (#50): cooperative engine shutdown followed by joining the retained companion runtime-thread handle before removing the icon/closing. Sending a stop request alone is not a successful Quit.
 - **Companion preview** (#50): a real native window/tray and real engine in a fresh temporary domain, clearly labelled unfinished. It has no browser bridge, capture or installer integration and is excluded from released package payloads. See [COMPANION_DESIGN.md](COMPANION_DESIGN.md).
 
 ## Qualification boundaries (ADR0014)
@@ -53,7 +54,7 @@ The user's subsequent request **explicitly authorized public visibility and docu
 ## Cancellation evidence (#32)
 
 - **Local request start**: the scheduler initiated a send, counted before awaiting the HTTP response. It is not the time the remote server records that request.
-- **Stop acknowledgement**: all owned worker futures have joined, the final local progress sample is published, reporter ownership closes, and partial coverage/bytes cannot change until an explicit resume. Already-transmitted bytes and remote handler observations cannot be retracted.
+- **Stop acknowledgement** (scheduler scope): all owned transfer-worker futures have joined, the final local progress sample is published, reporter ownership closes, and partial coverage/bytes cannot change until an explicit resume. Already-transmitted bytes and remote handler observations cannot be retracted. This scheduler boundary does not itself establish coordinator exit; engine retirement additionally requires retained coordinator joins.
 
 The prior 150 ms stable-server-ledger assertion conflated remote observation with local shutdown. A test-only barrier now holds fully received requests before ledger insertion, deterministically demonstrating late observation after successful local cancellation without late workers or disk writes. The regression also verifies that resumed requests skip retained coverage and final bytes match. A final metrics publication after all joins prevents concurrent worker samples from leaving a stale terminal projection. These are measured boundaries, not permission for workers to survive acknowledgement.
 
@@ -80,6 +81,7 @@ The #23 actual-Firefox slice used a fresh profile, real optional-permission appr
 ## Integrity terms and learning (#25)
 
 - **Expected SHA-256**: optional immutable per-Add digest obtained by the user, never silently removed on retry, reconnect, or recovery. Not a signature or a server-selected validation policy.
+- **Computed fingerprint**: full64-bit main-stream length and computed SHA-256 exposed by a still-owned validation lease. Unlike an expected digest, it comes from reading the file. A copied fingerprint does not retain the lease or authorize publication/reputation acceptance.
 - **Validation lease**: non-cloneable ownership of frozen helper storage and its file lock, spanning validation through one no-overwrite promotion. Unpublished lease drop permits a future full revalidation. Not a continuous guarantee against external mutation of published files.
 - **Transfer versus validation progress**: byte counts/download rate describe transfer; the checking/publishing phases have no invented hashing ETA. Cancel is supported while validating, not after promotion begins.
 

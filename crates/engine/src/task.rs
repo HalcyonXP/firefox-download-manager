@@ -18,6 +18,11 @@ use tokio::runtime::Handle;
 use tokio::sync::{Notify, watch};
 use tokio::time::MissedTickBehavior;
 
+#[cfg(test)]
+mod coordinator_tests;
+mod coordinators;
+use coordinators::{Admission, Coordinators, RunOwner};
+
 mod handoff;
 pub use handoff::{HandoffRequest, HandoffSnapshot};
 
@@ -882,6 +887,9 @@ pub struct TaskEngine {
 
 struct TaskEngineInner {
     store: Arc<TaskStore>,
+    coordinators: Coordinators,
+    #[cfg(test)]
+    coordinator_test: Mutex<Option<Arc<coordinator_tests::Tail>>>,
     scheduler: DownloadScheduler,
     probe_client: ProbeClient,
     options: TaskEngineOptions,
@@ -1021,6 +1029,9 @@ impl TaskEngine {
         Ok(Self {
             inner: Arc::new(TaskEngineInner {
                 store: Arc::new(store),
+                coordinators: Coordinators::default(),
+                #[cfg(test)]
+                coordinator_test: Mutex::new(None),
                 scheduler,
                 probe_client,
                 options,
@@ -1174,6 +1185,7 @@ impl TaskEngine {
     ///
     /// Rejects missing, running, or non-queued tasks and persistence failures.
     pub fn start(&self, task_id: TaskId) -> Result<TaskSnapshot, TaskEngineError> {
+        let admission = self.inner.coordinators.admit()?;
         let task = self.task(task_id)?;
         let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
         let (snapshot, previous, generation, cancellation) = {
@@ -1204,7 +1216,14 @@ impl TaskEngine {
             (snapshot, previous, generation, cancellation)
         };
         self.emit_state_changed(snapshot.clone(), previous);
-        self.spawn_run(&runtime, task, generation, cancellation, RunKind::Initial);
+        self.spawn_run(
+            &runtime,
+            task,
+            generation,
+            cancellation,
+            RunKind::Initial,
+            admission,
+        );
         Ok(snapshot)
     }
 
@@ -1227,21 +1246,31 @@ impl TaskEngine {
         if is_failed {
             return self.retry(task_id);
         }
-        let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
         let mut subscription = task.updates.subscribe();
-        let (generation, cancellation) = {
-            let mut state = lock(&task.state);
-            ensure_present(&state)?;
-            if state.running || state.metadata.state() != TaskState::Paused {
-                return Err(TaskEngineError::InvalidTaskState);
-            }
-            state.failure = None;
-            state.estimator.reset();
-            let run = begin_run(&mut state)?;
-            publish(&task, &state);
-            run
-        };
-        self.spawn_run(&runtime, task, generation, cancellation, RunKind::Resume);
+        {
+            let admission = self.inner.coordinators.admit()?;
+            let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
+            let (generation, cancellation) = {
+                let mut state = lock(&task.state);
+                ensure_present(&state)?;
+                if state.running || state.metadata.state() != TaskState::Paused {
+                    return Err(TaskEngineError::InvalidTaskState);
+                }
+                state.failure = None;
+                state.estimator.reset();
+                let run = begin_run(&mut state)?;
+                publish(&task, &state);
+                run
+            };
+            self.spawn_run(
+                &runtime,
+                task,
+                generation,
+                cancellation,
+                RunKind::Resume,
+                admission,
+            );
+        }
         wait_until(&mut subscription, |update| {
             update.snapshot.state() != TaskState::Paused || !update.running
         })
@@ -1255,6 +1284,7 @@ impl TaskEngine {
     ///
     /// Rejects missing, running, or non-failed tasks and persistence failures.
     pub fn retry(&self, task_id: TaskId) -> Result<TaskSnapshot, TaskEngineError> {
+        let admission = self.inner.coordinators.admit()?;
         let task = self.task(task_id)?;
         let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
         let (queued, previous) = {
@@ -1306,7 +1336,14 @@ impl TaskEngine {
             (publish(&task, &state), generation, cancellation)
         };
         self.emit_state_changed(probing.clone(), TaskState::Queued);
-        self.spawn_run(&runtime, task, generation, cancellation, RunKind::Initial);
+        self.spawn_run(
+            &runtime,
+            task,
+            generation,
+            cancellation,
+            RunKind::Initial,
+            admission,
+        );
         Ok(probing)
     }
 
@@ -1455,14 +1492,19 @@ impl TaskEngine {
         Ok(task_id)
     }
 
-    /// Cooperatively stops every active run for Native Messaging EOF/shutdown.
+    /// Closes new-run admission and joins every retained coordinator, including
+    /// those already reporting inactive, for Native Messaging EOF/shutdown.
     /// Downloading work reaches `paused`; interrupted probe/validation phases
     /// fail safely; promotion is allowed to finish its synchronous publication.
     ///
     /// # Errors
     ///
-    /// Returns only if an internal task update channel disappears unexpectedly.
+    /// Reports failed coordinator joins or inconsistent active state only after
+    /// awaiting all retained coordinators. Cancelling this future retains their
+    /// handles; another shutdown call can complete retirement. This engine no
+    /// longer admits start/retry/resume or new handoff commits after shutdown.
     pub async fn shutdown(&self) -> Result<Vec<TaskSnapshot>, TaskEngineError> {
+        let (runs, mut failed) = self.inner.coordinators.close();
         let tasks: Vec<_> = lock(&self.inner.tasks).values().cloned().collect();
         for task in &tasks {
             let mut state = lock(&task.state);
@@ -1473,17 +1515,20 @@ impl TaskEngine {
                 continue;
             }
             state.stop_request = Some(StopRequest::Shutdown);
-            state
-                .cancellation
-                .as_ref()
-                .ok_or(TaskEngineError::Internal)?
-                .cancel();
+            if let Some(cancellation) = &state.cancellation {
+                cancellation.cancel();
+            } else {
+                failed = true;
+            }
+        }
+        for run in runs {
+            failed |= !run.join().await;
         }
         for task in tasks {
-            let mut receiver = task.updates.subscribe();
-            if receiver.borrow().running {
-                wait_until(&mut receiver, |update| !update.running).await?;
-            }
+            failed |= lock(&task.state).running;
+        }
+        if failed {
+            return Err(TaskEngineError::Internal);
         }
         Ok(self.snapshots())
     }
@@ -1542,7 +1587,8 @@ impl TaskEngine {
         Ok(TaskSubscription { receiver })
     }
 
-    /// Waits until the current run is no longer active.
+    /// Waits until the current run is no longer active. This is a state
+    /// observation, not a coordinator join; use shutdown for complete retirement.
     ///
     /// # Errors
     ///
@@ -1618,11 +1664,19 @@ impl TaskEngine {
         generation: u64,
         cancellation: TransferCancellation,
         kind: RunKind,
+        admission: Admission<'_>,
     ) {
         let inner = Arc::clone(&self.inner);
-        runtime.spawn(async move {
+        let handle = runtime.spawn(async move {
             run_task(inner, task, generation, cancellation, kind).await;
         });
+        let owner = Arc::new(RunOwner::new(handle));
+        #[cfg(test)]
+        if let Some(tail) = lock(&self.inner.coordinator_test).as_ref() {
+            let observed = Arc::clone(&owner);
+            tail.retain(async move { observed.join().await });
+        }
+        admission.retain(owner);
     }
 
     fn emit_state_changed(&self, snapshot: TaskSnapshot, previous_state: TaskState) {
@@ -1680,6 +1734,24 @@ impl ManagedState {
     }
 }
 
+async fn complete_transfer_attempt(
+    inner: &TaskEngineInner,
+    task: &Arc<ManagedTask>,
+    generation: u64,
+    partial: &PartialFile,
+    cancellation: &TransferCancellation,
+) {
+    if let Err(failure) = checkpoint_boundary(inner, task, generation, partial) {
+        fail_run(inner, task, generation, failure);
+    } else if cancellation.is_cancelled() {
+        finish_stop(inner, task, generation);
+    } else {
+        complete_run(inner, task, generation, partial, cancellation).await;
+    }
+    #[cfg(test)]
+    coordinator_tests::at_tail(inner).await;
+}
+
 async fn run_task(
     inner: Arc<TaskEngineInner>,
     task: Arc<ManagedTask>,
@@ -1708,13 +1780,7 @@ async fn run_task(
         .await;
         match transfer {
             Ok(()) => {
-                if let Err(failure) = checkpoint_boundary(&inner, &task, generation, &partial) {
-                    fail_run(&inner, &task, generation, failure);
-                } else if cancellation.is_cancelled() {
-                    finish_stop(&inner, &task, generation);
-                } else {
-                    complete_run(&inner, &task, generation, &partial, &cancellation).await;
-                }
+                complete_transfer_attempt(&inner, &task, generation, &partial, &cancellation).await;
                 return;
             }
             Err(TransferAttemptError::Checkpoint(failure)) => {

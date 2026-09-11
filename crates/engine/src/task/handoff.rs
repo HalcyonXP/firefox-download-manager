@@ -121,6 +121,16 @@ impl TaskEngine {
     /// Refuses unknown/aborted/ordinary tasks, missing runtime and failed persistence.
     pub fn commit_handoff(&self, id: TaskId) -> Result<HandoffSnapshot, TaskEngineError> {
         let task = self.task(id)?;
+        let admission = match self.inner.coordinators.admit() {
+            Ok(admission) => admission,
+            Err(error) => {
+                let state = lock(&task.state);
+                if state.metadata.handoff_phase() == Some(HandoffPhase::Committed) {
+                    return HandoffSnapshot::from_state(&state);
+                }
+                return Err(error);
+            }
+        };
         let (runtime, snapshot, generation, cancellation) = {
             let mut state = lock(&task.state);
             ensure_present(&state)?;
@@ -155,7 +165,14 @@ impl TaskEngine {
             )
         };
         self.emit_state_changed(snapshot.task.clone(), TaskState::Queued);
-        self.spawn_run(&runtime, task, generation, cancellation, RunKind::Initial);
+        self.spawn_run(
+            &runtime,
+            task,
+            generation,
+            cancellation,
+            RunKind::Initial,
+            admission,
+        );
         Ok(snapshot)
     }
 
