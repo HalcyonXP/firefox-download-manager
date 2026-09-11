@@ -101,4 +101,22 @@ The three observed temporary archives have matching payload inventories and SHA2
 
 ## Prepared capture preference scenario
 
-`probe-installed-browser.py --scenario capture-toggle` exercises the actual checkbox against the armed loopback diagnostic: Off must produce a correct Firefox file and no native task/request/output; verified On then uses the existing one-task native completion path. Before reload it saves Off; after reload it must observe Off without reapplying it, arm the diagnostic gate, and obtain a correct Firefox file without native replay. The first completed owned Firefox fixture is independently verified and exclusively archived as `firefox-off.bin`; only its exact completed owned-profile history entry and original fixture file are removed, preventing later checks from accepting stale output. Unexpected history, bytes, requests, files or failed removal refuse. Original ownership/preflight/retirement guards remain. This scenario is implemented and modeled, **not yet executed in Firefox**; production still has no selected interceptor/site authority.
+`probe-installed-browser.py --scenario capture-toggle` exercises the actual checkbox against the armed loopback diagnostic: Off must produce a correct Firefox file and no native task/request/output; verified On then uses the existing one-task native completion path. Before reload it saves Off; after reload it must observe Off without reapplying it, arm the diagnostic gate, and obtain a correct Firefox file without native replay. The first completed owned Firefox fixture is independently verified and exclusively archived as `firefox-off.bin`; only its exact completed owned-profile history entry and original fixture file are removed, preventing later checks from accepting stale output. Unexpected history, bytes, requests, files or failed removal refuse. Original ownership/preflight/retirement guards remain. Clean4f5c006 execution now covers this scenario, as scoped below; production still has no selected interceptor/site authority.
+
+
+## Clean capture-control regression batch (4f5c006 / paired2df904b)
+
+Clean4f5c006 against unchanged clean paired2df904b passed all six scenarios: capture-toggle, nominal, cross-origin, missing-terminal, unlinked and aborted-terminal. Reports `capture60-<scenario>.json` record separate source/package identities and `harness_worktree_dirty:false`. The toggle case observed the actual checkbox: armed Off produced correct Firefox bytes and no native task/request/output; verified On produced one correct native output+Completed; Off remained saved after restart without being reapplied, and an armed diagnostic again left output to Firefox without native replay.
+
+The other five paths passed their existing native/UI/cancellation/restart/recovery assertions. Every case required successful browser/Manager/setup exits, fixture retirement, uninstall and fresh app/registration absence. Eleven preserved output files, including the exclusively archived initial Off control, were independently reread; both recovery native directories remained empty. All six XPI hashes were independently checked and payload inventories matched:
+
+| Scenario | Temporary XPI SHA256 |
+| --- | --- |
+| capture-toggle | `75e6b152edb9c346784260fdd17296f54b348d92146f07628099177b43acc106` |
+| nominal | `829a095705f8dd6c78a9ea847622011d389287bcc911422f971ec81f54ac75ed` |
+| cross-origin | `2efc57af374235e5833bfc288a5031dc63ad370b77c13428fc4e41baeca0ddf8` |
+| missing-terminal | `023043669d756207d87183355ca9e0de4c83db2830fc93aa59132aa624a72415` |
+| unlinked | `a9d1e4d0f3d8819e2ecec84cfcc72467c672be3afd758b93ea951756ec79e718` |
+| aborted-terminal | `e760d319f08b40ae13c6bfeb5a4ef09fe2e31a28fcf056bee317ba5820f85b5a` |
+
+These are temporary-XPI/owned-loopback observations, not persistent installation, distinct-host/DNS/TLS/public-provider, normal-profile or physical-input acceptance. Earlier fault results retain their older source scope. No native bytes, permissions or production capture selection changed for the batch. [Normal XPI installation observation](FIREFOX_PERSISTENCE.md) is a separate prepared next slice, not an inferred result.

@@ -167,3 +167,6 @@ CI34573914169 at documentation checkpointb391bf9 passed package and dependency p
 
 
 CI34577036411 at6f8b209 passed all four jobs, including both clean package builds/comparison and Windows11 emulation. This is an observed pass at that source, not a causal explanation or fix for earlier adapter/bridge deadlines. No deadline, concurrency or protection change was made.
+
+
+CI34580824359 at4f5c006 passed all four jobs, including clean package comparison and Windows11 emulation. The separate installed/browser batch used clean4f5c006 harness with unchanged paired2df904b, not a new installed native package. Neither pass identifies a cause or establishes a fix for prior adapter/bridge deadline failures.
