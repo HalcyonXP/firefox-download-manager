@@ -622,3 +622,102 @@ fn sha256_windows_lock_rejects_competing_io_and_releases_on_lease_drop() {
     drop(lease);
     external.write_all(b"a").expect("lease released");
 }
+
+#[cfg(windows)]
+fn zone_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(":Zone.Identifier");
+    PathBuf::from(name)
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_internet_zone_precedes_final_publication_and_survives_partial_cleanup() {
+    let directory = TestDirectory::new("internet-zone");
+    let partial = completed_storage(directory.path(), "internet.bin", b"abc");
+    let mut promotion = partial.promote().expect("protected promotion");
+    assert_eq!(
+        fs::read(zone_path(promotion.final_path())).expect("final zone"),
+        b"[ZoneTransfer]\r\nZoneId=3\r\n"
+    );
+    assert_eq!(fs::read(promotion.final_path()).expect("data"), b"abc");
+    promotion.cleanup_partial().expect("partial cleanup");
+    assert_eq!(
+        fs::read(zone_path(&directory.path().join("internet.bin"))).expect("retained zone"),
+        b"[ZoneTransfer]\r\nZoneId=3\r\n"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_internet_zone_preserves_restricted_and_refuses_weaker_or_unknown_metadata() {
+    let directory = TestDirectory::new("zone-policy");
+    for (index, marker) in [
+        b"[ZoneTransfer]\r\nZoneId=0\r\n".as_slice(),
+        b"unknown",
+        b"",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("refused-{index}.bin");
+        let partial = completed_storage(directory.path(), &name, b"abc");
+        fs::write(zone_path(partial.partial_path()), marker).expect("fixture metadata");
+        assert_eq!(
+            partial.promote().err(),
+            Some(StorageError::InvalidDownloadZone)
+        );
+        assert!(!directory.path().join(name).exists());
+        assert_eq!(
+            fs::read(zone_path(partial.partial_path())).expect("unchanged marker"),
+            marker
+        );
+    }
+    let partial = completed_storage(directory.path(), "restricted.bin", b"abc");
+    let marker = b"[ZoneTransfer]\r\nZoneId=4\r\n";
+    fs::write(zone_path(partial.partial_path()), marker).expect("restricted fixture");
+    let promoted = partial.promote().expect("restricted promotion");
+    assert_eq!(
+        fs::read(zone_path(promoted.final_path())).expect("restricted readback"),
+        marker
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_internet_zone_locked_stream_refuses_promotion_and_can_retry_after_release() {
+    let directory = TestDirectory::new("zone-locked");
+    let partial = completed_storage(directory.path(), "locked-zone.bin", b"abc");
+    fs::write(
+        zone_path(partial.partial_path()),
+        b"[ZoneTransfer]\r\nZoneId=3\r\n",
+    )
+    .expect("zone fixture");
+    let writer = OpenOptions::new()
+        .write(true)
+        .open(zone_path(partial.partial_path()))
+        .expect("competing writer");
+    assert!(partial.promote().is_err());
+    assert!(!directory.path().join("locked-zone.bin").exists());
+    drop(writer);
+    partial
+        .promote()
+        .expect("fresh validation after retirement");
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_internet_zone_collision_never_marks_or_changes_existing_final_file() {
+    let directory = TestDirectory::new("zone-collision");
+    let existing = directory.path().join("keep.bin");
+    fs::write(&existing, b"existing").expect("existing final");
+    let partial = completed_storage(directory.path(), "keep.bin", b"abc");
+    let promoted = partial.promote().expect("numbered promotion");
+    assert_ne!(promoted.final_path(), existing);
+    assert_eq!(fs::read(&existing).expect("existing bytes"), b"existing");
+    assert!(!zone_path(&existing).exists());
+    assert_eq!(
+        fs::read(zone_path(promoted.final_path())).expect("new marker"),
+        b"[ZoneTransfer]\r\nZoneId=3\r\n"
+    );
+}

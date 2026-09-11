@@ -2,7 +2,7 @@
 
 **Target:** setup → visible tray companion → install the unsigned XPI once → restart Firefox → an ordinary supported download click produces one Manager task and independently correct output.
 
-**Status:** M5 is not install-ready. The native companion and browser coordination have owned integration evidence. A separate automatic-capture candidate is now implemented; its ordinary browser workflow is not yet qualified. The default package remains manual-only.
+**Status:** M5 is not install-ready. The native companion and browser coordination have owned integration evidence. A separate automatic-capture candidate passed an owned17-case temporary-XPI campaign. Public capture is now restricted pending download-protection integration; persistent installation/final workflow remain unqualified. The default package remains manual-only.
 
 ## Delivery blocks
 
@@ -16,7 +16,7 @@ Deliver one buildable candidate using the actual extension entry point and Manag
 - Same-tab/default-store/nonprivate anonymous attachment policy and bounded redirect binding remain authoritative; do not broaden eligibility merely to pass a provider test.
 - Separate development artifact and manifest; no change to default release selection or immutable v0.1.0 assets.
 
-**Current implementation:** [CAPTURE_CANDIDATE.md](CAPTURE_CANDIDATE.md). Permission/state/entry/build tests are not real browser acceptance.
+**Current implementation:** [CAPTURE_CANDIDATE.md](CAPTURE_CANDIDATE.md). Candidate eligibility is now loopback-only while the Firefox protection gap remains open. New Windows final publication establishes verified Internet-zone metadata without URLs; it is not a Firefox/antivirus verdict. Permission/state/entry/build tests remain distinct from the earlier source-scoped browser observation.
 
 ### 2. Consolidated acceptance campaign
 
@@ -56,9 +56,10 @@ There is no signing account, signing submission, public marketplace or remote-up
 | Installed companion | Setup/tray/bridge/output/reconnect/Quit/uninstall and owned fault cases | Source-specific; normal shortcut/physical/cold-start/final artifacts remain separate |
 | Native transaction | Immutable Prepared/Committed/Aborted identity, durable commit-before-dispatch, lost-reply/status recovery | No arbitrary machine/storage failure exactly-once claim; safe history/expiry remains open |
 | Browser integration | Clean ff5e960 harness with clean paired2df904b passed seven owned loopback scenarios;15 output files independently checked | Temporary diagnostic XPI, not the new automatic candidate or persistence/public-provider qualification |
+| Candidate browser campaign | Clean f573c19 harness/candidate with paired2df904b passed17 cases/16 verified files, actual denial/regrant, API revocation, saved-Off restart and retained uninstall/joins | Temporary XPI; predates later protection restriction/native marker; no public-provider/protection parity/persistent/final acceptance |
 | Private/container | Actual container classification and private capability denial; correct Firefox-only output | Zero container identity is not default-cookie-store eligibility; no private/session replay authority |
 | Unsigned installation | Clean bc36eb5 / packaged2df904b observed signature-required refusal in owned defaults | No installed receipt, approval UI or persistent restart result |
-| CI | CI34594905167 at555609b passed all four jobs | Earlier intermittent adapter/bridge failures remain unexplained; no timeout/concurrency workaround established |
+| CI | CI34608070151 atf573c19 passed all four jobs | Earlier intermittent adapter/bridge failures remain unexplained; no timeout/concurrency workaround established |
 
 Detailed evidence belongs in the relevant reference, not repeated in this plan:
 

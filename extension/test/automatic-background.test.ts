@@ -1,4 +1,5 @@
 import { beforeEach, expect, it, vi } from "vitest";
+import { candidateOriginAllowed } from "../src/capture-protection";
 const mock = vi.hoisted(() => ({
   start: vi.fn(),
   allowed: vi.fn(),
@@ -45,5 +46,31 @@ it("candidate activates without diagnostic arming, but requires every independen
     expect(enabled()).toBe(false);
   }
   expect(mock.register.mock.calls[0]![2]).toEqual(["http://*/*", "https://*/*"]);
-  expect(mock.register.mock.calls[0]![3]).toEqual({ crossOriginRedirects: true });
+  expect(mock.register.mock.calls[0]![3]).toEqual({
+    crossOriginRedirects: true,
+    originAllowed: (await import("../src/capture-protection")).candidateOriginAllowed,
+  });
+});
+
+it("candidate protection boundary permits only canonical HTTP loopback test origins", () => {
+  for (const origin of ["http://127.0.0.1", "http://127.0.0.1:42000"]) {
+    expect(candidateOriginAllowed(origin)).toBe(true);
+  }
+  for (const origin of [
+    "https://huggingface.co",
+    "https://us.aws.cdn.hf.co",
+    "http://example.com",
+    "https://127.0.0.1",
+    "http://localhost",
+    "http://127.0.0.1.evil.example",
+    "http://user@127.0.0.1",
+    "http://127.0.0.1/path",
+    "http://127.0.0.1?query",
+    "http://127.0.0.1#fragment",
+    "http://127.1",
+    "data:invalid",
+    "invalid",
+  ]) {
+    expect(candidateOriginAllowed(origin), origin).toBe(false);
+  }
 });

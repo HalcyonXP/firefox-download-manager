@@ -4,6 +4,9 @@
 //! assignment and advances sequentially within it. Only fully written
 //! assignments become completed coverage.
 
+#[cfg(windows)]
+mod internet_zone;
+
 use crate::integrity::ExpectedSha256;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -165,6 +168,8 @@ pub enum StorageOperation {
     Flush,
     /// Stream integrity validation through the owned file.
     Validate,
+    /// Establish and verify Internet-zone provenance before publication.
+    ProtectDownload,
     /// Atomically publish a completed file.
     Publish,
     /// Remove a checkpointed redundant partial link.
@@ -181,6 +186,7 @@ impl fmt::Display for StorageOperation {
             Self::Write => "write partial file",
             Self::Flush => "flush partial file",
             Self::Publish => "publish final file",
+            Self::ProtectDownload => "protect download provenance",
             Self::Validate => "validate partial file",
             Self::CleanupPartial => "remove redundant partial link",
         };
@@ -225,6 +231,9 @@ impl fmt::Display for IoFailure {
 /// Safe storage-layer failures. Display text intentionally contains no path.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum StorageError {
+    /// Existing or newly created Windows provenance metadata is not acceptable.
+    #[error("download provenance metadata is invalid or weaker than Internet zone")]
+    InvalidDownloadZone,
     /// Optional supplied digest did not match the owned complete file.
     #[error("the partial file did not match the supplied SHA-256 digest")]
     ChecksumMismatch,
@@ -1011,6 +1020,9 @@ impl PartialFile {
             return Err(StorageError::InvalidDestination);
         }
 
+        #[cfg(windows)]
+        let mut zone = internet_zone::InternetZoneLease::establish(file, &self.inner.partial_path)?;
+
         for index in 0..FINAL_NAME_ATTEMPTS {
             let candidate_name = numbered_filename(self.inner.final_name.as_str(), index);
             let candidate_path = self.inner.destination.join(candidate_name);
@@ -1019,6 +1031,8 @@ impl PartialFile {
                     if opened_file_matches_path(file, &candidate_path)
                         .map_err(|error| map_io(StorageOperation::Publish, &error))?
                     {
+                        #[cfg(windows)]
+                        zone.verify_link(file, &candidate_path)?;
                         return Ok(candidate_path);
                     }
                     return Err(StorageError::InvalidDestination);

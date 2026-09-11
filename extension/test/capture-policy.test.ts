@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { CapturePolicy, attachmentFilename, type CaptureRequest } from "../src/capture-policy";
+import { candidateOriginAllowed } from "../src/capture-protection";
 import type { BrowserHandoff } from "../src/browser-handoff";
 const page = "https://example.invalid/page";
 const url = "https://example.invalid/file.bin";
@@ -365,4 +366,33 @@ it("requires every redirect origin to remain inside the caller's independently o
   policy.sent(request, []);
   await expect(policy.headers(request, 200, attachment)).resolves.toEqual({});
   expect(capture).not.toHaveBeenCalled();
+});
+
+it("candidate protection boundary refuses public starts and loopback-to-public redirects before handoff", async () => {
+  for (const variant of ["public", "loopback", "redirect"]) {
+    const capture = vi.fn<BrowserHandoff["capture"]>(async () => ({ cancel: true }));
+    const policy = new CapturePolicy(
+      { capture, terminal: vi.fn() },
+      () => true,
+      () => 0,
+      { crossOriginRedirects: true, originAllowed: candidateOriginAllowed },
+    );
+    let details = {
+      ...request,
+      url: variant === "public" ? url : "http://127.0.0.1:42000/file.bin",
+    };
+    policy.click(details.url, page, 1, true);
+    policy.before(details);
+    policy.sent(details, []);
+    if (variant === "redirect") {
+      policy.redirect(details, url, 302, [{ name: "Location", value: url }]);
+      details = { ...details, url };
+      policy.before(details);
+      policy.sent(details, []);
+    }
+    expect(await policy.headers(details, 200, attachment)).toEqual(
+      variant === "loopback" ? { cancel: true } : {},
+    );
+    expect(capture).toHaveBeenCalledTimes(variant === "loopback" ? 1 : 0);
+  }
 });
