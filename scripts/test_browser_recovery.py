@@ -5,7 +5,7 @@ from pathlib import Path
 from threading import Lock
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from qualification.browser_recovery import (ACK_PROMPT, DISCARD_PROMPT, BrowserRecoveryRun,
     ELEMENT, cleanup_button, no_native_transfer, recovery_snapshot)
@@ -58,6 +58,22 @@ class RecoveryTests(unittest.TestCase):
             with self.assertRaises(RuntimeError): no_native_transfer(destination, fixture, 1)
         fixture.requests = Counter({("GET", "/direct"): 1}); destination.iterdir.return_value = iter(["unexpected"])
         with self.assertRaises(RuntimeError): no_native_transfer(destination, fixture, 1)
+
+    def test_executable_identity_is_retained_before_browser_launch(self):
+        run = BrowserRecoveryRun(Path("unused"), Path("owned-firefox"), Path("unused"), "unlinked")
+        run.plan = SimpleNamespace(path=Path("owned-domain"))
+        run.owner = Mock(); run.binding = Mock()
+        def stop_before_launch(*args):
+            self.assertEqual(run.firefox_sha256, "browser-digest")
+            raise RuntimeError("owned launch boundary")
+        run.open_browser = Mock(side_effect=stop_before_launch)
+        with patch("qualification.browser_recovery.build_probe", return_value=Path("owned-xpi")), \
+             patch("qualification.browser_recovery.file_sha256", side_effect=lambda path: "browser-digest" if path == run.executable else "probe-digest"), \
+             patch("qualification.browser_recovery.BrowserPeer"), \
+             patch("qualification.browser_recovery.Fixture"), patch("pathlib.Path.mkdir"):
+            with self.assertRaisesRegex(RuntimeError, "owned launch boundary"):
+                run.transfer((1, 1))
+        run.open_browser.assert_called_once()
 
     def test_recovery_scope_does_not_call_firefox_bytes_native_completion(self):
         run = BrowserRecoveryRun(Path("unused"), Path("unused"), Path("unused"), "unlinked")

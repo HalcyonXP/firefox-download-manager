@@ -80,6 +80,7 @@ class BrowserRecoveryRun(BrowserInstalledRun):
     def transfer(self, identity):
         self.stage = "recovery-probe-build"
         xpi = build_probe(self.plan.path); self.probe_sha256 = file_sha256(xpi)
+        self.firefox_sha256 = file_sha256(self.executable)
         peer = BrowserPeer(self.owner, self.binding, self.current_binding)
         profile, downloads = self.plan.path / "Firefox", self.plan.path / "FirefoxDownloads"
         downloads.mkdir()
