@@ -1,0 +1,57 @@
+[
+  {
+    "namespace": "managerProtection",
+    "types": [
+      {
+        "id": "Receipt",
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1
+          },
+          "qualification": {
+            "type": "boolean",
+            "enum": [false]
+          },
+          "scope": {
+            "type": "string",
+            "enum": ["fixed-empty-loopback-text"]
+          },
+          "stage": {
+            "type": "string",
+            "enum": ["idle", "pending", "settled", "closed"]
+          },
+          "result": {
+            "type": "string",
+            "enum": ["none", "not-blocked", "blocked", "unavailable"]
+          },
+          "attempted": {
+            "type": "boolean"
+          },
+          "callbacks": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          }
+        }
+      }
+    ],
+    "functions": [
+      {
+        "name": "start",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      },
+      {
+        "name": "snapshot",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      }
+    ]
+  }
+]

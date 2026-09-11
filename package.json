@@ -13,8 +13,8 @@
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run privacy:test && npm run privacy:history && npm run repository:test && npm run repository:check && npm run security:test && npm run protocol:check && npm run native-host:check && npm run build && npm run extension:check",
     "clean": "node scripts/clean.mjs",
     "extension:check": "node scripts/validate-extension.mjs",
-    "format": "prettier --write \"extension/**/*.{ts,json}\" \"native-host/**/*.json\" \"scripts/**/*.{mjs,js}\" \"*.{json,mjs}\" \".github/**/*.{yml,yaml}\" \"protocol/schema/**/*.json\"",
-    "format:check": "prettier --check \"extension/**/*.{ts,json}\" \"native-host/**/*.json\" \"scripts/**/*.{mjs,js}\" \"*.{json,mjs}\" \".github/**/*.{yml,yaml}\" \"protocol/schema/**/*.json\"",
+    "format": "prettier --write \"extension/**/*.{ts,js,json}\" \"native-host/**/*.json\" \"scripts/**/*.{mjs,js}\" \"*.{json,mjs}\" \".github/**/*.{yml,yaml}\" \"protocol/schema/**/*.json\"",
+    "format:check": "prettier --check \"extension/**/*.{ts,js,json}\" \"native-host/**/*.json\" \"scripts/**/*.{mjs,js}\" \"*.{json,mjs}\" \".github/**/*.{yml,yaml}\" \"protocol/schema/**/*.json\"",
     "licenses:js": "license-checker-rseidelsohn --summary --excludePrivatePackages",
     "lint": "eslint extension scripts *.config.mjs",
     "native-host:check": "node scripts/validate-native-host.mjs",
@@ -27,7 +27,7 @@
     "privacy:publication": "node scripts/verify-publication.mjs",
     "repository:check": "node scripts/check-repository.mjs",
     "repository:test": "node --test scripts/repository-policy.test.mjs scripts/windows-io-policy.test.mjs scripts/ci-policy.test.mjs scripts/capture-probe.test.mjs",
-    "security:test": "node --test scripts/extension-policy.test.mjs scripts/capture-candidate.test.mjs"
+    "security:test": "node --test scripts/extension-policy.test.mjs scripts/capture-candidate.test.mjs scripts/protection-probe.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

@@ -18,6 +18,17 @@ export default tseslint.config(
     },
   },
   {
+    files: ["extension/protection-probe/api.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: { ExtensionAPI: "readonly", Cc: "readonly", Ci: "readonly" },
+    },
+  },
+  {
+    files: ["extension/protection-probe/probe.js"],
+    languageOptions: { sourceType: "script", globals: { ...globals.browser, browser: "readonly" } },
+  },
+  {
     files: ["scripts/**/*.mjs", "*.config.mjs"],
     languageOptions: {
       globals: globals.node,

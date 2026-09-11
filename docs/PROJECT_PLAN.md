@@ -16,7 +16,7 @@ Deliver one buildable candidate using the actual extension entry point and Manag
 - Same-tab/default-store/nonprivate anonymous attachment policy and bounded redirect binding remain authoritative; do not broaden eligibility merely to pass a provider test.
 - Separate development artifact and manifest; no change to default release selection or immutable v0.1.0 assets.
 
-**Current implementation:** [CAPTURE_CANDIDATE.md](CAPTURE_CANDIDATE.md). Candidate eligibility is now loopback-only while the Firefox protection gap remains open. New Windows final publication establishes verified Internet-zone metadata without URLs; it is not a Firefox/antivirus verdict. Permission/state/entry/build tests remain distinct from the earlier source-scoped browser observation.
+**Current implementation:** [CAPTURE_CANDIDATE.md](CAPTURE_CANDIDATE.md). Candidate eligibility is now loopback-only while the Firefox protection gap remains open. New Windows final publication establishes verified Internet-zone metadata without URLs; it is not a Firefox/antivirus verdict. The separately built [fileless privileged service probe](FIREFOX_PROTECTION_BRIDGE.md) starts API-boundary qualification, not native publication integration. Permission/state/entry/build tests remain distinct from the earlier source-scoped browser observation.
 
 ### 2. Consolidated acceptance campaign
 
