@@ -1,3 +1,5 @@
+import { renderHandoffs } from "./handoff-ui";
+import type { HandoffView } from "./browser-handoff";
 import { sessionPermission, SessionError } from "./session";
 import { creationPayload, suggestedFilename } from "./creation";
 import type { NativeState, NativeTask, NativeSettings } from "./native-connection";
@@ -16,6 +18,8 @@ const submit = element<HTMLButtonElement>("submit");
 let port: browser.runtime.Port;
 let effectiveSettings: NativeSettings | undefined;
 let settingsKey = "";
+let handoffView: HandoffView = { blocked: false, pending: [] };
+let handoffTasks: readonly NativeTask[] = [];
 const dashboard = new Dashboard(element("tasks"), (action, task) => {
   if (
     action === "remove" &&
@@ -37,6 +41,29 @@ const dashboard = new Dashboard(element("tasks"), (action, task) => {
   port.postMessage({ action: "control", command: action, taskId: task.task_id });
 });
 
+function renderPendingHandoffs(): void {
+  renderHandoffs(
+    element("handoffs"),
+    handoffView,
+    (taskId, choice) => {
+      if (choice === "recheck") {
+        port.postMessage({ action: "handoff-recheck" });
+        return;
+      }
+      if (
+        !confirm(
+          choice === "manager"
+            ? "Continue only if Firefox has stopped this download. If you cannot identify this download, do not continue. If Firefox is still downloading, continuing can create competing output. Continue in Manager?"
+            : "Check that Firefox is handling the download. Discard only the unused Manager reservation? An already committed task will not be discarded.",
+        )
+      )
+        return;
+      port.postMessage({ action: "handoff-resolve", taskId, choice });
+    },
+    handoffTasks,
+  );
+}
+
 function attach(): void {
   port = browser.runtime.connect({ name: "manager-ui" });
   port.onMessage.addListener((raw: object) => {
@@ -46,7 +73,12 @@ function attach(): void {
       url?: string;
       message?: string;
       task?: NativeTask;
+      view?: HandoffView;
     };
+    if (message.kind === "handoffs" && message.view) {
+      handoffView = message.view;
+      renderPendingHandoffs();
+    }
     if (message.kind === "capture" && message.url) {
       url.value = message.url;
       filename.value = suggestedFilename(url.value);
@@ -57,6 +89,8 @@ function attach(): void {
         : "Helper disconnected · showing last snapshot";
       element("queue-summary").textContent = `${message.state.tasks.length} download(s)`;
       dashboard.update(message.state);
+      handoffTasks = message.state.tasks;
+      renderPendingHandoffs();
       if (message.state.settings && JSON.stringify(message.state.settings) !== settingsKey) {
         effectiveSettings = message.state.settings;
         settingsKey = JSON.stringify(effectiveSettings);

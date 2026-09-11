@@ -30,7 +30,7 @@ assert.equal(
   extensionId,
   "extension ID and native-host allowlist drifted",
 );
-assert.deepEqual(extension.permissions, ["nativeMessaging", "menus"]);
+assert.deepEqual(extension.permissions, ["nativeMessaging", "menus", "storage"]);
 assert.deepEqual(extension.host_permissions ?? [], []);
 assert.match(rustHost, new RegExp(`NATIVE_HOST_NAME: &str = "${hostName.replaceAll(".", "\\.")}"`));
 assert.match(

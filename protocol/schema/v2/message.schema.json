@@ -618,7 +618,13 @@
           "uniqueItems": true,
           "items": {
             "type": "string",
-            "enum": ["snapshots", "coalesced_progress", "authenticated_requests", "sha256"]
+            "enum": [
+              "snapshots",
+              "coalesced_progress",
+              "authenticated_requests",
+              "sha256",
+              "prepared_handoff"
+            ]
           }
         },
         "max_message_bytes": {

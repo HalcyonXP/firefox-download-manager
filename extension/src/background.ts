@@ -2,7 +2,35 @@ import { collectSession, SessionError, type SessionInput } from "./session";
 import { NativeConnection } from "./native-connection";
 import { connectionMessage, creationPayload, directUrl, type CreationInput } from "./creation";
 
+import { BrowserHandoff } from "./browser-handoff";
+import { HandoffJournal, HANDOFF_STORAGE_KEY } from "./handoff-journal";
+
 export const nativeConnection = new NativeConnection();
+export const browserHandoff = new BrowserHandoff(
+  new HandoffJournal({
+    read: async () =>
+      (await browser.storage.local.get(HANDOFF_STORAGE_KEY))[HANDOFF_STORAGE_KEY] as unknown,
+    write: async (value) => {
+      await browser.storage.local.set({ [HANDOFF_STORAGE_KEY]: value });
+    },
+  }),
+  {
+    ready: async () => {
+      await nativeConnection.connect();
+      if (!nativeConnection.supports("prepared_handoff"))
+        throw new Error("Handoff capability unavailable");
+    },
+    command: (command, payload) => nativeConnection.command(command, payload),
+  },
+);
+browserHandoff.subscribe((view) => {
+  void browser.action
+    .setBadgeText({ text: view.blocked || view.pending.length ? "!" : "" })
+    .catch(() => {});
+});
+// Resume only already recorded intent. No click interceptor is selected here yet.
+void browserHandoff.recover().catch(() => {});
+
 const captures = new Map<string, { url: string; expires: number; tabId: number | undefined }>();
 const menuId = "download-with-manager";
 
@@ -55,7 +83,11 @@ browser.runtime.onConnect.addListener((port) => {
     }
   };
   const unsubscribe = nativeConnection.subscribe((state) => send({ kind: "state", state }));
-  port.onDisconnect.addListener(unsubscribe);
+  const unsubscribeHandoffs = browserHandoff.subscribe((view) => send({ kind: "handoffs", view }));
+  port.onDisconnect.addListener(() => {
+    unsubscribe();
+    unsubscribeHandoffs();
+  });
   let busy = false;
   let sessionTabId = port.sender.tab?.id;
   port.onMessage.addListener((message: unknown) => {
@@ -84,6 +116,22 @@ browser.runtime.onConnect.addListener((port) => {
         if (message.action === "connect") {
           await nativeConnection.connect();
           await nativeConnection.command("get_settings", {});
+          await browserHandoff.recover();
+        } else if (message.action === "handoff-recheck") {
+          await browserHandoff.recover();
+        } else if (
+          message.action === "handoff-resolve" &&
+          "taskId" in message &&
+          typeof message.taskId === "string" &&
+          "choice" in message &&
+          (message.choice === "manager" || message.choice === "firefox")
+        ) {
+          await browserHandoff.resolveIntent(message.taskId, message.choice);
+          send({
+            kind: "notice",
+            message:
+              "The recorded handoff was resolved. Check the queue before starting another download.",
+          });
         } else if (message.action === "settings" && "patch" in message) {
           await nativeConnection.command("update_settings", { settings: message.patch });
           send({

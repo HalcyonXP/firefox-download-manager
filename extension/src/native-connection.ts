@@ -108,6 +108,18 @@ export interface NativeTask {
   readonly error: NativeTaskError | null;
 }
 
+export type HandoffCommand = "prepare_handoff" | "commit_handoff" | "abort_handoff" | "get_handoff";
+export interface NativeHandoff {
+  readonly phase: "prepared" | "committed" | "aborted";
+  readonly task: NativeTask;
+}
+const HANDOFF_COMMANDS = new Set<string>([
+  "prepare_handoff",
+  "commit_handoff",
+  "abort_handoff",
+  "get_handoff",
+]);
+
 export interface NativeSettings {
   readonly destination: string;
   readonly default_workers: 1 | 2 | 4 | 8;
@@ -243,6 +255,7 @@ export class NativeConnection {
     command: "add" | "pause" | "resume" | "cancel" | "get",
     payload: unknown,
   ): Promise<NativeTask>;
+  command(command: HandoffCommand, payload: unknown): Promise<NativeHandoff>;
   command(command: "remove" | "open_folder", payload: unknown): Promise<unknown>;
   command(command: "get_settings" | "update_settings", payload: unknown): Promise<NativeSettings>;
   async command(
@@ -255,10 +268,21 @@ export class NativeConnection {
       | "remove"
       | "open_folder"
       | "get_settings"
-      | "update_settings",
+      | "update_settings"
+      | HandoffCommand,
     payload: unknown,
   ): Promise<unknown> {
     await this.connect();
+    if (
+      HANDOFF_COMMANDS.has(command) &&
+      (!this.supports("prepared_handoff") ||
+        !isRecord(payload) ||
+        typeof payload.task_id !== "string" ||
+        !isUuid(payload.task_id) ||
+        (command === "prepare_handoff" &&
+          (!isRecord(payload.download) || "request_context" in payload.download)))
+    )
+      throw new NativeConnectionError("protocol_error");
     if (
       command === "add" &&
       isRecord(payload) &&
@@ -380,6 +404,23 @@ export class NativeConnection {
         }
         if (pending.command === "remove") this.#tasks.delete(pending.taskId);
         pending.resolve(result);
+        this.#notify();
+        return;
+      }
+      if (HANDOFF_COMMANDS.has(pending.command)) {
+        const receipt = nativeHandoff(message.result);
+        if (
+          !receipt ||
+          receipt.task.task_id !== pending.taskId ||
+          (pending.command === "commit_handoff" && receipt.phase !== "committed") ||
+          (pending.command === "abort_handoff" && receipt.phase !== "aborted")
+        ) {
+          pending.reject(new NativeConnectionError("protocol_error"));
+          this.#reject(new NativeConnectionError("protocol_error"));
+          return;
+        }
+        this.#tasks.set(receipt.task.task_id, receipt.task);
+        pending.resolve(receipt);
         this.#notify();
         return;
       }
@@ -721,7 +762,8 @@ function isHelloResult(value: unknown): boolean {
         capability === "snapshots" ||
         capability === "coalesced_progress" ||
         capability === "authenticated_requests" ||
-        capability === "sha256",
+        capability === "sha256" ||
+        capability === "prepared_handoff",
     )
   );
 }
@@ -815,6 +857,28 @@ function isWarning(value: unknown): boolean {
     (value.task_id === null || (typeof value.task_id === "string" && isUuid(value.task_id))) &&
     isTaskError(value.warning)
   );
+}
+
+function nativeHandoff(value: unknown): NativeHandoff | undefined {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["phase", "task"]) ||
+    !["prepared", "committed", "aborted"].includes(String(value.phase))
+  )
+    return undefined;
+  const task = nativeTask(value.task);
+  if (
+    !task ||
+    (value.phase === "prepared" && task.state !== "queued") ||
+    (value.phase === "aborted" && task.state !== "cancelled")
+  )
+    return undefined;
+  if (
+    value.phase !== "committed" &&
+    (task.bytes_completed !== 0 || task.expected_size !== null || task.transfer_mode !== "pending")
+  )
+    return undefined;
+  return Object.freeze({ phase: value.phase as NativeHandoff["phase"], task });
 }
 
 function nativeTask(value: unknown): NativeTask | undefined {

@@ -9,7 +9,7 @@
       "strict_min_version": "156.0"
     }
   },
-  "permissions": ["nativeMessaging", "menus"],
+  "permissions": ["nativeMessaging", "menus", "storage"],
   "optional_permissions": ["cookies"],
   "optional_host_permissions": ["http://*/*", "https://*/*"],
   "background": {
