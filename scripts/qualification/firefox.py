@@ -18,11 +18,13 @@ import uuid
 import winreg
 
 if __package__:
+    from .browser_peer import BrowserPeer
     from .fixture import Handler, Fixture, SMALL_SIZE, expected_sha256
     from .native import evidence_identity, file_sha256
     from .support import bounded_json, new_report, write_report
     from .installation import verified_binding
 else:
+    from browser_peer import BrowserPeer
     from fixture import Handler, Fixture, SMALL_SIZE, expected_sha256
     from native import evidence_identity, file_sha256
     from support import bounded_json, new_report, write_report
@@ -197,7 +199,10 @@ class BrowserFixture(Fixture):
 
 
 class Firefox:
-    def __init__(self, executable, profile, environment):
+    def __init__(self, executable, profile, environment, *, owned_peer=None):
+        if owned_peer is not None and type(owned_peer) is not BrowserPeer:
+            raise RuntimeError("browser peer requires a retained setup witness")
+        self.owned_peer = owned_peer
         self.profile = profile
         self.environment = environment
         self.executable = executable
@@ -209,8 +214,14 @@ class Firefox:
         self.manager = None
         self.signing = None
 
+    def _require_apps_closed(self):
+        if self.owned_peer is None:
+            closed_apps()
+        else:
+            self.owned_peer.require_browser_closed()
+
     def start(self):
-        closed_apps()
+        self._require_apps_closed()
         self.profile.mkdir(exist_ok=True)
         with socket.socket() as reservation:
             reservation.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
@@ -422,7 +433,7 @@ button.click();return true;""", [self.manager])
         deadline = time.monotonic() + 25
         while True:
             try:
-                closed_apps()
+                self._require_apps_closed()
                 break
             except RuntimeError:
                 if time.monotonic() >= deadline:

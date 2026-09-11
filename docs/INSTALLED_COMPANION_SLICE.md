@@ -60,3 +60,14 @@ Evidence review identified a missing positive-path distinction: f0b538c accepted
 Persistent unsigned XPI, Firefox restart/native-parent lifetime, supported ordinary-click capture, normal Start Menu/physical tray interaction and exact-final-main package qualification remain open. The available-machine native slice and recorded fault cases do not qualify later source or the complete browser workflow; existing legacy drivers must not be relabeled as receipt2/Firefox qualification. The failed setup window is outside the successful run's cleanup result.
 
 References: [SHORTCUT_OWNERSHIP.md](SHORTCUT_OWNERSHIP.md), [COMPANION_DESIGN.md](COMPANION_DESIGN.md), [USER_WORKFLOW.md](USER_WORKFLOW.md).
+
+
+## Owned-companion browser preflight component
+
+`qualification/browser_peer.py` provides a browser-only ownership witness for a future combined installed/browser driver. `Firefox(..., owned_peer=...)` defaults to the original closed-app guard; existing callers do not opt in. No new live combined driver or browser execution is asserted here.
+
+The opt-in witness requires a still-retained setup `Popen`, that parent's completed operation and retained-child observation, and an independently unchanged installation binding. Before and after fixed-name process enumeration it rechecks ownership. Only that exact setup and its retained companion may remain; either Firefox edition, additional native bridges/pumps or other setup/application images refuse the preflight. A disappeared child is not inferred joined: only the parent's explicit child-join receipt can explain an empty helper set. This is ownership/absence evidence, not tray readiness or successful child exit.
+
+Inventory parsing is bounded and rejects duplicate/invalid IDs, unexpected rows and unknown messages. The known English no-tasks response is supported; other localized non-CSV responses currently refuse rather than being interpreted as absence. No process paths/command lines, profile contents or process-control actions are queried by this component.
+
+Shared-registration mutation still uses the original unscoped closed-app checks. The ownership exception applies only to browser start/retirement and does not authorize install/upgrade/uninstall while Firefox or the companion remains. Modeled tests cover missing/replaced owners, changing bindings, extra processes, mid-query transitions, parser ambiguity and refusal before profile creation. They do not qualify an installed execution. The eventual combined driver must retain every browser/fixture owner, verify actual successful browser exit and Manager lifetime, and prevent uncertain cleanup from authorizing uninstall or success.
