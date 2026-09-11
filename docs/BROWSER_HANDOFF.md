@@ -66,3 +66,14 @@ A modeled regression first showed the old same-origin policy accepting a later U
 
 
 Clean1cde75b subsequently passed the actual two-origin installed-browser diagnostic, plus nominal and missing-terminal regressions, against paired2df904b. [Source-specific observations](INSTALLED_BROWSER_SLICE.md#clean-cross-origin-observations-1cde75b--paired2df904b) include temporary reload, independent native/Firefox outputs and joined retirement. This establishes those owned loopback callbacks and controls, not general event ordering, distinct-host/TLS/provider behavior or persistent installation. The nine earlier cleanup faults remain scoped to2df904b; no production activation follows from these reports alone.
+
+
+## Explicit stopped/unlinked reservation recovery
+
+Journal **loaded** means its initial strict decode finished successfully; it is distinct from native connection readiness and from unblocked storage. Preparation now publishes its journal entry before the native prepare call, so a newly projected reservation is not presented as unlinked merely because the view lagged the native response.
+
+- Cancelled/Confirmed records paired with a known native Aborted task offer an explicit acknowledgement. The warning explains that Manager cannot finish it and the button does not start Firefox. The coordinator rechecks the same ID's Aborted receipt before strict journal settlement. Recheck alone still preserves this notice; Prepared/Committed/unknown/foreign receipts and failed storage do not dismiss it.
+- **Unlinked reservation** means a native Prepared task absent from successfully loaded, unblocked journal history; it does not prove Firefox was never cancelled. At most32 candidates are shown. Explicit discard rechecks history/activity before and after the asynchronous native status read, aborts only Prepared, and validates the matching Aborted receipt. An already-Aborted status can confirm an earlier lost abort reply without replay. Committed/unknown identities refuse; no journal entry or native history is erased.
+- Recovery serializes by ID and refuses active/recorded work. New preparation also refuses an ID held by recovery, preventing a concurrent same-ID capture from acquiring cancellation authority during cleanup. The background accepts only the closed cleanup message and delegates to the coordinator, never generic Cancel/Remove/Add.
+
+The fixed UI warnings and confirmation-result dispatch, real renderer wiring, coordinator state/receipt/storage/race boundaries and diagnostic scope are covered by226 TypeScript tests; eight targeted mutations reject after restoration.92 Python tests cover the separate opt-in recovery driver and existing boundaries. These additions do not alter native lifecycle/persistence, journal record format, dependencies, production capture selection, deadlines or protections. Live execution of these changed controls remains required; prior1cde75b observations do not qualify them.

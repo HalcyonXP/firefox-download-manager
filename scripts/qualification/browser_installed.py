@@ -135,6 +135,8 @@ def check_snapshot(snapshot, *, captured, pending, state, size):
             or type(snapshot.get("taskCount")) is not int or snapshot.get("taskCount") != 1
             or snapshot.get("tasks") != [{"state": state, "bytes": size, "phase": "prepared" if pending else "committed"}]):
         raise RuntimeError("one completed native task with settled journal not observed")
+    if any(type(task.get("bytes")) is not int for task in snapshot["tasks"]):
+        raise RuntimeError("invalid native byte-count type")
     expected = [{"request": 1, "stage": "decision", "cancelled": True},
                 {"request": 1, "stage": "terminal", "cancelled": True}] if captured else []
     records = snapshot.get("records")

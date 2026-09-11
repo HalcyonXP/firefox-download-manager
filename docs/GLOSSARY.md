@@ -222,3 +222,7 @@ See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed 
 
 - **Redirect binding:** authorization of the next same-ID browser request only after an observed redirect response identifies that exact resource URL. A common origin alone is not a matching transition.
 - **Cross-origin diagnostic:** an opt-in, temporary-XPI test using two exact owned loopback origins (distinct ports). It is not distinct-host/TLS/provider or persistent-install qualification. Production capture remains unselected; see [BROWSER_HANDOFF.md](BROWSER_HANDOFF.md#opt-in-cross-origin-chain-binding).
+
+- **Loaded handoff journal:** initial strict storage decode completed successfully; not a claim of native readiness, unblocked storage, or absence of active work.
+- **Unlinked reservation:** a native Prepared task absent from the loaded journal. It may be offered for explicit status-checked discard, never automatic continuation; absence alone does not prove Firefox was not cancelled.
+- **Aborted acknowledgement:** explicit dismissal of a Cancelled/Confirmed notice after rechecking native Aborted status. It starts no transfer, does not replay Add and retains the native task identity.

@@ -132,6 +132,22 @@ browser.runtime.onConnect.addListener((port) => {
             message:
               "The recorded handoff was resolved. Check the queue before starting another download.",
           });
+        } else if (
+          message.action === "handoff-cleanup" &&
+          Object.keys(message).sort().join(",") === "action,choice,taskId" &&
+          "taskId" in message &&
+          typeof message.taskId === "string" &&
+          "choice" in message &&
+          (message.choice === "acknowledge" || message.choice === "discard")
+        ) {
+          if (message.choice === "acknowledge")
+            await browserHandoff.acknowledgeAborted(message.taskId);
+          else await browserHandoff.discardUnlinked(message.taskId);
+          send({
+            kind: "notice",
+            message:
+              "Reservation cleanup confirmed. No download was started. Use the original page in Firefox if you need to download again.",
+          });
         } else if (message.action === "settings" && "patch" in message) {
           await nativeConnection.command("update_settings", { settings: message.patch });
           send({

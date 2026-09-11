@@ -70,8 +70,12 @@ export class HandoffJournal {
   #tail: Promise<void> = Promise.resolve();
   #records: PendingHandoff[] = [];
   #blocked = false;
+  #verified = false;
   constructor(storage: HandoffStorage) {
     this.#storage = storage;
+  }
+  get loaded(): boolean {
+    return this.#verified;
   }
   get blocked(): boolean {
     return this.#blocked;
@@ -83,6 +87,7 @@ export class HandoffJournal {
     return (this.#loaded ??= (async () => {
       try {
         this.#records = decode(await this.#storage.read());
+        this.#verified = true;
       } catch {
         this.#blocked = true;
         throw new HandoffJournalError();

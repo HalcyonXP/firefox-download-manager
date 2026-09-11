@@ -378,3 +378,162 @@ describe("phase-aware uncertain intent recovery", () => {
     expect(peer.transfers).toBe(0);
   });
 });
+
+describe("explicit reservation cleanup without replay", () => {
+  it.each(["cancelled", "confirmed"] as const)(
+    "requires acknowledged Aborted for %s, never automatic forgetting",
+    async (stage) => {
+      const { controller, peer, journal } = setup(stage);
+      peer.phase = "aborted";
+      await controller.recover();
+      expect(controller.view().pending).toHaveLength(1);
+      await controller.acknowledgeAborted(id);
+      expect(journal.snapshot()).toEqual([]);
+      expect(peer.calls).toEqual(["get_handoff", "get_handoff"]);
+      expect(peer.transfers).toBe(0);
+    },
+  );
+  it.each(["prepared", "committed"] as const)(
+    "refuses acknowledgement for native %s",
+    async (phase) => {
+      const { controller, peer, journal } = setup("cancelled");
+      peer.phase = phase;
+      await expect(controller.acknowledgeAborted(id)).rejects.toThrow();
+      expect(journal.snapshot()[0]?.stage).toBe("cancelled");
+      expect(peer.calls).toEqual(["get_handoff"]);
+    },
+  );
+  it.each(["intent", "preparing", "fallback", undefined] as const)(
+    "refuses acknowledgement in journal stage %s",
+    async (stage) => {
+      const { controller, peer } = setup(stage);
+      peer.phase = "aborted";
+      await expect(controller.acknowledgeAborted(id)).rejects.toThrow();
+      expect(peer.calls).toEqual([]);
+    },
+  );
+  it("does not lose the notice on foreign receipts or failed settlement storage", async () => {
+    const { controller, peer, journal, storage } = setup("confirmed");
+    const command = vi
+      .spyOn(peer, "command")
+      .mockResolvedValue(receipt("aborted", "b4ac080c-862f-4ea8-b60c-06a9718b2306"));
+    await expect(controller.acknowledgeAborted(id)).rejects.toThrow();
+    expect(journal.snapshot()).toHaveLength(1);
+    command.mockResolvedValue(receipt("aborted"));
+    storage.fail = true;
+    await expect(controller.acknowledgeAborted(id)).rejects.toThrow();
+    expect(controller.view().blocked).toBe(true);
+    expect(journal.snapshot()).toHaveLength(1);
+  });
+  it("discards only an unlinked reservation after loading and status, without a journal write", async () => {
+    const { controller, peer, storage } = setup();
+    expect(controller.view().loaded).toBe(false);
+    await controller.discardUnlinked(id);
+    expect(controller.view().loaded).toBe(true);
+    expect(peer.calls).toEqual(["get_handoff", "abort_handoff"]);
+    expect(peer.phase).toBe("aborted");
+    expect(peer.transfers).toBe(0);
+    expect(storage.writes).toEqual([]);
+  });
+  it("refuses linked, live, unknown, committed or corrupt-history cleanup", async () => {
+    const linked = setup("intent");
+    await expect(linked.controller.discardUnlinked(id)).rejects.toThrow();
+    expect(linked.peer.calls).toEqual([]);
+    const committed = setup();
+    committed.peer.phase = "committed";
+    await expect(committed.controller.discardUnlinked(id)).rejects.toThrow();
+    expect(committed.peer.calls).toEqual(["get_handoff"]);
+    const unknown = setup();
+    unknown.peer.fail = "get_handoff";
+    await expect(unknown.controller.discardUnlinked(id)).rejects.toThrow();
+    expect(unknown.peer.calls).toEqual(["get_handoff"]);
+    const corrupt = setup();
+    corrupt.storage.value = { bad: true };
+    await expect(corrupt.controller.discardUnlinked(id)).rejects.toThrow();
+    expect(corrupt.peer.calls).toEqual([]);
+    vi.useFakeTimers();
+    const live = setup();
+    const decision = live.controller.capture("live", download, () => true);
+    await expect(live.controller.discardUnlinked(id)).rejects.toThrow();
+    await decision;
+    live.controller.terminal("live");
+    await live.controller.drain();
+    expect(live.peer.calls).toEqual(["prepare_handoff"]);
+  });
+  it("serializes the ID and prevents a new capture from using an in-flight cleanup ID", async () => {
+    const { controller, peer, journal } = setup();
+    const status = deferred<NativeHandoff>();
+    const original = peer.command.bind(peer);
+    vi.spyOn(peer, "command").mockImplementation((command, payload) =>
+      command === "get_handoff" ? status.promise : original(command, payload),
+    );
+    const cleanup = controller.discardUnlinked(id);
+    await vi.waitFor(() => expect(controller.view().loaded).toBe(true));
+    await expect(controller.discardUnlinked(id)).rejects.toThrow();
+    await expect(controller.capture("collision", download, () => true)).resolves.toEqual({});
+    expect(journal.snapshot()).toEqual([]);
+    status.resolve(receipt("prepared"));
+    await cleanup;
+    await controller.drain();
+    expect(peer.calls).toEqual(["abort_handoff"]);
+    expect(peer.transfers).toBe(0);
+  });
+  it("recovers a lost abort reply by the retained ID without another abort or journal write", async () => {
+    const { controller, peer, storage } = setup();
+    const original = peer.command.bind(peer);
+    vi.spyOn(peer, "command").mockImplementation(async (command, payload) => {
+      const result = await original(command, payload);
+      if (command === "abort_handoff") throw new Error("synthetic lost applied reply");
+      return result;
+    });
+    await expect(controller.discardUnlinked(id)).rejects.toThrow();
+    expect(peer.phase).toBe("aborted");
+    await controller.discardUnlinked(id);
+    expect(peer.calls).toEqual(["get_handoff", "abort_handoff", "get_handoff"]);
+    expect(storage.writes).toEqual([]);
+  });
+  it("publishes the preparing record before native snapshots can look unlinked", async () => {
+    const { controller, peer } = setup();
+    let observed = controller.view();
+    controller.subscribe((view) => {
+      observed = view;
+    });
+    peer.observe = (command) => {
+      if (command === "prepare_handoff")
+        expect(observed.pending).toMatchObject([{ id, stage: "preparing" }]);
+    };
+    vi.useFakeTimers();
+    await controller.capture("live", download, () => true);
+    controller.terminal("live");
+    await controller.drain();
+  });
+});
+
+it("refuses foreign discard receipts and a commit racing the status check", async () => {
+  const first = setup();
+  vi.spyOn(first.peer, "command")
+    .mockResolvedValueOnce(receipt("prepared"))
+    .mockResolvedValueOnce(receipt("aborted", "b4ac080c-862f-4ea8-b60c-06a9718b2306"));
+  await expect(first.controller.discardUnlinked(id)).rejects.toThrow();
+  expect(first.storage.writes).toEqual([]);
+  const racing = setup();
+  racing.peer.observe = (command) => {
+    if (command === "abort_handoff") racing.peer.phase = "committed";
+  };
+  await expect(racing.controller.discardUnlinked(id)).rejects.toThrow();
+  expect(racing.peer.calls).toEqual(["get_handoff", "abort_handoff"]);
+  expect(racing.peer.phase).toBe("committed");
+});
+
+it("rechecks journal authority after an asynchronous native status read", async () => {
+  const { controller, peer, journal, storage } = setup();
+  const status = deferred<NativeHandoff>();
+  const command = vi.spyOn(peer, "command").mockReturnValue(status.promise);
+  const cleanup = controller.discardUnlinked(id);
+  await vi.waitFor(() => expect(command).toHaveBeenCalledWith("get_handoff", { task_id: id }));
+  storage.fail = true;
+  await expect(journal.insert("b4ac080c-862f-4ea8-b60c-06a9718b2306", 1)).rejects.toThrow();
+  status.resolve(receipt("prepared"));
+  await expect(cleanup).rejects.toThrow();
+  expect(command).toHaveBeenCalledTimes(1);
+});

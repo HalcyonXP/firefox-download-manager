@@ -6,6 +6,22 @@ let enabled = false;
 let destinationVerified = false;
 let suppressTerminal = false;
 let terminalSuppressed = false;
+let abortNextCommit = false;
+let commitReplaced = false;
+let seedAttempted = false;
+// Diagnostic-only fault: an actual abort receipt substitutes for a commit attempt.
+// Production bundles never import this module; no fabricated terminal/receipt is used.
+const originalCommand = nativeConnection.command.bind(nativeConnection);
+nativeConnection.command = new Proxy(nativeConnection.command, {
+  apply(target, receiver: unknown, args: unknown[]): unknown {
+    if (abortNextCommit && args.length === 2 && args[0] === "commit_handoff") {
+      abortNextCommit = false;
+      commitReplaced = true;
+      return originalCommand("abort_handoff", args[1]);
+    }
+    return Reflect.apply(target, receiver, args);
+  },
+});
 const fixtureOrigins = new Set<string>();
 let overflow = false;
 const keys = new Map<string, number>();
@@ -58,6 +74,7 @@ function snapshot() {
     enabled,
     overflow,
     terminalSuppressed,
+    commitReplaced,
     records: records.slice(),
     blocked: handoff.blocked,
     pending: handoff.pending.map((entry) => entry.stage),
@@ -82,7 +99,11 @@ browser.runtime.onMessage.addListener((message: unknown, sender) => {
   if (keys !== (message.action === "ready" ? "action,destination,origins" : "action"))
     return undefined;
   if (message.action === "snapshot") return Promise.resolve(snapshot());
-  if (message.action === "arm" || message.action === "arm-missing-terminal") {
+  if (
+    message.action === "arm" ||
+    message.action === "arm-missing-terminal" ||
+    message.action === "arm-aborted-terminal"
+  ) {
     if (
       !destinationVerified ||
       !nativeConnection.supports("prepared_handoff") ||
@@ -91,6 +112,7 @@ browser.runtime.onMessage.addListener((message: unknown, sender) => {
     )
       return Promise.resolve(null);
     suppressTerminal = message.action === "arm-missing-terminal";
+    abortNextCommit = message.action === "arm-aborted-terminal";
     enabled = true;
     return Promise.resolve(snapshot());
   }
@@ -98,9 +120,32 @@ browser.runtime.onMessage.addListener((message: unknown, sender) => {
     enabled = false;
     return Promise.resolve(snapshot());
   }
+  if (message.action === "seed-unlinked")
+    return (async () => {
+      const view = browserHandoff.view();
+      if (
+        seedAttempted ||
+        enabled ||
+        !view.loaded ||
+        !destinationVerified ||
+        fixtureOrigins.size !== 1 ||
+        view.blocked ||
+        view.pending.length !== 0 ||
+        nativeConnection.state().tasks.length !== 0
+      )
+        return null;
+      seedAttempted = true; // An uncertain prepare is never replaced with a fresh ID.
+      const origin = [...fixtureOrigins][0]!;
+      await nativeConnection.command("prepare_handoff", {
+        task_id: crypto.randomUUID(),
+        download: { url: new URL("/direct", origin).href, suggested_filename: "owned-capture.bin" },
+      });
+      return snapshot();
+    })();
   if (message.action === "ready")
     return (async () => {
       enabled = false;
+      abortNextCommit = false;
       destinationVerified = false;
       fixtureOrigins.clear();
       await nativeConnection.connect();

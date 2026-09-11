@@ -37,7 +37,7 @@ beforeEach(async () => {
     tasks: [],
     settings: { destination: "owned-output" },
   });
-  mocks.view.mockReturnValue({ blocked: false, pending: [] });
+  mocks.view.mockReturnValue({ loaded: true, blocked: false, pending: [] });
   mocks.supports.mockReturnValue(true);
   mocks.capture.mockResolvedValue({ cancel: true });
   vi.stubGlobal("browser", {
@@ -47,6 +47,7 @@ beforeEach(async () => {
       onMessage: { addListener: mocks.listen },
     },
   });
+  (await import("../src/background")).nativeConnection.command = mocks.command;
   await import("../diagnostic/handoff");
   control = mocks.listen.mock.calls[0]![0] as typeof control;
 });
@@ -180,4 +181,55 @@ it("bounds independent fixture origins and revokes arming during reconfiguration
     expect(origins.some((origin) => options?.originAllowed?.(origin))).toBe(false);
     expect(await control({ action: "arm" }, inspector)).toBeNull();
   }
+});
+
+it("only substitutes a real abort command in the explicitly armed terminal fault", async () => {
+  await control(
+    { action: "ready", destination: "owned-output", origins: ["http://127.0.0.1"] },
+    inspector,
+  );
+  await control({ action: "arm-aborted-terminal" }, inspector);
+  const { nativeConnection } = await import("../src/background");
+  const payload = { task_id: "b4ac080c-862f-4ea8-b60c-06a9718b2306" };
+  await nativeConnection.command("commit_handoff", payload);
+  expect(mocks.command).toHaveBeenLastCalledWith("abort_handoff", payload);
+  expect(await control({ action: "snapshot" }, inspector)).toMatchObject({ commitReplaced: true });
+  await nativeConnection.command("get_handoff", payload);
+  expect(mocks.command).toHaveBeenLastCalledWith("get_handoff", payload);
+});
+it("seeds only one unlinked reservation at the verified exact fixture destination/origin", async () => {
+  expect(await control({ action: "seed-unlinked" }, inspector)).toBeNull();
+  await control(
+    { action: "ready", destination: "owned-output", origins: ["http://127.0.0.1:39001"] },
+    inspector,
+  );
+  await control({ action: "seed-unlinked" }, inspector);
+  expect(mocks.command).toHaveBeenLastCalledWith("prepare_handoff", {
+    task_id: expect.any(String),
+    download: { url: "http://127.0.0.1:39001/direct", suggested_filename: "owned-capture.bin" },
+  });
+  mocks.state.mockReturnValue({ tasks: [{}], settings: { destination: "owned-output" } });
+  expect(await control({ action: "seed-unlinked" }, inspector)).toBeNull();
+});
+
+it("does not replace an in-flight or uncertain seed with another ID", async () => {
+  await control(
+    { action: "ready", destination: "owned-output", origins: ["http://127.0.0.1"] },
+    inspector,
+  );
+  let release!: () => void;
+  mocks.command.mockImplementationOnce(
+    () =>
+      new Promise<void>((done) => {
+        release = done;
+      }),
+  );
+  const first = control({ action: "seed-unlinked" }, inspector);
+  expect(await control({ action: "seed-unlinked" }, inspector)).toBeNull();
+  release();
+  await first;
+  expect(await control({ action: "seed-unlinked" }, inspector)).toBeNull();
+  expect(
+    mocks.command.mock.calls.filter(([command]) => command === "prepare_handoff"),
+  ).toHaveLength(1);
 });

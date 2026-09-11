@@ -34,6 +34,8 @@ class BrowserInstalledTests(unittest.TestCase):
         pending = {"qualification": False, "connected": True, "phaseMetadataAvailable": True, "overflow": False, "blocked": False,
                    "pending": ["intent"], "taskCount": 1, "tasks": [{"state": "queued", "bytes": 0, "phase": "prepared"}], "records": []}
         self.assertTrue(pending_confirmation(pending, captured=False))
+        changed = copy.deepcopy(pending); changed["tasks"][0]["bytes"] = False
+        with self.assertRaises(RuntimeError): pending_confirmation(changed, captured=False)
         with self.assertRaises(RuntimeError): settled(pending, captured=False)
         with self.assertRaises(RuntimeError): pending_confirmation({**pending, "pending": []}, captured=False)
         with self.assertRaises(RuntimeError):
@@ -105,7 +107,7 @@ class BrowserInstalledTests(unittest.TestCase):
         explicit_continue(browser)
         self.assertEqual([call.args[0] for call in browser.command.call_args_list],
                          ["WebDriver:ElementClick", "WebDriver:GetAlertText", "WebDriver:AcceptAlert"])
-        self.assertIn(CONTINUE_PROMPT, Path("extension/src/manager.ts").read_text(encoding="utf-8"))
+        self.assertIn(CONTINUE_PROMPT, Path("extension/src/handoff-actions.ts").read_text(encoding="utf-8"))
         browser.reset_mock(); browser.command.side_effect = [None, {"value": "unexpected warning"}]
         with self.assertRaises(RuntimeError): explicit_continue(browser)
         self.assertNotIn("WebDriver:AcceptAlert", [call.args[0] for call in browser.command.call_args_list])

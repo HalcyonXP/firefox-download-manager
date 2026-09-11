@@ -1,5 +1,5 @@
 import type { HandoffCommand, NativeHandoff } from "./native-connection";
-import { HandoffJournal, type PendingHandoff } from "./handoff-journal";
+import { HandoffJournal, handoffId, type PendingHandoff } from "./handoff-journal";
 
 export interface HandoffPeer {
   ready(): Promise<void>;
@@ -26,6 +26,7 @@ interface Ticket {
   terminal: ReturnType<typeof setTimeout> | undefined;
 }
 export interface HandoffView {
+  readonly loaded: boolean;
   readonly blocked: boolean;
   readonly pending: readonly PendingHandoff[];
 }
@@ -69,7 +70,11 @@ export class BrowserHandoff {
       throw new Error("Invalid handoff deadline");
   }
   view(): HandoffView {
-    return { blocked: this.#journal.blocked, pending: this.#journal.snapshot() };
+    return {
+      loaded: this.#journal.loaded,
+      blocked: this.#journal.blocked,
+      pending: this.#journal.snapshot(),
+    };
   }
   subscribe(listener: (view: HandoffView) => void): () => void {
     this.#listeners.add(listener);
@@ -156,8 +161,10 @@ export class BrowserHandoff {
     try {
       await this.#peer.ready();
       if (ticket.decided || !ticket.valid || this.#now() >= ticket.expiresAt || !eligible()) return;
+      if (this.#busy.has(ticket.id)) return;
       await this.#journal.insert(ticket.id, Date.now());
       ticket.inserted = true;
+      this.#notify();
       if (ticket.decided || !ticket.valid || this.#now() >= ticket.expiresAt || !eligible()) return;
       ticket.nativeAttempted = true;
       const receipt = await this.#peer.command("prepare_handoff", { task_id: ticket.id, download });
@@ -256,6 +263,62 @@ export class BrowserHandoff {
       }
     }
     this.#notify();
+  }
+  #requireIdle(id: string): void {
+    if (
+      !handoffId(id) ||
+      this.#journal.blocked ||
+      this.#busy.has(id) ||
+      [...this.#active.values()].some((ticket) => ticket.id === id)
+    )
+      throw new Error("Handoff recovery is not available");
+  }
+  /** Explicit acknowledgement of stopped output, not a new Firefox request. */
+  async acknowledgeAborted(id: string): Promise<void> {
+    await this.#journal.ready();
+    this.#requireIdle(id);
+    const entry = this.#journal.snapshot().find((value) => value.id === id);
+    if (!entry || (entry.stage !== "cancelled" && entry.stage !== "confirmed"))
+      throw new Error("Handoff is not awaiting acknowledgement");
+    try {
+      await this.#exclusive(id, async () => {
+        const receipt = await this.#peer.command("get_handoff", { task_id: id });
+        if (receipt.task.task_id !== id || receipt.phase !== "aborted")
+          throw new Error("Handoff has not been discarded");
+        await this.#journal.settle(id);
+      });
+    } finally {
+      this.#notify();
+    }
+  }
+  #requireUnrecorded(id: string): void {
+    if (
+      this.#journal.blocked ||
+      this.#journal.snapshot().some((entry) => entry.id === id) ||
+      [...this.#active.values()].some((ticket) => ticket.id === id)
+    )
+      throw new Error("Use the recorded handoff recovery controls");
+  }
+  /** Discard only a verified unused native reservation absent from loaded history. */
+  async discardUnlinked(id: string): Promise<void> {
+    await this.#journal.ready();
+    this.#requireIdle(id);
+    this.#requireUnrecorded(id);
+    try {
+      await this.#exclusive(id, async () => {
+        const receipt = await this.#peer.command("get_handoff", { task_id: id });
+        this.#requireUnrecorded(id); // Status retrieval cannot freeze journal/activity authority.
+        if (receipt.task.task_id !== id) throw new Error("Reservation identity refused");
+        if (receipt.phase === "aborted") return; // Recheck after an uncertain abort reply.
+        if (receipt.phase !== "prepared") throw new Error("Reservation is no longer unused");
+        // No journal entry is removed, and a racing native commit makes abort refuse.
+        const aborted = await this.#peer.command("abort_handoff", { task_id: id });
+        if (aborted.task.task_id !== id || aborted.phase !== "aborted")
+          throw new Error("Reservation discard was not confirmed");
+      });
+    } finally {
+      this.#notify();
+    }
   }
   /** Explicit UI confirmation, not inferred agreement or an automatic restart action. */
   async resolveIntent(id: string, choice: "manager" | "firefox"): Promise<void> {

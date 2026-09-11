@@ -375,3 +375,8 @@ The unselected policy now requires each subsequent request to match the observed
 
 
 CI34570980630 at1cde75b passed quality/dependency policy but failed package setup tests in seven cases with mixed pre-marker, post-marker/pre-readiness and post-readiness traces; emulation was skipped. These are separate from the live loopback successes. [PRIVATE_RUNTIME_RECORD.md](PRIVATE_RUNTIME_RECORD.md) preserves the exact classifications without inferring a cause or changing budgets/concurrency/protections.
+
+
+### Explicit reservation recovery
+
+Status-checked acknowledgement now resolves native-Aborted Cancelled/Confirmed notices, while an explicit bounded unlinked-reservation panel can discard Prepared tasks absent from loaded history. Neither action starts a transfer or erases retained identities. Same-ID recovery/capture guards, fixed warning/dispatch checks and a separate opt-in no-native-transfer browser driver are implemented; live qualification remains pending. [BROWSER_HANDOFF.md](BROWSER_HANDOFF.md#explicit-stoppedunlinked-reservation-recovery) and [INSTALLED_BROWSER_SLICE.md](INSTALLED_BROWSER_SLICE.md#prepared-no-native-transfer-recovery-scenarios) define scope. Native history remains retained; no expiry or production-activation gate is silently waived.
