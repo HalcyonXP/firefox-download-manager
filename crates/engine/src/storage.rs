@@ -327,6 +327,9 @@ pub enum StorageError {
     /// No bounded create-new partial name remained available.
     #[error("could not allocate a unique partial filename")]
     PartialNameExhausted,
+    /// An exact-name publication binding requires a fully computed fingerprint.
+    #[error("fixed-name publication requires a computed fingerprint")]
+    FingerprintRequired,
     /// No bounded final-name candidate remained available.
     #[error("could not allocate a non-existing final filename")]
     FinalNameExhausted,
@@ -957,7 +960,10 @@ impl PartialFile {
         Ok(lease)
     }
 
-    fn promote_validated(&self) -> Result<Promotion, StorageError> {
+    fn promote_validated(
+        &self,
+        selected_name: Option<&SanitizedFilename>,
+    ) -> Result<Promotion, StorageError> {
         let mut state = lock(&self.inner.state);
         if state.lifecycle != Lifecycle::Validated {
             return Err(StorageError::NotActive);
@@ -973,7 +979,7 @@ impl PartialFile {
         }
         state.lifecycle = Lifecycle::Publishing;
 
-        let publication = self.publish_create_new(expected_len);
+        let publication = self.publish_create_new(expected_len, selected_name);
         let final_path = match publication {
             Ok(path) => path,
             Err(error) => {
@@ -994,7 +1000,11 @@ impl PartialFile {
         })
     }
 
-    fn publish_create_new(&self, expected_len: u64) -> Result<PathBuf, StorageError> {
+    fn publish_create_new(
+        &self,
+        expected_len: u64,
+        selected_name: Option<&SanitizedFilename>,
+    ) -> Result<PathBuf, StorageError> {
         let file_guard = lock(&self.inner.file);
         let file = file_guard.as_ref().ok_or(StorageError::NotActive)?;
         let actual_len = file
@@ -1018,8 +1028,16 @@ impl PartialFile {
         #[cfg(windows)]
         let mut zone = internet_zone::InternetZoneLease::establish(file, &self.inner.partial_path)?;
 
-        for index in 0..FINAL_NAME_ATTEMPTS {
-            let candidate_name = numbered_filename(self.inner.final_name.as_str(), index);
+        let attempts = if selected_name.is_some() {
+            1
+        } else {
+            FINAL_NAME_ATTEMPTS
+        };
+        for index in 0..attempts {
+            let candidate_name = selected_name.map_or_else(
+                || numbered_filename(self.inner.final_name.as_str(), index),
+                |name| name.as_str().to_owned(),
+            );
             let candidate_path = self.inner.destination.join(candidate_name);
             match fs::hard_link(&self.inner.partial_path, &candidate_path) {
                 Ok(()) => {
@@ -1032,7 +1050,7 @@ impl PartialFile {
                     }
                     return Err(StorageError::InvalidDestination);
                 }
-                Err(error) if is_already_exists(&error) => {}
+                Err(error) if selected_name.is_none() && is_already_exists(&error) => {}
                 Err(error) => return Err(map_io(StorageOperation::Publish, &error)),
             }
         }
@@ -1141,7 +1159,87 @@ impl ValidatedPartial {
     /// # Errors
     /// Reports the same no-overwrite publication failures as `PartialFile::promote`.
     pub fn promote(self) -> Result<Promotion, StorageError> {
-        self.partial.promote_validated()
+        self.partial.promote_validated(None)
+    }
+
+    /// Consumes this hashed lease and freezes one deterministic final component.
+    /// Index zero is the original sanitized name; later indexes use the existing
+    /// bounded numbered-name policy. This does not inspect or reserve a directory
+    /// entry, query reputation, or authorize publication. A later collision fails
+    /// rather than silently selecting another name. No caller-supplied path,
+    /// checksum, or replacement lease can be attached to the resulting owner.
+    ///
+    /// # Errors
+    /// Returns `FingerprintRequired` unless this validation computed the full
+    /// fingerprint, or `FinalNameExhausted` for an out-of-budget index. Refusal
+    /// drops this lease; any later binding needs a fresh complete validation.
+    pub fn bind_final_name(self, index: u32) -> Result<NamedValidatedPartial, StorageError> {
+        let fingerprint = self.fingerprint.ok_or(StorageError::FingerprintRequired)?;
+        if index >= FINAL_NAME_ATTEMPTS {
+            return Err(StorageError::FinalNameExhausted);
+        }
+        let name = SanitizedFilename(numbered_filename(
+            self.partial.inner.final_name.as_str(),
+            index,
+        ));
+        Ok(NamedValidatedPartial {
+            lease: self,
+            name,
+            fingerprint,
+        })
+    }
+}
+
+/// One immutable filename bound to a still-owned fully hashed validation lease.
+/// Neither the name/fingerprint copies nor this primitive supply a reputation
+/// verdict. The caller must establish current protection authority separately.
+/// There is no rename/reselection or lease extraction method. Drop/refusal
+/// releases the underlying lease; subsequent work requires fresh validation.
+///
+/// ```compile_fail
+/// use download_manager_engine::storage::NamedValidatedPartial;
+/// fn duplicate(owner: NamedValidatedPartial) { let _ = owner.clone(); }
+/// ```
+///
+/// ```compile_fail
+/// use download_manager_engine::storage::NamedValidatedPartial;
+/// fn requires_copy<T: Copy>() {}
+/// requires_copy::<NamedValidatedPartial>();
+/// ```
+pub struct NamedValidatedPartial {
+    lease: ValidatedPartial,
+    name: SanitizedFilename,
+    fingerprint: ValidatedFingerprint,
+}
+
+impl fmt::Debug for NamedValidatedPartial {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("NamedValidatedPartial(<redacted>)")
+    }
+}
+
+impl NamedValidatedPartial {
+    /// Frozen final component, not a reservation or proof that it is available.
+    #[must_use]
+    pub const fn file_name(&self) -> &SanitizedFilename {
+        &self.name
+    }
+
+    /// Computed full-length identity of the still-owned validated main stream.
+    #[must_use]
+    pub const fn fingerprint(&self) -> ValidatedFingerprint {
+        self.fingerprint
+    }
+
+    /// Attempts exactly the frozen name with existing identity/provenance checks.
+    /// Does not retry a collision, overwrite, rename or consume a verdict itself.
+    ///
+    /// # Errors
+    /// Returns the existing classified publication errors; a collision is
+    /// `IoFailure::AlreadyExists`. Failure consumes the binding and drops its
+    /// lease, so another attempt requires fresh validation and authority.
+    pub fn promote(self) -> Result<Promotion, StorageError> {
+        self.lease.partial.promote_validated(Some(&self.name))
     }
 }
 
