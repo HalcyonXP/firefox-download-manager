@@ -18,6 +18,10 @@ export default tseslint.config(
     },
   },
   {
+    files: ["extension/protection-bridge/*.js"],
+    languageOptions: { globals: { URL: "readonly" } },
+  },
+  {
     files: ["extension/protection-probe/api.js"],
     languageOptions: {
       sourceType: "script",
