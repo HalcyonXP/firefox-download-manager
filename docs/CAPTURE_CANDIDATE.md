@@ -1,5 +1,7 @@
 # Automatic-capture development candidate
 
+> Earlier automated campaigns do not establish unchanged default Firefox protection policy: see the [shared harness correction](FIREFOX_TEST_POLICY.md). Their file/task/UI observations remain source-scoped, not final acceptance.
+
 **Implemented with source-scoped owned-browser evidence, not install-ready.** This is a candidate product entry, not the loopback diagnostic. It has no inspector, arming command, seeded task or fault-injection controls. Default `npm run build` and paired-package selection remain manual-only; immutable v0.1.0 artifacts are unchanged.
 
 ## Build and identity

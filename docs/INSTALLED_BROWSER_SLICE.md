@@ -1,5 +1,7 @@
 # Installed companion / Firefox diagnostic slice
 
+> **Automation-policy correction:** the earlier shared driver used an obsolete opt-out and allowed Firefox automation preference overrides. Recorded behavior/output remains source-scoped, but does not establish unchanged default protection policy. See [FIREFOX_TEST_POLICY.md](FIREFOX_TEST_POLICY.md).
+
 This opt-in harness is not install readiness, persistent-XPI qualification, physical-input evidence or final artifact acceptance. Source-specific live observations are recorded below; they do not qualify later changed bytes.
 
 ## Scope and ownership

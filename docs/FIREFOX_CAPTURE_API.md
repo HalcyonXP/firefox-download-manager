@@ -1,5 +1,7 @@
 # Firefox ordinary-click API probe — #49 integration evidence
 
+> **Automation-policy correction:** the earlier shared driver used an obsolete opt-out and allowed Firefox automation preference overrides. Recorded behavior/output remains source-scoped, but does not establish unchanged default protection policy. See [FIREFOX_TEST_POLICY.md](FIREFOX_TEST_POLICY.md).
+
 Status: **diagnostic API evidence, not a production interceptor or M5 qualification**. This probe is maintained alongside #50 integration; #49/PR55's earlier engine-library diagnostic is a separate source branch and evidence layer. Distribution scope remains [ADR0016](decisions/0016-unsigned-personal-xpi.md): persistent unsigned personal XPI, no signing/account workflow and unchanged Firefox settings/protections.
 
 ## Isolation and entry points

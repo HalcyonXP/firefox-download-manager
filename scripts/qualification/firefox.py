@@ -19,12 +19,14 @@ import winreg
 
 if __package__:
     from .browser_peer import BrowserPeer
+    from .firefox_policy import observe as observe_policy, unchanged as unchanged_policy
     from .fixture import Handler, Fixture, SMALL_SIZE, expected_sha256
     from .native import evidence_identity, file_sha256
     from .support import bounded_json, new_report, write_report
     from .installation import verified_binding
 else:
     from browser_peer import BrowserPeer
+    from firefox_policy import observe as observe_policy, unchanged as unchanged_policy
     from fixture import Handler, Fixture, SMALL_SIZE, expected_sha256
     from native import evidence_identity, file_sha256
     from support import bounded_json, new_report, write_report
@@ -213,6 +215,7 @@ class Firefox:
         self.closed = False
         self.manager = None
         self.signing = None
+        self.automation_policy = None
 
     def _require_apps_closed(self):
         if self.owned_peer is None:
@@ -229,13 +232,14 @@ class Firefox:
             port = reservation.getsockname()[1]
         preferences = {
             "marionette.port": port, "marionette.enabled": True,
-            "marionette.prefs.recommended": False,
+            "remote.prefs.recommended": False,
             "browser.shell.checkDefaultBrowser": False,
             "browser.startup.page": 0, "browser.startup.homepage": "about:blank",
             "browser.aboutwelcome.enabled": False,
             "datareporting.policy.dataSubmissionEnabled": False,
             "toolkit.telemetry.enabled": False,
         }
+        # Opt out of automation preference overrides before Firefox startup.
         # Only an exclusively created test profile, also on restart. No signing,
         # TLS, Safe Browsing, update, proxy or sandbox preference overrides.
         (self.profile / "user.js").write_text("\n".join(
@@ -267,6 +271,7 @@ class Firefox:
         self.signing = self.chrome("return {value:Services.prefs.getBoolPref('xpinstall.signatures.required'), user:Services.prefs.prefHasUserValue('xpinstall.signatures.required')};")
         if self.signing["user"]:
             raise RuntimeError("test profile has a signing preference override")
+        self.automation_policy = observe_policy(self)
         return self
 
     def exact(self, size):
@@ -422,6 +427,11 @@ button.click();return true;""", [self.manager])
                     configuration_error = current != self.signing
                 except (OSError, RuntimeError):
                     configuration_error = True
+            if self.automation_policy is not None:
+                try:
+                    unchanged_policy(self, self.automation_policy)
+                except (OSError, RuntimeError):
+                    configuration_error = True
             try:
                 self.command("Marionette:Quit", {"flags": ["eForceQuit"]})
             except (OSError, RuntimeError):
@@ -443,7 +453,7 @@ button.click();return true;""", [self.manager])
             self.process.wait(timeout=5)  # Only the retained launcher handle.
         self.closed = True
         if configuration_error:
-            raise RuntimeError("owned signing preference readback changed or failed")
+            raise RuntimeError("owned protection preference readback changed or failed")
 
 
 def qualify(package, executable, report):

@@ -159,6 +159,7 @@ class ProtectionRun:
                                       'scope':'fileless fixed loopback service query; no native publication authority','identity':identity,
                                       'harness_revision':commit,'harness_worktree_dirty':False,'temporary_loading_used':True,
                                       'initial_owned_protections':before,'protections_unchanged':True,'receipt':observed,
+                                      'owned_automation_policy':browser.automation_policy,
                                       'temporary_load':self.load_result,
                                       'wrong_page_refused':True,'repeated_start_same_receipt':True,'closed_context_refused':True,
                                       'firefox_exe_sha256':browser_hash,'successful_browser_exits':1,'joined':True,
@@ -182,6 +183,7 @@ class ProtectionRun:
                     with (self.plan.path/'failure.private.json').open('x',encoding='utf-8') as output:
                         json.dump({'version':2,'stage':self.stage,'frames':frames,
                                    'temporary_load':self.load_result,'cleanup':cleanup_observation(self.browser),
+                                   'owned_automation_policy':getattr(self.browser,'automation_policy',None),
                                    'initial_owned_protections':self.before,'final_owned_protections':self.after,
                                    'protections_unchanged':None if self.before is None or self.after is None else self.before==self.after},output)
             except BaseException: pass  # Failed recording must not claim success or lose an owner.

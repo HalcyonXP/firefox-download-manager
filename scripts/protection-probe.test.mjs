@@ -384,3 +384,77 @@ test("temporary loader records only bounded fixed terms from the exact load erro
   assert.deepEqual((await loadModel({ error: unreadable })).value.terms, []);
   assert.equal((await loadModel({ error: unreadable })).value.complete, false);
 });
+
+test("owned policy snapshot reads effective/default/user branches without preference writes", () => {
+  const python = readFileSync(
+    new URL("./qualification/firefox_policy.py", import.meta.url),
+    "utf8",
+  );
+  const snapshot = python.match(/SNAPSHOT = """([\s\S]*?)"""/u)[1];
+  const names = [
+    "xpinstall.signatures.required",
+    "extensions.experiments.enabled",
+    "browser.safebrowsing.malware.enabled",
+    "browser.safebrowsing.phishing.enabled",
+    "browser.safebrowsing.downloads.enabled",
+    "browser.safebrowsing.downloads.remote.enabled",
+    "browser.safebrowsing.blockedURIs.enabled",
+    "app.update.disabledForTesting",
+    "extensions.update.enabled",
+    "extensions.systemAddon.update.enabled",
+  ];
+  for (const name of names) assert.ok(python.includes(`'${name}'`));
+  const defaults = Object.fromEntries(names.map((name) => [name, true]));
+  defaults["extensions.experiments.enabled"] = false;
+  const values = {
+    ...defaults,
+    "remote.prefs.recommended": false,
+    "browser.safebrowsing.downloads.enabled": false,
+  };
+  const branch = (data) => ({
+    getPrefType(name) {
+      return !(name in data) ? 0 : typeof data[name] === "boolean" ? 128 : 32;
+    },
+    getBoolPref(name) {
+      assert.equal(typeof data[name], "boolean");
+      return data[name];
+    },
+  });
+  const context = {
+    args: [names],
+    Services: {
+      prefs: {
+        ...branch(values),
+        getDefaultBranch(prefix) {
+          assert.equal(prefix, "");
+          return branch(defaults);
+        },
+        prefHasUserValue(name) {
+          return name === "browser.safebrowsing.downloads.enabled";
+        },
+      },
+    },
+  };
+  const execute = () =>
+    JSON.parse(
+      JSON.stringify(runInNewContext(`(function(){${snapshot}}).apply(null, args)`, context)),
+    );
+  const observed = execute();
+  assert.equal(observed.recommended, false);
+  assert.equal(observed.applied, null);
+  assert.deepEqual(Object.keys(observed.preferences), names);
+  assert.deepEqual(observed.preferences["browser.safebrowsing.downloads.enabled"], {
+    value: false,
+    default: true,
+    user: true,
+  });
+  assert.deepEqual(observed.preferences["extensions.experiments.enabled"], {
+    value: false,
+    default: false,
+    user: false,
+  });
+  values["remote.prefs.recommended.applied"] = true;
+  assert.equal(execute().applied, true);
+  values["extensions.experiments.enabled"] = "malformed";
+  assert.throws(execute, /owned policy preference type refused/u);
+});

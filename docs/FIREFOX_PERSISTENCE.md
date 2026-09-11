@@ -1,5 +1,7 @@
 # Owned normal-XPI installation observation
 
+> **Automation-policy correction:** the earlier shared driver used an obsolete opt-out and allowed Firefox automation preference overrides. Recorded behavior/output remains source-scoped, but does not establish unchanged default protection policy. See [FIREFOX_TEST_POLICY.md](FIREFOX_TEST_POLICY.md).
+
 Status: an owned default-profile run observed a signature requirement; **persistent installation was not observed**. This is a separate, opt-in installation observation, not M5 install-ready or native-handoff acceptance.
 
 ## Scope and input
