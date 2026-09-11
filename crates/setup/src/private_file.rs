@@ -48,6 +48,37 @@ fn trace_phase(phase: &'static str) {
     eprintln!("private adapter: {phase} at +{elapsed} ms");
 }
 
+// Test-only observation of the exact still-retained child. OpenProcess requests
+// query rights only; the SDK guard closes this additional handle. Never inspect
+// unrelated processes, command lines, environment, paths or memory contents.
+#[cfg(test)]
+fn child_resources(child: &Child) -> winsafe::SysResult<(u64, u64, u32)> {
+    let process = winsafe::HPROCESS::OpenProcess(
+        winsafe::co::PROCESS::QUERY_LIMITED_INFORMATION,
+        false,
+        child.id(),
+    )?;
+    if process.GetProcessId()? != child.id() {
+        return Err(winsafe::co::ERROR::INVALID_HANDLE);
+    }
+    let (_, _, kernel, user) = process.GetProcessTimes()?;
+    Ok((
+        u64::from(kernel) / 10,
+        u64::from(user) / 10,
+        process.GetProcessHandleCount()?,
+    ))
+}
+
+#[cfg(test)]
+fn trace_child_resources(child: &Child) {
+    match child_resources(child) {
+        Ok((kernel_us, user_us, handles)) => eprintln!(
+            "private adapter: retained child resources kernel_us={kernel_us} user_us={user_us} handles={handles}"
+        ),
+        Err(_) => eprintln!("private adapter: retained child resources unavailable"),
+    }
+}
+
 /// Verified, bounded bytes and a retained read-only file/ancestor lease.
 /// Intentionally not Debug/Serialize. This is not a generation or engine proof.
 pub struct PrivateFile {
@@ -271,6 +302,8 @@ impl Adapter {
             if Instant::now() >= self.deadline {
                 #[cfg(test)]
                 trace_phase("deadline before readiness");
+                #[cfg(test)]
+                trace_child_resources(&self.child);
                 return Err(ERROR);
             }
             match ready.recv_timeout(Duration::from_millis(5)) {
@@ -376,6 +409,36 @@ $a.SetAccessRuleProtection({flag}, $true)
 [IO.Directory]::SetAccessControl($p, $a)
 "
             ),
+        );
+    }
+
+    #[test]
+    fn bootstrap_and_retained_resource_query_need_no_filesystem_access() {
+        // Syntax-only input; this program has no file/ACL/registry operations.
+        let script = r#"
+[Console]::Out.Write("ready`n")
+[Console]::Out.Flush()
+if ($dmInput.ReadLine() -cne 'close') { exit 1 }
+[Console]::Out.Write('ok')
+"#;
+        let adapter =
+            Adapter::start_script("verify", Path::new(r"C:\synthetic-unused"), script).unwrap();
+        let observation = child_resources(&adapter.child);
+        // Join the actual adapter even if the diagnostic query was refused.
+        let finished = adapter.finish();
+        assert!(observation.unwrap().2 > 0);
+        finished.unwrap();
+    }
+
+    #[test]
+    fn pre_marker_stall_is_observed_and_retired_without_file_access() {
+        assert!(
+            Adapter::start_program(
+                "verify",
+                Path::new(r"C:\synthetic-unused"),
+                "[Threading.Thread]::Sleep(30000)",
+            )
+            .is_err()
         );
     }
 

@@ -88,7 +88,20 @@ test("startup diagnostics run only after failed Rust gates and cannot qualify a 
     assert.ok(job.includes(`name: private-startup-${artifact}-diagnostics`));
   }
   const probe = readFileSync(new URL("./diagnose-private-startup.ps1", import.meta.url), "utf8");
-  assert.match(probe, /qualification = \$false/u);
+  assert.match(probe, /qualification = \$false; version = 2/u);
+  assert.ok(probe.includes('$bootstrap + "`nexit 1`ntry {`n" + $body'));
+  assert.ok(probe.includes("startup-probe-refuse`nC:\\synthetic-unused`n"));
+  assert.match(probe, /Length -gt 65536/u);
+  assert.match(probe, /Read-Source 'private_file\.rs'/u);
+  assert.match(probe, /Read-Source "private_\$kind\.ps1"/u);
+  assert.equal(probe.match(/foreach \(\$kind in @\('file', 'directory'\)\)/gu)?.length, 2);
+  assert.equal(probe.match(/\$cases \+=/gu)?.length, 3);
+  for (const mode of ["'open'", "'closed'", "'after-marker'", "'prefed'"])
+    assert.ok(probe.includes(`input = ${mode}`));
+  assert.match(probe, /\$count -lt 6\) \{ 6 - \$count \} else \{ 1 \}/u);
+  assert.match(probe, /\$process\.TotalProcessorTime\.TotalMilliseconds/u);
+  assert.match(probe, /program_sha256 =/u);
+  assert.match(probe, /if \(\$joinFailed\) \{ throw/u);
   assert.match(probe, /\[IO\.FileMode\]::CreateNew/u);
   assert.match(probe, /\[Environment\]::SystemDirectory/u);
   assert.match(probe, /5000 - \$clock\.ElapsedMilliseconds/u);
@@ -102,4 +115,26 @@ test("startup diagnostics run only after failed Rust gates and cannot qualify a 
     probe,
     /Get-Process|Stop-Process|taskkill|SetAccessControl|Set-ExecutionPolicy|DllImport|Add-Type|Get-ChildItem|ReadToEnd/u,
   );
+});
+
+test("failed-child resource diagnostics stay query-only and test-only", () => {
+  const source = readFileSync(
+    new URL("../crates/setup/src/private_file.rs", import.meta.url),
+    "utf8",
+  );
+  const query = source.match(/#\[cfg\(test\)\]\nfn child_resources\([\s\S]*?\n\}/u)?.[0];
+  assert.ok(query);
+  assert.match(query, /winsafe::HPROCESS::OpenProcess\(/u);
+  assert.match(query, /winsafe::co::PROCESS::QUERY_LIMITED_INFORMATION,\s+false,\s+child\.id\(\)/u);
+  assert.match(query, /process\.GetProcessId\(\)\? != child\.id\(\)/u);
+  assert.match(query, /process\.GetProcessTimes\(\)/u);
+  assert.match(query, /process\.GetProcessHandleCount\(\)/u);
+  assert.doesNotMatch(
+    query,
+    /unsafe|from_ptr|as_raw_handle|TERMINATE|VM_READ|QueryFullProcessImageName/u,
+  );
+  assert.match(source, /#\[cfg\(test\)\]\s+trace_child_resources\(&self\.child\)/u);
+  assert.match(source, /const EXECUTION_LIMIT: Duration = Duration::from_secs\(5\)/u);
+  assert.match(source, /fn bootstrap_and_retained_resource_query_need_no_filesystem_access/u);
+  assert.match(source, /fn pre_marker_stall_is_observed_and_retired_without_file_access/u);
 });
