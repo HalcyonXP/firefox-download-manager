@@ -1,3 +1,4 @@
+import { CaptureControl, CAPTURE_SETTING_KEY } from "./capture-control";
 import { collectSession, SessionError, type SessionInput } from "./session";
 import { NativeConnection } from "./native-connection";
 import { connectionMessage, creationPayload, directUrl, type CreationInput } from "./creation";
@@ -5,6 +6,14 @@ import { connectionMessage, creationPayload, directUrl, type CreationInput } fro
 import { BrowserHandoff } from "./browser-handoff";
 import { HandoffJournal, HANDOFF_STORAGE_KEY } from "./handoff-journal";
 
+export const captureControl = new CaptureControl({
+  read: async () =>
+    (await browser.storage.local.get(CAPTURE_SETTING_KEY))[CAPTURE_SETTING_KEY] as unknown,
+  write: async (value) => {
+    await browser.storage.local.set({ [CAPTURE_SETTING_KEY]: value });
+  },
+});
+void captureControl.ready().catch(() => {});
 export const nativeConnection = new NativeConnection();
 export const browserHandoff = new BrowserHandoff(
   new HandoffJournal({
@@ -84,7 +93,11 @@ browser.runtime.onConnect.addListener((port) => {
   };
   const unsubscribe = nativeConnection.subscribe((state) => send({ kind: "state", state }));
   const unsubscribeHandoffs = browserHandoff.subscribe((view) => send({ kind: "handoffs", view }));
+  const unsubscribeCapture = captureControl.subscribe((state) =>
+    send({ kind: "capture-state", state }),
+  );
   port.onDisconnect.addListener(() => {
+    unsubscribeCapture();
     unsubscribe();
     unsubscribeHandoffs();
   });
@@ -100,6 +113,22 @@ browser.runtime.onConnect.addListener((port) => {
         kind: "capture",
         url: captured && captured.expires >= Date.now() ? captured.url : "",
       });
+      return;
+    }
+    if (
+      message.action === "capture-setting" &&
+      Object.keys(message).sort().join(",") === "action,enabled" &&
+      "enabled" in message &&
+      typeof message.enabled === "boolean"
+    ) {
+      // Independent preference queue: a pending native action must not delay Off.
+      void captureControl.setEnabled(message.enabled).catch(() =>
+        send({
+          kind: "error",
+          message:
+            "Capture preference was not verified. Capture is paused now; recheck its stored setting after reload or restart.",
+        }),
+      );
       return;
     }
     if (busy) {

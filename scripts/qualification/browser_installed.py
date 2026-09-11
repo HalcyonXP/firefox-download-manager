@@ -156,7 +156,7 @@ def pending_confirmation(snapshot, *, captured):
 class BrowserInstalledRun(InstalledRun):
     def __init__(self, package, executable, report, fault=None, scenario="nominal"):
         super().__init__(package, report, fault)
-        if scenario not in ("nominal", "missing-terminal", "cross-origin") or (scenario != "nominal" and fault is not None):
+        if scenario not in ("nominal", "missing-terminal", "cross-origin", "capture-toggle") or (scenario != "nominal" and fault is not None):
             raise RuntimeError("unsupported combined scenario/fault pair")
         self.scenario = scenario
         self.executable = executable
@@ -234,6 +234,11 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
                             if target is not None else [fixture.url("direct")])
         self.stage = "browser-startup"
         browser, inspector = self.open_browser(peer, profile, downloads, xpi, origins)
+        toggle = self.scenario == "capture-toggle"
+        if toggle:
+            from .capture_toggle import exercise_off
+            new_tab(browser)
+            exercise_off(self, browser, inspector, fixture, downloads)
         self.checkpoint("bridge-started")
         missing = self.scenario == "missing-terminal"
         armed = message(browser, inspector, {"action": "arm-missing-terminal" if missing else "arm"})
@@ -275,6 +280,9 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
                                     "trusted_click_cancelled_one_completed_native_task_ui_independent_output"))
         if not missing:
             self.checkpoint("completed")
+        if toggle:
+            from .capture_toggle import preference
+            preference(browser, inspector, False)
         self.close_browser(browser)
         if self.owner._observe()[1] != identity or not self.ui.tray(self.manager_window):
             raise RuntimeError("companion did not survive Firefox exit")
@@ -301,6 +309,12 @@ return Services.prefs.getStringPref('browser.download.dir')===arguments[0];""", 
                 raise RuntimeError("explicit continuation output differs")
             self.browser_checks.append("intent_survives_restart_no_auto_commit_explicit_ui_continuation_same_task")
         self.stage = "unarmed-browser-click"
+        if toggle:
+            from .capture_toggle import preference
+            preference(browser, inspector, False, change=False)
+            # Arm the diagnostic gate: only persisted Off may suppress capture now.
+            if message(browser, inspector, {"action": "arm"}).get("enabled") is not True:
+                raise RuntimeError("restart Off control not armed")
         browser.navigate(fixture.url("page"))
         browser.click(selector)  # Unarmed after restart: Firefox retains this request.
         fallback = downloads / "owned-capture.bin"
@@ -326,7 +340,8 @@ succeeded:d.succeeded,stopped:d.stopped,error:!!d.error,canceled:d.canceled,byte
         self.close_browser(browser)
         if self.owner._observe()[1] != identity or not self.ui.tray(self.manager_window):
             raise RuntimeError("same companion lifetime not observed after restart")
-        self.browser_checks.append("temporary_reload_existing_task_no_replay_unarmed_correct_firefox_fallback")
+        self.browser_checks.append("temporary_reload_existing_task_no_replay_persisted_off_correct_firefox_fallback" if toggle else
+                                   "temporary_reload_existing_task_no_replay_unarmed_correct_firefox_fallback")
         self.stage = "independent-native-reconnect"
         host = Host(self.binding.generation, self.plan.path, self.hosts, environment=self.environment)
         architecture = owned_architecture(host)

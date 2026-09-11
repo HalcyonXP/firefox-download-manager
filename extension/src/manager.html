@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Download Manager</title><link rel="stylesheet" href="manager.css"><script src="manager.js" defer></script></head>
 <body><header><div><p class="eyebrow">FIREFOX · LOCAL DOWNLOADS</p><h1>Download Manager</h1></div><div class="connection"><span id="connection">Helper disconnected</span><button id="reconnect" type="button">Reconnect</button></div></header>
-<main><section aria-labelledby="create-heading" class="panel"><h2 id="create-heading">New download</h2><p>Direct HTTP(S) files. Your browser’s other downloads stay untouched.</p>
+<main><section aria-labelledby="create-heading" class="panel"><h2 id="create-heading">New download</h2><p>Manual direct HTTP(S) files. Automatic capture is controlled below.</p>
 <form id="create"><label for="url">Download URL</label><input id="url" type="url" required autocomplete="off" spellcheck="false" maxlength="16384" placeholder="https://example.com/file.zip">
 <div class="fields"><div><label for="filename">Save as</label><input id="filename" required maxlength="180" value="download" autocomplete="off"></div><div><label for="workers">Connections</label><select id="workers"><option>1</option><option>2</option><option selected>4</option><option>8</option></select></div></div>
 <label for="destination">Destination folder</label><input id="destination" required autocomplete="off" spellcheck="false" placeholder="C:\Users\you\Downloads" aria-describedby="destination-help"><p id="destination-help" class="hint">An existing local Windows folder. Existing files are never overwritten; collisions receive a numbered name.</p>
@@ -13,6 +13,7 @@
 <label for="session-authorization">Optional Authorization (HTTPS only: Basic or Bearer)</label><input id="session-authorization" type="password" autocomplete="off" maxlength="8192" spellcheck="false">
 <button id="revoke-session" type="button">Revoke all optional session permissions</button></details>
 <button id="submit" class="primary" type="submit">Download with Manager</button></form></section>
+<section class="panel" aria-labelledby="capture-heading"><h2 id="capture-heading">Automatic capture</h2><label><input id="automatic-capture" type="checkbox" disabled> Capture supported anonymous download links</label><p id="capture-status" role="status">Verifying capture availability.</p><p class="hint">Turning this off affects new captures, not existing Manager transfers or interrupted handoffs.</p></section>
 <p id="feedback" role="status" aria-live="polite"></p><section id="handoffs" class="panel" aria-live="polite" hidden></section><section id="queue" class="panel" aria-labelledby="queue-heading"><h2 id="queue-heading">Downloads</h2><p id="queue-summary">No downloads yet.</p><div id="tasks" tabindex="-1"></div></section>
 <section class="panel" aria-labelledby="settings-heading"><h2 id="settings-heading">Local settings</h2><p class="hint">Pause all active tasks before saving. Limits apply to subsequent work; existing tasks keep their configured worker count.</p>
 <form id="settings-form"><label for="setting-destination">Default destination</label><input id="setting-destination" required autocomplete="off">

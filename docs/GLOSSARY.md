@@ -226,3 +226,7 @@ See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed 
 - **Loaded handoff journal:** initial strict storage decode completed successfully; not a claim of native readiness, unblocked storage, or absence of active work.
 - **Unlinked reservation:** a native Prepared task absent from the loaded journal. It may be offered for explicit status-checked discard, never automatic continuation; absence alone does not prove Firefox was not cancelled.
 - **Aborted acknowledgement:** explicit dismissal of a Cancelled/Confirmed notice after rechecking native Aborted status. It starts no transfer, does not replay Add and retains the native task identity.
+
+
+- **Capture availability**: one explicitly selected listener registration completed. It is distinct from the saved preference, native helper readiness and authorization of a particular request.
+- **Capture preference / effective authorization**: the saved default-on boolean is decoded and independently verified on changes. Effective authorization additionally requires available listeners, loaded valid storage and no pending/failed write; the diagnostic also requires its own arming/scope gate. Off does not cancel existing Manager transfers or remove handoff history.

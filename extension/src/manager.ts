@@ -1,3 +1,5 @@
+import type { CaptureState } from "./capture-control";
+import { renderCaptureControl } from "./capture-ui";
 import { dispatchHandoffAction } from "./handoff-actions";
 import { renderHandoffs } from "./handoff-ui";
 import type { HandoffView } from "./browser-handoff";
@@ -16,6 +18,18 @@ const destination = element<HTMLInputElement>("destination");
 const workers = element<HTMLSelectElement>("workers");
 const feedback = element("feedback");
 const submit = element<HTMLButtonElement>("submit");
+const automaticCapture = element<HTMLInputElement>("automatic-capture");
+automaticCapture.addEventListener("change", () => {
+  automaticCapture.disabled = true;
+  automaticCapture.indeterminate = true;
+  element("capture-status").textContent = "Waiting for capture preference verification.";
+  try {
+    port.postMessage({ action: "capture-setting", enabled: automaticCapture.checked });
+  } catch {
+    element("capture-status").textContent =
+      "Capture change was not confirmed. Reconnect to check the saved preference.";
+  }
+});
 let port: browser.runtime.Port;
 let effectiveSettings: NativeSettings | undefined;
 let settingsKey = "";
@@ -68,6 +82,11 @@ function attach(): void {
       task?: NativeTask;
       view?: HandoffView;
     };
+    if (message.kind === "capture-state") {
+      const state = (raw as { state: CaptureState }).state;
+      renderCaptureControl(automaticCapture, element("capture-status"), state);
+      return;
+    }
     if (message.kind === "handoffs" && message.view) {
       handoffView = message.view;
       renderPendingHandoffs();
@@ -104,6 +123,10 @@ function attach(): void {
     }
   });
   port.onDisconnect.addListener(() => {
+    automaticCapture.disabled = true;
+    automaticCapture.indeterminate = true;
+    element("capture-status").textContent =
+      "Capture preference connection lost. Reconnect to verify its state.";
     feedback.textContent =
       "The extension connection closed. Reconnect and check the queue before submitting again.";
     submit.disabled = false;

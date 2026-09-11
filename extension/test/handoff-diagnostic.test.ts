@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { registerCapture } from "../src/capture-registration";
 
 const mocks = vi.hoisted(() => ({
+  preference: vi.fn(),
   connect: vi.fn(),
   command: vi.fn(),
   capture: vi.fn(),
@@ -13,6 +14,11 @@ const mocks = vi.hoisted(() => ({
   listen: vi.fn(),
 }));
 vi.mock("../src/background", () => ({
+  captureControl: {
+    state: () => ({ available: true, ready: true, enabled: true, busy: false, failed: false }),
+    ready: async () => {},
+    activate: (register: (enabled: () => boolean) => void) => register(mocks.preference),
+  },
   nativeConnection: {
     connect: mocks.connect,
     command: mocks.command,
@@ -39,6 +45,7 @@ beforeEach(async () => {
   });
   mocks.view.mockReturnValue({ loaded: true, blocked: false, pending: [] });
   mocks.supports.mockReturnValue(true);
+  mocks.preference.mockReturnValue(true);
   mocks.capture.mockResolvedValue({ cancel: true });
   vi.stubGlobal("browser", {
     runtime: {
@@ -232,4 +239,16 @@ it("does not replace an in-flight or uncertain seed with another ID", async () =
   expect(
     mocks.command.mock.calls.filter(([command]) => command === "prepare_handoff"),
   ).toHaveLength(1);
+});
+
+it("applies the shared saved preference even when the diagnostic gate is armed", async () => {
+  await control(
+    { action: "ready", destination: "owned-output", origins: ["http://127.0.0.1"] },
+    inspector,
+  );
+  await control({ action: "arm" }, inspector);
+  const enabled = vi.mocked(registerCapture).mock.calls[0]![1];
+  expect(enabled()).toBe(true);
+  mocks.preference.mockReturnValue(false);
+  expect(enabled()).toBe(false);
 });

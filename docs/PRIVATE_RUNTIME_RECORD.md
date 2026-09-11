@@ -164,3 +164,6 @@ The epoch is process-wide; elapsed adapter times require subtracting that adapte
 
 
 CI34573914169 at documentation checkpointb391bf9 passed package and dependency policy, but quality failed the retained creator/grant, directory/record composition and readonly-before-grant tests before observed startup bytes. All retained process waits/worker joins; emulation was skipped. This differs from the mixed1cde75b traces above and does not establish a shared cause. The documentation checkpoint changed no executable bytes, and no deadline/concurrency/protection workaround follows from these observations.
+
+
+CI34577036411 at6f8b209 passed all four jobs, including both clean package builds/comparison and Windows11 emulation. This is an observed pass at that source, not a causal explanation or fix for earlier adapter/bridge deadlines. No deadline, concurrency or protection change was made.

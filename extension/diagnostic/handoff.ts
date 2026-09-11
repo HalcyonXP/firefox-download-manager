@@ -1,5 +1,5 @@
 // Unselected loopback diagnostic entry. Never a production build entry or permission grant.
-import { browserHandoff, nativeConnection } from "../src/background";
+import { browserHandoff, nativeConnection, captureControl } from "../src/background";
 import { registerCapture } from "../src/capture-registration";
 
 let enabled = false;
@@ -30,39 +30,41 @@ function record(request: number, stage: "decision" | "terminal", cancelled: bool
   if (records.length >= 64) overflow = true;
   else records.push({ request, stage, cancelled });
 }
-registerCapture(
-  {
-    capture: async (key, input, eligible) => {
-      // Defense in depth: diagnostic authority never reaches a non-loopback origin.
-      const url = new URL(input.url);
-      if (
-        !enabled ||
-        !destinationVerified ||
-        url.protocol !== "http:" ||
-        url.hostname !== "127.0.0.1" ||
-        !fixtureOrigins.has(url.origin) ||
-        keys.size >= 32
-      )
-        return {};
-      const request = keys.size + 1;
-      keys.set(key, request);
-      const decision = await browserHandoff.capture(key, input, eligible);
-      record(request, "decision", decision.cancel === true);
-      return decision;
+captureControl.activate((preferenceEnabled) =>
+  registerCapture(
+    {
+      capture: async (key, input, eligible) => {
+        // Defense in depth: diagnostic authority never reaches a non-loopback origin.
+        const url = new URL(input.url);
+        if (
+          !enabled ||
+          !destinationVerified ||
+          url.protocol !== "http:" ||
+          url.hostname !== "127.0.0.1" ||
+          !fixtureOrigins.has(url.origin) ||
+          keys.size >= 32
+        )
+          return {};
+        const request = keys.size + 1;
+        keys.set(key, request);
+        const decision = await browserHandoff.capture(key, input, eligible);
+        record(request, "decision", decision.cancel === true);
+        return decision;
+      },
+      terminal: (key, error) => {
+        const request = keys.get(key);
+        if (request !== undefined) record(request, "terminal", error === "NS_ERROR_ABORT");
+        if (suppressTerminal && request !== undefined) {
+          terminalSuppressed = true;
+          return; // Deliberate diagnostic loss after the actual browser event.
+        }
+        browserHandoff.terminal(key, error);
+      },
     },
-    terminal: (key, error) => {
-      const request = keys.get(key);
-      if (request !== undefined) record(request, "terminal", error === "NS_ERROR_ABORT");
-      if (suppressTerminal && request !== undefined) {
-        terminalSuppressed = true;
-        return; // Deliberate diagnostic loss after the actual browser event.
-      }
-      browserHandoff.terminal(key, error);
-    },
-  },
-  () => enabled && !overflow,
-  ["http://127.0.0.1/*"],
-  { crossOriginRedirects: true, originAllowed: (origin) => fixtureOrigins.has(origin) },
+    () => enabled && !overflow && preferenceEnabled(),
+    ["http://127.0.0.1/*"],
+    { crossOriginRedirects: true, originAllowed: (origin) => fixtureOrigins.has(origin) },
+  ),
 );
 function snapshot() {
   const state = nativeConnection.state();
@@ -75,6 +77,7 @@ function snapshot() {
     overflow,
     terminalSuppressed,
     commitReplaced,
+    capturePreference: captureControl.state(),
     records: records.slice(),
     blocked: handoff.blocked,
     pending: handoff.pending.map((entry) => entry.stage),
@@ -148,6 +151,7 @@ browser.runtime.onMessage.addListener((message: unknown, sender) => {
       abortNextCommit = false;
       destinationVerified = false;
       fixtureOrigins.clear();
+      await captureControl.ready();
       await nativeConnection.connect();
       await nativeConnection.command("get_settings", {});
       await browserHandoff.recover();
