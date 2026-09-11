@@ -1,0 +1,26 @@
+{
+  "protocol_version": 2,
+  "correlation_id": "handoff-1",
+  "kind": "response",
+  "command": "prepare_handoff",
+  "ok": true,
+  "result": {
+    "phase": "prepared",
+    "task": {
+      "task_id": "f3914a2c-65d1-4b41-96f2-32f49a184279",
+      "display_name": "archive.bin",
+      "destination": "C:\\Users\\Example\\Downloads",
+      "source_origin": "https://downloads.example.test",
+      "state": "queued",
+      "transfer_mode": "pending",
+      "expected_size": null,
+      "bytes_completed": 0,
+      "workers": 4,
+      "speed_bytes_per_second": null,
+      "eta_seconds": null,
+      "created_at": "2026-09-04T09:00:00Z",
+      "updated_at": "2026-09-04T09:00:03Z",
+      "error": null
+    }
+  }
+}

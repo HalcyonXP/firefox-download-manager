@@ -663,7 +663,11 @@
             "get",
             "update_settings",
             "open_folder",
-            "get_settings"
+            "get_settings",
+            "prepare_handoff",
+            "commit_handoff",
+            "abort_handoff",
+            "get_handoff"
           ]
         },
         "payload": {
@@ -859,6 +863,74 @@
               }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "prepare_handoff"
+              }
+            },
+            "required": ["command"]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/prepareHandoffPayload"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "commit_handoff"
+              }
+            },
+            "required": ["command"]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/taskPayload"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "abort_handoff"
+              }
+            },
+            "required": ["command"]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/taskPayload"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "get_handoff"
+              }
+            },
+            "required": ["command"]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "$ref": "#/$defs/taskPayload"
+              }
+            }
+          }
         }
       ]
     },
@@ -888,7 +960,11 @@
             "get",
             "update_settings",
             "open_folder",
-            "get_settings"
+            "get_settings",
+            "prepare_handoff",
+            "commit_handoff",
+            "abort_handoff",
+            "get_handoff"
           ]
         },
         "ok": {
@@ -1157,6 +1233,86 @@
             "properties": {
               "result": {
                 "$ref": "#/$defs/settings"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "prepare_handoff"
+              },
+              "ok": {
+                "const": true
+              }
+            },
+            "required": ["command", "ok"]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/handoffResult"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "commit_handoff"
+              },
+              "ok": {
+                "const": true
+              }
+            },
+            "required": ["command", "ok"]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/handoffResult"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "abort_handoff"
+              },
+              "ok": {
+                "const": true
+              }
+            },
+            "required": ["command", "ok"]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/handoffResult"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "command": {
+                "const": "get_handoff"
+              },
+              "ok": {
+                "const": true
+              }
+            },
+            "required": ["command", "ok"]
+          },
+          "then": {
+            "properties": {
+              "result": {
+                "$ref": "#/$defs/handoffResult"
               }
             }
           }
@@ -1432,6 +1588,85 @@
       },
       "required": ["opened_task_id"],
       "additionalProperties": false
+    },
+    "prepareHandoffPayload": {
+      "type": "object",
+      "properties": {
+        "task_id": {
+          "$ref": "#/$defs/taskId"
+        },
+        "download": {
+          "type": "object",
+          "$ref": "#/$defs/addPayload",
+          "not": {
+            "required": ["request_context"]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": ["task_id", "download"]
+    },
+    "handoffResult": {
+      "type": "object",
+      "properties": {
+        "phase": {
+          "type": "string",
+          "enum": ["prepared", "committed", "aborted"]
+        },
+        "task": {
+          "$ref": "#/$defs/task"
+        }
+      },
+      "additionalProperties": false,
+      "required": ["phase", "task"],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "prepared"
+              }
+            },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "task": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "const": "queued"
+                  }
+                },
+                "required": ["state"]
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "phase": {
+                "const": "aborted"
+              }
+            },
+            "required": ["phase"]
+          },
+          "then": {
+            "properties": {
+              "task": {
+                "type": "object",
+                "properties": {
+                  "state": {
+                    "const": "cancelled"
+                  }
+                },
+                "required": ["state"]
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

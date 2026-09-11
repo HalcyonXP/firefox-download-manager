@@ -18,13 +18,16 @@ use tokio::runtime::Handle;
 use tokio::sync::{Notify, watch};
 use tokio::time::MissedTickBehavior;
 
+mod handoff;
+pub use handoff::{HandoffRequest, HandoffSnapshot};
+
 use crate::auth::{ContextError, RequestContext};
 use crate::integrity::ExpectedSha256;
 use crate::network::{ProbeClient, ProbeError, RangeValidationError, ResourceProbe};
 use crate::persistence::{
-    CheckpointOutcome, CheckpointUrgency, CleanupOutcome, LoadFailure, PartialCleanup,
-    PersistenceError, ResourceIdentity, StateValidationError, TaskId, TaskMetadata, TaskState,
-    TaskStore, TimestampMillis, TransferMode,
+    CheckpointOutcome, CheckpointUrgency, CleanupOutcome, HandoffPhase, LoadFailure,
+    PartialCleanup, PersistenceError, ResourceIdentity, StateValidationError, TaskId, TaskMetadata,
+    TaskState, TaskStore, TimestampMillis, TransferMode,
 };
 use crate::progress::{
     MAX_SAFE_INTEGER, ProgressConfigError, ProgressEstimate, ProgressPolicy, SpeedEstimator,
@@ -1168,7 +1171,10 @@ impl TaskEngine {
         let (snapshot, previous, generation, cancellation) = {
             let mut state = lock(&task.state);
             ensure_present(&state)?;
-            if state.running || state.metadata.state() != TaskState::Queued {
+            if state.running
+                || state.metadata.state() != TaskState::Queued
+                || state.metadata.handoff_phase() == Some(HandoffPhase::Prepared)
+            {
                 return Err(TaskEngineError::InvalidTaskState);
             }
             let previous = state.metadata.state();
@@ -1269,7 +1275,10 @@ impl TaskEngine {
         let (probing, generation, cancellation) = {
             let mut state = lock(&task.state);
             ensure_present(&state)?;
-            if state.running || state.metadata.state() != TaskState::Queued {
+            if state.running
+                || state.metadata.state() != TaskState::Queued
+                || state.metadata.handoff_phase() == Some(HandoffPhase::Prepared)
+            {
                 return Err(TaskEngineError::InvalidTaskState);
             }
             let probing_at = next_timestamp(&state.metadata)?;
@@ -1348,7 +1357,9 @@ impl TaskEngine {
         let direct = {
             let mut state = lock(&task.state);
             ensure_present(&state)?;
-            if !state.metadata.state().allows(TaskState::Cancelled) || state.stop_request.is_some()
+            if state.metadata.handoff_phase() == Some(HandoffPhase::Prepared)
+                || !state.metadata.state().allows(TaskState::Cancelled)
+                || state.stop_request.is_some()
             {
                 return Err(TaskEngineError::InvalidTaskState);
             }
@@ -1401,7 +1412,10 @@ impl TaskEngine {
         {
             let mut state = lock(&task.state);
             ensure_present(&state)?;
-            if state.running || !state.metadata.state().is_terminal() {
+            if state.running
+                || !state.metadata.state().is_terminal()
+                || state.metadata.handoff_phase().is_some()
+            {
                 return Err(TaskEngineError::InvalidTaskState);
             }
             let cleanup = if delete_partial {

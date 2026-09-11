@@ -8,6 +8,7 @@
 mod local_session;
 #[cfg(all(windows, feature = "local-bridge"))]
 pub use local_session::LocalSessionEnd;
+mod handoff;
 mod settings;
 use settings::{Diagnostic, SettingsStore, engine_configuration};
 
@@ -246,6 +247,15 @@ async fn negotiate<W: Write>(
                         return Ok(false);
                     }
                     let _ = (payload.client_name(), payload.client_version());
+                    let mut capabilities = vec![
+                        "snapshots",
+                        "coalesced_progress",
+                        "authenticated_requests",
+                        "sha256",
+                    ];
+                    if session.handoff_enabled {
+                        capabilities.push("prepared_handoff");
+                    }
                     session
                         .send_success(
                             correlation_id,
@@ -253,12 +263,7 @@ async fn negotiate<W: Write>(
                             &HelloResult {
                                 selected_version: PROTOCOL_VERSION,
                                 helper_version: HELPER_VERSION,
-                                capabilities: vec![
-                                    "snapshots",
-                                    "coalesced_progress",
-                                    "authenticated_requests",
-                                    "sha256",
-                                ],
+                                capabilities,
                                 max_message_bytes: MAX_MESSAGE_BYTES,
                             },
                         )
@@ -370,6 +375,7 @@ enum SessionOutput<W> {
 }
 
 struct Session<'a, W> {
+    handoff_enabled: bool,
     writer: SessionOutput<W>,
     default_destination: Option<PathBuf>,
     sequence: u64,
@@ -381,6 +387,7 @@ struct Session<'a, W> {
 impl<W: Write> Session<'_, W> {
     fn new(writer: W, default_destination: Option<PathBuf>) -> Self {
         Self {
+            handoff_enabled: false,
             writer: SessionOutput::Legacy(Arc::new(Mutex::new(writer))),
             default_destination,
             sequence: 0,
@@ -504,6 +511,36 @@ impl<W: Write> Session<'_, W> {
                 };
                 self.send_task(correlation_id, ResponseCommand::Add, &task)
                     .await
+            }
+            Command::PrepareHandoff(payload) => {
+                self.prepare_handoff(correlation_id, &payload, engine).await
+            }
+            Command::CommitHandoff(payload) => {
+                self.control_handoff(
+                    correlation_id,
+                    ResponseCommand::CommitHandoff,
+                    &payload,
+                    engine,
+                )
+                .await
+            }
+            Command::AbortHandoff(payload) => {
+                self.control_handoff(
+                    correlation_id,
+                    ResponseCommand::AbortHandoff,
+                    &payload,
+                    engine,
+                )
+                .await
+            }
+            Command::GetHandoff(payload) => {
+                self.control_handoff(
+                    correlation_id,
+                    ResponseCommand::GetHandoff,
+                    &payload,
+                    engine,
+                )
+                .await
             }
             Command::Pause(payload) => {
                 let task_id = match parse_task_id(payload.task_id()) {
@@ -1071,6 +1108,10 @@ fn response_command(command: &Command) -> ResponseCommand {
     match command {
         Command::Hello(_) => ResponseCommand::Hello,
         Command::Add(_) => ResponseCommand::Add,
+        Command::PrepareHandoff(_) => ResponseCommand::PrepareHandoff,
+        Command::CommitHandoff(_) => ResponseCommand::CommitHandoff,
+        Command::AbortHandoff(_) => ResponseCommand::AbortHandoff,
+        Command::GetHandoff(_) => ResponseCommand::GetHandoff,
         Command::Pause(_) => ResponseCommand::Pause,
         Command::Resume(_) => ResponseCommand::Resume,
         Command::Cancel(_) => ResponseCommand::Cancel,
@@ -1256,6 +1297,7 @@ const fn state_error_code(error: StateValidationError) -> ErrorCode {
 const fn persistence_error_code(error: &PersistenceError) -> ErrorCode {
     match error {
         PersistenceError::InvalidTask(error) => state_error_code(*error),
+        PersistenceError::HandoffRetained => ErrorCode::InvalidTaskState,
         PersistenceError::Io { failure, .. } => io_failure_code(*failure),
         PersistenceError::ExistingStateInvalid
         | PersistenceError::StaleRevision
@@ -1482,6 +1524,56 @@ mod tests {
         assert_eq!(
             timestamp_rfc3339(TimestampMillis::new(253_402_300_799_999).expect("maximum date")),
             "9999-12-31T23:59:59.999Z"
+        );
+    }
+
+    #[test]
+    fn legacy_stdio_neither_advertises_nor_dispatches_handoff() {
+        let directories = Directories::new("legacy handoff refusal");
+        let id = "f3914a2c-65d1-4b41-96f2-32f49a184279";
+        let mut input = vec![hello("hello-1")];
+        for name in [
+            "prepare_handoff",
+            "commit_handoff",
+            "abort_handoff",
+            "get_handoff",
+        ] {
+            let mut payload = json!({"task_id":id});
+            if name == "prepare_handoff" {
+                payload["download"] = json!({"url":"https://example.invalid/file"});
+            }
+            input.push(json!({"protocol_version":2,"correlation_id":name,"kind":"command","command":name,"payload":payload}));
+        }
+        let writer = SharedWriter::default();
+        run_host(
+            Cursor::new(framed(&input)),
+            writer.clone(),
+            HostConfig::new(
+                directories.state.clone(),
+                Some(directories.destination.clone()),
+            ),
+        )
+        .unwrap();
+        let output = messages(&writer);
+        assert!(
+            !output[0]["result"]["capabilities"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("prepared_handoff"))
+        );
+        for command in input.iter().skip(1) {
+            let response = output
+                .iter()
+                .find(|value| value["correlation_id"] == command["correlation_id"])
+                .unwrap();
+            assert_eq!(response["ok"], false);
+            assert_eq!(response["error"]["code"], "PROTOCOL_UNKNOWN_COMMAND");
+        }
+        assert_eq!(
+            fs::read_dir(directories.state.join("tasks"))
+                .unwrap()
+                .count(),
+            0
         );
     }
 

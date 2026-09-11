@@ -209,3 +209,7 @@ See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed 
 
 - **Capture API probe (#49)**: loopback-only temporary diagnostic add-on testing browser event fields and asynchronous request cancellation. It has no nativeMessaging permission, creates no Manager task and does not qualify persistent unsigned installation. See FIREFOX_CAPTURE_API.md.
 - **Browser terminal event versus Manager Completed**: webRequest onCompleted/onErrorOccurred describe a browser request, not native task integrity or output promotion. Browser output and Manager output require their own independent verification.
+
+- **Handoff ID / wire correlation ID**: a handoff ID is an immutable client-chosen canonical UUIDv4 retained across retries/restarts. Each wire request has its own correlation ID; reconnecting or changing that correlation must not create a new task.
+- **Prepared / Committed / Aborted handoff**: engine transaction phases, independent of transfer states such as Queued or Completed. Prepared permits no network; Committed authorizes one initial dispatch; Aborted retains the unused ID against replay. No phase proves browser cancellation. See NATIVE_HANDOFF.md.
+- **Task envelope5 / prepared_handoff**: envelope5 stores a required handoff phase around task4 data; ordinary tasks remain envelope4. `prepared_handoff` is a separate optional wire2 capability implemented only by the companion local bridge, not automatic-capture qualification.

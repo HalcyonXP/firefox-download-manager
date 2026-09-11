@@ -109,6 +109,12 @@ impl Peer {
         let response = self.read().await;
         assert_eq!(response["ok"], true);
         assert_eq!(response["command"], "hello");
+        assert!(
+            response["result"]["capabilities"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("prepared_handoff"))
+        );
         let mut tasks = Vec::new();
         let mut sequence = 0;
         loop {
@@ -437,4 +443,126 @@ async fn an_idle_live_peer_is_not_misclassified_as_closed() {
     drop(peer);
     drop(accepted);
     drop(server);
+}
+
+async fn completed_handoff(peer: &mut Peer, id: &str) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            peer.send("get_handoff", json!({"task_id":id}), "complete")
+                .await;
+            let response = peer.response("complete").await;
+            assert_eq!(response["ok"], true);
+            assert_eq!(response["result"]["phase"], "committed");
+            if response["result"]["task"]["state"] == "completed" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("durable handoff completion");
+}
+
+#[tokio::test]
+async fn lost_prepare_and_commit_replies_recover_by_id_without_a_second_transfer() {
+    let domain = Domain::new();
+    let fixture = Fixture {
+        len: 64 * 1024,
+        seed: 61,
+    };
+    let http = TestServer::start(ServerConfig {
+        fixture: fixture.clone(),
+        rules: Vec::new(),
+    })
+    .unwrap();
+    let gate = http
+        .pause_responses(RequestSelector {
+            range: Some(ByteRange { start: 0, end: 0 }),
+            ..Default::default()
+        })
+        .unwrap();
+    let endpoint = Endpoint::generate().unwrap();
+    let key = Arc::new(Capability::generate().unwrap());
+    let mut worker = Worker::start_local(domain.config(), endpoint, Arc::clone(&key)).unwrap();
+    until("handoff worker ready", || worker.take_ready()).await;
+    let id = uuid::Uuid::new_v4().to_string();
+    let payload = json!({"task_id":id, "download":{"url":http.url("/fixture"), "suggested_filename":"handoff.bin"}});
+    let mut first = Peer::new(connect(endpoint, &key).await.unwrap());
+    assert!(first.hello().await.is_empty());
+    first
+        .send("prepare_handoff", payload.clone(), "prepare")
+        .await;
+    let record = domain.0.join("state/tasks").join(format!("{id}.task.json"));
+    until("owned preparation bytes", || {
+        fs::read(&record)
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+            .is_some_and(|record| record["version"] == 5 && record["handoff"] == "prepared")
+    })
+    .await;
+    drop(first); // No application receipt read, even if a reply reached the pipe.
+    assert!(http.requests().is_empty());
+    let mut second = Peer::new(connect(endpoint, &key).await.unwrap());
+    assert_eq!(second.hello().await.len(), 1);
+    second
+        .send("prepare_handoff", payload, "repeat-prepare")
+        .await;
+    let prepared = second.response("repeat-prepare").await;
+    assert_eq!(prepared["ok"], true);
+    assert_eq!(prepared["result"]["phase"], "prepared");
+    second
+        .send("resume", json!({"task_id":id}), "forbidden")
+        .await;
+    assert_eq!(
+        second.response("forbidden").await["error"]["code"],
+        "INVALID_TASK_STATE"
+    );
+    assert!(http.requests().is_empty());
+    second
+        .send("commit_handoff", json!({"task_id":id}), "lost-commit")
+        .await;
+    until("committed network dispatch", || !http.requests().is_empty()).await;
+    drop(second); // Uncertain commit reply is not replaced with Add.
+    let mut third = Peer::new(connect(endpoint, &key).await.unwrap());
+    let tasks = third.hello().await;
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0]["task_id"], id);
+    third
+        .send("commit_handoff", json!({"task_id":id}), "repeat-commit")
+        .await;
+    assert_eq!(
+        third.response("repeat-commit").await["result"]["phase"],
+        "committed"
+    );
+    drop(gate);
+    completed_handoff(&mut third, &id).await;
+    let count = http.requests().len();
+    assert_eq!(
+        fs::read(domain.0.join("downloads/handoff.bin")).unwrap(),
+        fixture.bytes(0, 64 * 1024, 0)
+    );
+    assert_eq!(fs::read_dir(domain.0.join("downloads")).unwrap().count(), 1);
+    third
+        .send("commit_handoff", json!({"task_id":id}), "completed-commit")
+        .await;
+    assert_eq!(
+        third.response("completed-commit").await["result"]["task"]["state"],
+        "completed"
+    );
+    joined(&mut worker).await;
+    third.closed_after_events().await.unwrap();
+    drop(third);
+    assert_eq!(http.requests().len(), count);
+    let reopened = EngineOwner::open(&domain.config()).unwrap();
+    assert_eq!(reopened.engine().snapshots().len(), 1);
+    assert_eq!(
+        reopened
+            .engine()
+            .commit_handoff(download_manager_engine::persistence::TaskId::parse(&id).unwrap())
+            .unwrap()
+            .task()
+            .state(),
+        TaskState::Completed
+    );
+    reopened.shutdown().await.unwrap();
 }

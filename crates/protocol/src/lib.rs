@@ -13,10 +13,10 @@ pub use v2::{
     AddPayload, AuthorizationInput, CancelPartial, CancelPayload, Command, CommandDecodeError,
     CommandDecodeFailure, CommandMessage, CookieInput, CredentialsInput, ErrorCode, ErrorContext,
     EventMessage, EventName, FailedData, HelloPayload, HelloResult, ListPayload, MessageBuildError,
-    ProgressData, ProtocolError, RemovePayload, RemoveResult, RequestContextInput, ResponseCommand,
-    ResponseMessage, SettingsDescription, SettingsPatchInput, SnapshotPage, StateChangedData,
-    TaskDescription, TaskIdPayload, TaskStateName, TransferModeName, UpdateSettingsPayload,
-    WarningData, decode_command,
+    PrepareHandoffPayload, ProgressData, ProtocolError, RemovePayload, RemoveResult,
+    RequestContextInput, ResponseCommand, ResponseMessage, SettingsDescription, SettingsPatchInput,
+    SnapshotPage, StateChangedData, TaskDescription, TaskIdPayload, TaskStateName,
+    TransferModeName, UpdateSettingsPayload, WarningData, decode_command,
 };
 
 /// Current wire-protocol major version.

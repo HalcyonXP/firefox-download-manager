@@ -27,8 +27,10 @@ use crate::storage::{
     sanitize_filename,
 };
 
-/// Current internal task-state format version.
+/// Current ordinary task envelope/payload version; handoffs use a separate envelope.
 pub const STATE_FORMAT_VERSION: u64 = 4;
+/// Opt-in handoff-bearing task envelope; ordinary tasks remain version4.
+pub const HANDOFF_FORMAT_VERSION: u64 = 5;
 /// Maximum bytes accepted for one task-state file.
 pub const MAX_STATE_BYTES: usize = 256 * 1024;
 /// Maximum canonical completed ranges accepted per task.
@@ -194,6 +196,18 @@ impl TaskState {
                 )
         )
     }
+}
+
+/// Durable browser handoff phase, separate from the transfer lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffPhase {
+    /// No network or download-file work is authorized yet.
+    Prepared,
+    /// Caller authorized dispatch; this is not independent proof of browser cancellation.
+    Committed,
+    /// Preparation was abandoned; this identifier cannot be reused.
+    Aborted,
 }
 
 /// Persisted transfer strategy.
@@ -366,6 +380,7 @@ impl fmt::Debug for ResourceIdentity {
 /// Complete authoritative internal task metadata.
 #[derive(Clone, PartialEq, Eq)]
 pub struct TaskMetadata {
+    handoff: Option<HandoffPhase>,
     task_id: TaskId,
     revision: u64,
     state: TaskState,
@@ -454,6 +469,7 @@ impl TaskMetadata {
         let destination = validate_new_destination(destination)?;
         let display_name = sanitize_filename(suggested_filename).as_str().to_owned();
         Ok(Self {
+            handoff: None,
             task_id: TaskId::new(),
             revision: 1,
             state: TaskState::Queued,
@@ -470,6 +486,40 @@ impl TaskMetadata {
             created_at,
             updated_at: created_at,
         })
+    }
+
+    pub(crate) fn for_handoff(mut self, task_id: TaskId) -> Self {
+        self.task_id = task_id;
+        self.handoff = Some(HandoffPhase::Prepared);
+        self
+    }
+
+    /// Durable handoff phase. Ordinary manual tasks have no handoff phase.
+    #[must_use]
+    pub const fn handoff_phase(&self) -> Option<HandoffPhase> {
+        self.handoff
+    }
+
+    pub(crate) fn transition_handoff(
+        &mut self,
+        phase: HandoffPhase,
+        timestamp: TimestampMillis,
+    ) -> Result<(), StateValidationError> {
+        if self.handoff != Some(HandoffPhase::Prepared) || phase == HandoffPhase::Prepared {
+            return Err(StateValidationError::InvalidTransition);
+        }
+        let previous = self.clone();
+        self.handoff = Some(phase);
+        let state = if phase == HandoffPhase::Committed {
+            TaskState::Probing
+        } else {
+            TaskState::Cancelled
+        };
+        if let Err(error) = self.transition(state, timestamp) {
+            *self = previous;
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// Whether recovery requires a session deliberately excluded from state.
@@ -830,6 +880,7 @@ impl fmt::Debug for TaskMetadata {
             .debug_struct("TaskMetadata")
             .field("task_id", &self.task_id)
             .field("revision", &self.revision)
+            .field("handoff", &self.handoff)
             .field("state", &self.state)
             .field("urls", &"<redacted>")
             .field("paths_and_filename", &"<redacted>")
@@ -975,6 +1026,9 @@ pub enum PersistenceError {
     /// Cleanup applies only to terminal tasks.
     #[error("only terminal task state can be cleaned")]
     CleanupRequiresTerminal,
+    /// Handoff IDs remain retained until a replay-safe cleanup format exists.
+    #[error("handoff history must be retained to prevent replay")]
+    HandoffRetained,
     /// Classified path-free filesystem failure.
     #[error("{operation} failed: {failure}")]
     Io {
@@ -1256,6 +1310,44 @@ impl TaskStore {
         &self.root
     }
 
+    /// Exclusively creates a new durable record, never adopting an existing ID.
+    /// A failed initial write is preserved and will be refused on subsequent
+    /// creation/recovery; it is not a successful preparation receipt.
+    ///
+    /// # Errors
+    /// Refuses collisions, invalid records or failed write/sync/identity checks.
+    pub fn create(&self, task: &TaskMetadata) -> Result<(), PersistenceError> {
+        validate_task(task)?;
+        let bytes = serialize_task(task)?;
+        let _io_guard = lock(&self.io_gate);
+        let mut checkpoints = lock(&self.checkpoints);
+        if checkpoints.contains_key(&task.task_id) {
+            return Err(PersistenceError::ExistingStateInvalid);
+        }
+        let path = self.task_path(task.task_id);
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|error| map_persistence_io(PersistenceOperation::WriteState, &error))?;
+        file.write_all(&bytes)
+            .and_then(|()| file.sync_all())
+            .map_err(|error| map_persistence_io(PersistenceOperation::WriteState, &error))?;
+        if !opened_file_matches_path(&file, &path)
+            .map_err(|error| map_persistence_io(PersistenceOperation::WriteState, &error))?
+        {
+            return Err(PersistenceError::UnsafeStoreLayout);
+        }
+        checkpoints.insert(
+            task.task_id,
+            SavedCheckpoint {
+                revision: task.revision,
+                written_at: Instant::now(),
+            },
+        );
+        Ok(())
+    }
+
     /// Persists a complete task snapshot with routine coalescing or an
     /// immediate durability boundary.
     ///
@@ -1525,6 +1617,9 @@ impl TaskStore {
         task: &TaskMetadata,
         partial_cleanup: PartialCleanup,
     ) -> Result<CleanupOutcome, PersistenceError> {
+        if task.handoff.is_some() {
+            return Err(PersistenceError::HandoffRetained);
+        }
         if !task.state.is_terminal() {
             return Err(PersistenceError::CleanupRequiresTerminal);
         }
@@ -1608,13 +1703,12 @@ impl TaskStore {
         if bytes.len() > MAX_STATE_BYTES {
             return Err(PersistenceError::ExistingStateInvalid);
         }
-        let envelope: PersistedEnvelope =
-            serde_json::from_slice(&bytes).map_err(|_| PersistenceError::ExistingStateInvalid)?;
-        if envelope.format != STATE_FORMAT_NAME || envelope.version != STATE_FORMAT_VERSION {
-            return Err(PersistenceError::ExistingStateInvalid);
-        }
-        let durable_task = task_from_persisted(envelope.task)
-            .map_err(|_| PersistenceError::ExistingStateInvalid)?;
+        let (raw, handoff) =
+            decode_current_envelope(&bytes).map_err(|()| PersistenceError::ExistingStateInvalid)?;
+        let mut durable_task =
+            task_from_persisted(raw).map_err(|_| PersistenceError::ExistingStateInvalid)?;
+        durable_task.handoff = handoff;
+        validate_task(&durable_task).map_err(|_| PersistenceError::ExistingStateInvalid)?;
         if durable_task.task_id != task_id {
             return Err(PersistenceError::ExistingStateInvalid);
         }
@@ -1693,6 +1787,34 @@ struct PersistedEnvelope {
     format: String,
     version: u64,
     task: PersistedTask,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedHandoffEnvelope {
+    format: String,
+    version: u64,
+    handoff: HandoffPhase,
+    task: PersistedTask,
+}
+
+fn decode_current_envelope(bytes: &[u8]) -> Result<(PersistedTask, Option<HandoffPhase>), ()> {
+    let probe: VersionProbe = serde_json::from_slice(bytes).map_err(|_| ())?;
+    if probe.format != STATE_FORMAT_NAME {
+        return Err(());
+    }
+    match probe.version {
+        STATE_FORMAT_VERSION => {
+            let envelope: PersistedEnvelope = serde_json::from_slice(bytes).map_err(|_| ())?;
+            Ok((envelope.task, None))
+        }
+        HANDOFF_FORMAT_VERSION => {
+            let envelope: PersistedHandoffEnvelope =
+                serde_json::from_slice(bytes).map_err(|_| ())?;
+            Ok((envelope.task, Some(envelope.handoff)))
+        }
+        _ => Err(()),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1930,12 +2052,22 @@ struct PersistedRange {
 }
 
 fn serialize_task(task: &TaskMetadata) -> Result<Vec<u8>, PersistenceError> {
-    let persisted = PersistedEnvelope {
-        format: STATE_FORMAT_NAME.to_owned(),
-        version: STATE_FORMAT_VERSION,
-        task: PersistedTask::from_task(task)?,
-    };
-    let bytes = serde_json::to_vec(&persisted).map_err(|_| PersistenceError::Serialization)?;
+    let raw = PersistedTask::from_task(task)?;
+    let bytes = if let Some(handoff) = task.handoff {
+        serde_json::to_vec(&PersistedHandoffEnvelope {
+            format: STATE_FORMAT_NAME.to_owned(),
+            version: HANDOFF_FORMAT_VERSION,
+            handoff,
+            task: raw,
+        })
+    } else {
+        serde_json::to_vec(&PersistedEnvelope {
+            format: STATE_FORMAT_NAME.to_owned(),
+            version: STATE_FORMAT_VERSION,
+            task: raw,
+        })
+    }
+    .map_err(|_| PersistenceError::Serialization)?;
     if bytes.len() > MAX_STATE_BYTES {
         return Err(PersistenceError::StateTooLarge);
     }
@@ -2046,21 +2178,21 @@ fn load_task_file(path: &Path, filename_id: TaskId) -> Result<LoadedTaskFile, Lo
     if version.format != STATE_FORMAT_NAME {
         return Err(LoadFailureReason::UnknownFormat);
     }
-    let (raw, migrated) = match version.version {
-        STATE_FORMAT_VERSION => {
-            let envelope: PersistedEnvelope =
-                serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
-            (envelope.task, false)
+    let (raw, migrated, handoff) = match version.version {
+        STATE_FORMAT_VERSION | HANDOFF_FORMAT_VERSION => {
+            let (raw, handoff) =
+                decode_current_envelope(&bytes).map_err(|()| LoadFailureReason::Malformed)?;
+            (raw, false, handoff)
         }
         3 => {
             let envelope: PersistedEnvelopeV3 =
                 serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
-            (envelope.task.migrate(), true)
+            (envelope.task.migrate(), true, None)
         }
         2 => {
             let envelope: PersistedEnvelopeV2 =
                 serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
-            (envelope.task.migrate(), true)
+            (envelope.task.migrate(), true, None)
         }
         1 => {
             let envelope: PersistedEnvelopeV1 =
@@ -2068,11 +2200,13 @@ fn load_task_file(path: &Path, filename_id: TaskId) -> Result<LoadedTaskFile, Lo
             if envelope.format != STATE_FORMAT_NAME || envelope.version != 1 {
                 return Err(LoadFailureReason::Malformed);
             }
-            (envelope.task.migrate(), true)
+            (envelope.task.migrate(), true, None)
         }
         found => return Err(LoadFailureReason::IncompatibleVersion { found }),
     };
-    let task = task_from_persisted(raw).map_err(LoadFailureReason::InvalidTask)?;
+    let mut task = task_from_persisted(raw).map_err(LoadFailureReason::InvalidTask)?;
+    task.handoff = handoff;
+    validate_task(&task).map_err(LoadFailureReason::InvalidTask)?;
     if task.task_id != filename_id {
         return Err(LoadFailureReason::TaskIdMismatch);
     }
@@ -2138,6 +2272,7 @@ fn task_from_persisted(raw: PersistedTask) -> Result<TaskMetadata, StateValidati
     )?;
 
     let task = TaskMetadata {
+        handoff: None,
         task_id,
         expected_sha256: raw
             .expected_sha256
@@ -2165,6 +2300,23 @@ fn task_from_persisted(raw: PersistedTask) -> Result<TaskMetadata, StateValidati
 fn validate_task(task: &TaskMetadata) -> Result<(), StateValidationError> {
     if task.revision == 0 || task.updated_at < task.created_at {
         return Err(StateValidationError::InvalidRevision);
+    }
+    if let Some(handoff) = task.handoff {
+        let valid_phase = match handoff {
+            HandoffPhase::Prepared => task.state == TaskState::Queued && task.revision == 1,
+            HandoffPhase::Aborted => task.state == TaskState::Cancelled && task.revision >= 2,
+            HandoffPhase::Committed => task.revision >= 2,
+        };
+        if !valid_phase
+            || task.needs_session
+            || (handoff != HandoffPhase::Committed
+                && (task.resource.is_some()
+                    || task.partial_path.is_some()
+                    || task.final_path.is_some()
+                    || !task.completed_ranges.is_empty()))
+        {
+            return Err(StateValidationError::InconsistentState);
+        }
     }
     validate_worker_count(task.workers)?;
     require_canonical_url(&task.original_url)?;

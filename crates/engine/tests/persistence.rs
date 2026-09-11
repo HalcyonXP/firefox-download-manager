@@ -1,4 +1,4 @@
-use download_manager_engine::persistence::STATE_FORMAT_VERSION;
+use download_manager_engine::persistence::{HANDOFF_FORMAT_VERSION, STATE_FORMAT_VERSION};
 use std::fs::{self, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -770,7 +770,7 @@ fn corrupt_unknown_and_future_records_fail_independently_and_remain_on_disk() {
 
     let future_id = TaskId::new();
     let mut future: Value = serde_json::from_slice(&valid_bytes).expect("parse valid state");
-    future["version"] = json!(STATE_FORMAT_VERSION + 1);
+    future["version"] = json!(HANDOFF_FORMAT_VERSION + 1);
     future["task"]["task_id"] = json!(future_id.to_string());
     fs::write(
         state_path(&store, future_id),
@@ -819,7 +819,7 @@ fn corrupt_unknown_and_future_records_fail_independently_and_remain_on_disk() {
         &report,
         future_id,
         &LoadFailureReason::IncompatibleVersion {
-            found: STATE_FORMAT_VERSION + 1,
+            found: HANDOFF_FORMAT_VERSION + 1,
         },
     );
     assert_failure(&report, unknown_id, &LoadFailureReason::Malformed);

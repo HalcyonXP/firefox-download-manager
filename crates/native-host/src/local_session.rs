@@ -59,6 +59,7 @@ impl EngineOwner {
             std::io::sink(),
             Some(self.settings.current.destination.clone().into()),
         );
+        session.handoff_enabled = true;
         session.writer = SessionOutput::Local(tokio::sync::Mutex::new(writer));
         session.settings = Some(&mut self.settings);
         let outcome = tokio::select! {

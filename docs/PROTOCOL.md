@@ -44,6 +44,8 @@ The implemented helper advertises `snapshots`, `coalesced_progress`, `authentica
 
 A peer must not infer support from application version strings. Optional behavior is enabled only by the negotiated protocol and advertised capability. `authenticated_requests` is implemented in #23. `sha256` is implemented in #25. The extension checks capabilities after any reconnect, immediately before sending session or checksum fields. A digest is never stripped to accommodate an older helper; see [INTEGRITY.md](INTEGRITY.md).
 
+The opt-in companion local bridge additionally advertises `prepared_handoff`; the legacy stdio-owned engine does not. Its four handoff commands persist intent before network work and return a handoff phase plus sanitized task. This is separate from automatic browser capture eligibility; see [NATIVE_HANDOFF.md](NATIVE_HANDOFF.md).
+
 ## Commands
 
 Operational commands are serialized by the helper per task. A command receives exactly one terminal response, though state/progress events may appear before or after that response.
@@ -52,6 +54,10 @@ Operational commands are serialized by the helper per task. A command receives e
 | --- | --- | --- |
 | `hello` | Negotiate protocol and capabilities | Negotiation details |
 | `add` | Validate and create a task | Full task |
+| `prepare_handoff` | Exclusively prepare immutable input under a client UUID; no network | `{phase, task}` |
+| `commit_handoff` | Commit Prepared; repeated commit only reads current state | `{phase, task}` |
+| `abort_handoff` | Abandon Prepared, retaining its ID against replay | `{phase, task}` |
+| `get_handoff` | Read authoritative phase/state for the same ID | `{phase, task}` |
 | `pause` | Reach a safe paused checkpoint | Full task |
 | `resume` | Resume a paused task, or explicitly retry a failed task, after revalidation | Full task |
 | `cancel` | Stop work using explicit `keep`/`delete` partial policy | Full task |
