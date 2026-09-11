@@ -231,3 +231,6 @@ See [LOCAL_IPC.md](LOCAL_IPC.md) for the exact handshake/frame contract, failed 
 
 - **Capture availability**: one explicitly selected listener registration completed. It is distinct from the saved preference, native helper readiness and authorization of a particular request.
 - **Capture preference / effective authorization**: the saved default-on boolean is decoded and independently verified on changes. Effective authorization additionally requires available listeners, loaded valid storage and no pending/failed write; the diagnostic also requires its own arming/scope gate. Off does not cancel existing Manager transfers or remove handoff history.
+
+- **Capture candidate / diagnostic / default build**: the capture candidate is an explicitly built development XPI using actual startup/UI with reviewed site authority and no arming or fault controls. The diagnostic is an owned-loopback test instrument. The default/manual build selects neither automatic entry nor site authority. None of these names alone establishes release acceptance.
+- **Capture website authority**: current verified HTTP(S)/webRequest permission readback, separate from the saved On preference and native readiness. A permission prompt result is not readback; zero/missing/failed authority cannot authorize new cancellation. See [CAPTURE_CANDIDATE.md](CAPTURE_CANDIDATE.md).

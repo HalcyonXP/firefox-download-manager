@@ -143,7 +143,7 @@ it("distinguishes unavailable, verifying, failed and effective Off in the actual
   renderCaptureControl(input, status, { ...control.state(), available: false });
   expect(input.checked).toBe(false);
   expect(input.disabled).toBe(true);
-  expect(status.textContent).toContain("not selected");
+  expect(status.textContent).toContain("unavailable");
   renderCaptureControl(input, status, control.state());
   expect(status.textContent).toContain("Verifying");
   await control.ready();

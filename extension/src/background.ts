@@ -1,3 +1,4 @@
+import { CaptureAccess, capturePermissions } from "./capture-access";
 import { CaptureControl, CAPTURE_SETTING_KEY } from "./capture-control";
 import { collectSession, SessionError, type SessionInput } from "./session";
 import { NativeConnection } from "./native-connection";
@@ -14,6 +15,11 @@ export const captureControl = new CaptureControl({
   },
 });
 void captureControl.ready().catch(() => {});
+export const captureAccess = new CaptureAccess({
+  contains: () => browser.permissions.contains(capturePermissions()),
+  onAdded: (listener) => browser.permissions.onAdded.addListener(listener),
+  onRemoved: (listener) => browser.permissions.onRemoved.addListener(listener),
+});
 export const nativeConnection = new NativeConnection();
 export const browserHandoff = new BrowserHandoff(
   new HandoffJournal({
@@ -37,7 +43,7 @@ browserHandoff.subscribe((view) => {
     .setBadgeText({ text: view.blocked || view.pending.length ? "!" : "" })
     .catch(() => {});
 });
-// Resume only already recorded intent. No click interceptor is selected here yet.
+// Resume only recorded intent. Capture registration belongs to the explicit candidate entry.
 void browserHandoff.recover().catch(() => {});
 
 const captures = new Map<string, { url: string; expires: number; tabId: number | undefined }>();
@@ -96,7 +102,11 @@ browser.runtime.onConnect.addListener((port) => {
   const unsubscribeCapture = captureControl.subscribe((state) =>
     send({ kind: "capture-state", state }),
   );
+  const unsubscribeAccess = captureAccess.subscribe((state) =>
+    send({ kind: "capture-access", state }),
+  );
   port.onDisconnect.addListener(() => {
+    unsubscribeAccess();
     unsubscribeCapture();
     unsubscribe();
     unsubscribeHandoffs();
@@ -129,6 +139,10 @@ browser.runtime.onConnect.addListener((port) => {
             "Capture preference was not verified. Capture is paused now; recheck its stored setting after reload or restart.",
         }),
       );
+      return;
+    }
+    if (message.action === "capture-access-check" && Object.keys(message).join(",") === "action") {
+      void captureAccess.recheck();
       return;
     }
     if (busy) {

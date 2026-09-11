@@ -1,3 +1,5 @@
+import { capturePermissions, type CaptureAccessState } from "./capture-access";
+import { wireCaptureAccess } from "./capture-access-ui";
 import type { CaptureState } from "./capture-control";
 import { renderCaptureControl } from "./capture-ui";
 import { dispatchHandoffAction } from "./handoff-actions";
@@ -31,6 +33,12 @@ automaticCapture.addEventListener("change", () => {
   }
 });
 let port: browser.runtime.Port;
+const accessUi = wireCaptureAccess(
+  element<HTMLButtonElement>("capture-access"),
+  element("capture-access-status"),
+  () => browser.permissions.request(capturePermissions()),
+  () => port.postMessage({ action: "capture-access-check" }),
+);
 let effectiveSettings: NativeSettings | undefined;
 let settingsKey = "";
 let handoffView: HandoffView = { loaded: false, blocked: false, pending: [] };
@@ -82,6 +90,10 @@ function attach(): void {
       task?: NativeTask;
       view?: HandoffView;
     };
+    if (message.kind === "capture-access") {
+      accessUi.update((raw as { state: CaptureAccessState }).state);
+      return;
+    }
     if (message.kind === "capture-state") {
       const state = (raw as { state: CaptureState }).state;
       renderCaptureControl(automaticCapture, element("capture-status"), state);
@@ -123,6 +135,7 @@ function attach(): void {
     }
   });
   port.onDisconnect.addListener(() => {
+    accessUi.disconnect();
     automaticCapture.disabled = true;
     automaticCapture.indeterminate = true;
     element("capture-status").textContent =

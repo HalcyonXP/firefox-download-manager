@@ -1,6 +1,6 @@
 # Browser handoff coordination
 
-Status: recovery, pending UI and conservative eligibility components implemented; **production interception remains unselected**. No ordinary browser request is cancelled by the built Manager extension. These components are not persistent unsigned-XPI or installed Firefox-to-companion qualification. Native transaction semantics remain in [NATIVE_HANDOFF.md](NATIVE_HANDOFF.md).
+Status: recovery, pending UI and conservative eligibility components implemented; **production interception remains unselected**. The default/manual build does not cancel ordinary browser requests. A separate [automatic-capture candidate](CAPTURE_CANDIDATE.md) now selects these components with independently verified site/API authority; it is not release-qualified. These components are not persistent unsigned-XPI or installed Firefox-to-companion qualification. Native transaction semantics remain in [NATIVE_HANDOFF.md](NATIVE_HANDOFF.md).
 
 ## Decision and storage boundaries
 
@@ -24,9 +24,9 @@ Missing terminal observation becomes uncertain after five seconds. A mismatched 
 
 The manager port publishes pending records and a blocked-state warning; the extension badge indicates attention is needed. Labels join opaque IDs to the existing native task-name projection, without adding names to journal storage. Unknown details or any phase other than a known Prepared reservation do not offer Manager confirmation. `intent` offers explicit Manager/Firefox decisions and recheck; other stages offer recheck. Confirmation warns against competing Firefox output. Rendering is presentation, not native commitment or independent evidence of browser cancellation.
 
-## Unselected eligibility adapter
+## Eligibility adapter and build selection
 
-`capture-click.ts`, `capture-registration.ts` and `CapturePolicy` are preparatory source, not production build entry points or manifest content scripts. The current manifest grants own storage but no mandatory sites, webRequest or blocking permission. There is no capture toggle claiming an available automatic mode yet.
+`capture-click.ts`, `capture-registration.ts` and `CapturePolicy` are selected by the explicit capture-candidate entry/manifest, not the default/manual build. The default manifest grants own storage but no mandatory sites, webRequest or blocking permission. Candidate permission/readiness/compatibility gates and UI are described in CAPTURE_CANDIDATE.md; broad authority is not inherited by the manual package.
 
 The default conservative policy requires (the explicit cross-origin option is described below):
 
@@ -81,7 +81,7 @@ The fixed UI warnings and confirmation-result dispatch, real renderer wiring, co
 
 ## Persistent capture preference and activation boundary
 
-`capture-control.ts` separates **available** (one reviewed listener registration completed), **ready** (strict saved-preference decode completed), saved **enabled**, and effective authorization. Missing preference defaults on, but cannot authorize anything before readiness and explicit activation. The production background does not activate an interceptor and its manifest grants no new site/webRequest authority. The manager therefore labels capture unavailable in this build. The owned diagnostic explicitly activates its existing narrowly scoped registration; its separate arming gate still applies.
+`capture-control.ts` separates **available** (one reviewed listener registration completed), **ready** (strict saved-preference decode completed), saved **enabled**, and effective authorization. Missing preference defaults on, but cannot authorize anything before readiness and explicit activation. The default/manual background does not activate an interceptor and its manifest grants no new site/webRequest authority, so its manager labels capture unavailable. The separate candidate requires verified website/API authority and compatible native readiness in addition to this preference. The owned diagnostic explicitly activates its existing narrowly scoped registration; its separate arming gate still applies.
 
 The closed `{version:1, enabled:boolean}` value lives under `automatic-capture-v1`, separate from handoff history. Off immediately revokes new authorization in the background, then serializes the write and independently reads it back. On remains paused until verification; overlapping writes cannot expose stale authorization. Corrupt/future data, failed writes or uncertain readback pause capture without repairing unknown data or touching pending handoffs. Failed-write pausing is scoped to this background instance: no durable Off is claimed without verified storage, and a later instance rechecks the stored value, which may still be On. The UI states this explicitly. A failed partial registration stays unavailable and cannot be blindly repeated. This preference does not pause/cancel existing Manager transfers or erase recovery records.
 
