@@ -16,7 +16,7 @@ Deliver one buildable candidate using the actual extension entry point and Manag
 - Same-tab/default-store/nonprivate anonymous attachment policy and bounded redirect binding remain authoritative; do not broaden eligibility merely to pass a provider test.
 - Separate development artifact and manifest; no change to default release selection or immutable v0.1.0 assets.
 
-**Current implementation:** [CAPTURE_CANDIDATE.md](CAPTURE_CANDIDATE.md). Candidate eligibility is now loopback-only while the Firefox protection gap remains open. New Windows final publication establishes verified Internet-zone metadata without URLs; it is not a Firefox/antivirus verdict. The separately built [fileless privileged service probe](FIREFOX_PROTECTION_BRIDGE.md) passed at clean2b643c2 with one nonblocking callback and caller/replay guards. The explicit disposable experiment-mode run also verified [corrected automation policy](FIREFOX_TEST_POLICY.md) and joined shutdown; native byte/context/verdict binding and publication gating remain unimplemented. Permission/state/entry/build tests remain distinct from the earlier source-scoped browser observation.
+**Current implementation:** [CAPTURE_CANDIDATE.md](CAPTURE_CANDIDATE.md). Candidate eligibility is now loopback-only while the Firefox protection gap remains open. New Windows final publication establishes verified Internet-zone metadata without URLs; it is not a Firefox/antivirus verdict. The separately built [fileless privileged service probe](FIREFOX_PROTECTION_BRIDGE.md) passed at cleane1a982f with one nonblocking callback, typed synthetic-context getter consumption and caller/replay guards. The explicit disposable experiment-mode run also verified [corrected automation policy](FIREFOX_TEST_POLICY.md) and joined shutdown; native byte/context/verdict binding and publication gating remain unimplemented. Permission/state/entry/build tests remain distinct from the earlier source-scoped browser observation.
 
 ### 2. Consolidated acceptance campaign
 
@@ -57,16 +57,17 @@ There is no signing account, signing submission, public marketplace or remote-up
 | Native transaction | Immutable Prepared/Committed/Aborted identity, durable commit-before-dispatch, lost-reply/status recovery | No arbitrary machine/storage failure exactly-once claim; safe history/expiry remains open |
 | Browser integration | Clean ff5e960 harness with clean paired2df904b passed seven owned loopback scenarios;15 output files independently checked | Temporary diagnostic XPI, not the new automatic candidate or persistence/public-provider qualification |
 | Candidate browser campaign | Clean f573c19 harness/candidate with paired2df904b passed17 cases/16 verified files, actual denial/regrant, API revocation, saved-Off restart and retained uninstall/joins | Temporary XPI; predates later protection restriction/native marker; no public-provider/protection parity/persistent/final acceptance |
-| Protection API | Clean2b643c2 fileless experiment-mode query, negative caller/replay checks, corrected policy and joined retirement | No real native file, publication gate, persistent installation or provider qualification |
+| Protection API | Cleane1a982f fileless experiment-mode query with typed synthetic-context getter consumption, negative caller/replay checks, corrected policy and joined retirement | No real native file, publication gate, persistent installation or provider qualification |
 | Private/container | Actual container classification and private capability denial; correct Firefox-only output | Zero container identity is not default-cookie-store eligibility; no private/session replay authority |
 | Unsigned installation | Clean bc36eb5 / packaged2df904b observed signature-required refusal in an isolated automated profile | No installed receipt, approval UI or persistent restart result |
-| CI | CI34608070151 atf573c19 passed all four jobs | Earlier intermittent adapter/bridge failures remain unexplained; no timeout/concurrency workaround established |
+| CI | CI34639087029 ate1a982f passed all four jobs | Coordinator store-lock defect separately reproduced/fixed; unrelated intermittent adapter/bridge failures remain unexplained. No timeout/concurrency workaround |
 
 Detailed evidence belongs in the relevant reference, not repeated in this plan:
 
 - [INSTALLED_BROWSER_SLICE.md](INSTALLED_BROWSER_SLICE.md): exact browser/native source identities, observations and hashes.
 - [INSTALLED_COMPANION_SLICE.md](INSTALLED_COMPANION_SLICE.md), [SHORTCUT_OWNERSHIP.md](SHORTCUT_OWNERSHIP.md): installed lifecycle and ownership.
 - [BROWSER_HANDOFF.md](BROWSER_HANDOFF.md), [NATIVE_HANDOFF.md](NATIVE_HANDOFF.md), [LOCAL_IPC.md](LOCAL_IPC.md): coordination contracts and limitations.
+- [COORDINATOR_OWNERSHIP.md](COORDINATOR_OWNERSHIP.md): inactive-state versus retained coordinator joins, closed run admission and deterministic store-lock reproduction.
 - [PRIVATE_RUNTIME_RECORD.md](PRIVATE_RUNTIME_RECORD.md): native resource/adapter evidence and distinct historical failure phases.
 - [GLOSSARY.md](GLOSSARY.md), [decisions](decisions/README.md): terminology and architecture rationale.
 

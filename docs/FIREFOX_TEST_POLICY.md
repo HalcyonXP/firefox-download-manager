@@ -17,7 +17,7 @@ Source: Mozilla revision [`574c275bcf5b4f86198c979b7e61f4a844aba0ea`](https://hg
 - Write only the supported automation opt-out in the exclusively owned test profile **before** launch. This prevents automation from overriding defaults; it does not write individual protection settings.
 - Before returning a usable browser owner, require recommended overrides disabled and their applied marker absent/false. Read a fixed set of signing, experiment, Safe Browsing and update preferences from both effective and default branches. Refuse user overrides, mismatches, malformed values, disabled core Safe Browsing or updates disabled for testing; never repair them.
 - Retain the validated snapshot. Recheck it before shutdown; a changed/failed readback still requires retained browser retirement and joining before refusal. Probe reports/failure records carry this bounded policy receipt when available.
-- Normal profiles are never inspected or changed. The clean2b643c2 fileless experiment-mode run verified the corrected opt-out and selected default protection values through joined shutdown; ordinary capture/installation under the corrected policy remains unqualified. The fixed preference set is not an exhaustive policy-equivalence audit.
+- Normal profiles are never inspected or changed. The clean2b643c2 and cleane1a982f fileless experiment-mode runs verified the corrected opt-out and selected default protection values through joined shutdown; ordinary capture/installation under the corrected policy remains unqualified. The fixed preference set is not an exhaustive policy-equivalence audit.
 
 ## Separate fileless experiment mode
 
@@ -25,7 +25,7 @@ Source: Mozilla revision [`574c275bcf5b4f86198c979b7e61f4a844aba0ea`](https://hg
 
 The policy guard does not infer an exception from observed data: only this explicit mode accepts the exact experiment tuple **effective true / default false / user override true**. Every other selected preference retains the default-mode checks, and signing enforcement must also be true. Startup and shutdown use the same mode and verify stable snapshots. Reports/failure records distinguish `profile_mode: fileless-experiment` from `default`; normal profiles and product builds are unaffected.
 
-This temporary capability test is not preservation of the experiment preference's default, ordinary XPI installation, native-file verdict integration or persistence qualification. Clean2b643c2 passed the fixed fileless service query and negative caller/replay cases with exactly this override and unchanged selected protection defaults. See [the exact source/receipt scope](FIREFOX_PROTECTION_BRIDGE.md#source-scoped-service-observation); no real-file or persistence result is established.
+This temporary capability test is not preservation of the experiment preference's default, ordinary XPI installation, native-file verdict integration or persistence qualification. Clean2b643c2 passed the fixed empty-context query; cleane1a982f additionally observed typed synthetic referrer/redirect getter consumption. Both passed the negative caller/replay cases with exactly this override and unchanged selected protection defaults. See [the exact source/receipt scope](FIREFOX_PROTECTION_BRIDGE.md#source-scoped-service-observation); no real-file or persistence result is established.
 
 ## Earlier evidence
 
