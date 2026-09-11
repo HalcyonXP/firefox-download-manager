@@ -8,7 +8,7 @@ const source = readFileSync(
   new URL("../extension/protection-probe/api.js", import.meta.url),
   "utf8",
 );
-function fixture(dispatch = () => {}) {
+function fixture(dispatch = () => {}, consume = true) {
   const queries = [];
   const operations = [];
   const closes = [];
@@ -22,7 +22,7 @@ function fixture(dispatch = () => {}) {
     uri: { spec: extension.baseURI.resolve("probe.html") },
     callOnClose: (hook) => closes.push(hook),
   };
-  const redirects = {};
+  const redirects = { entries: [], appendElement: (entry) => redirects.entries.push(entry) };
   const scope = {
     ExtensionAPI: class {
       constructor(value) {
@@ -33,8 +33,43 @@ function fixture(dispatch = () => {}) {
       nsIApplicationReputationService: "service",
       nsIIOService: "io",
       nsIMutableArray: "array",
+      nsIReferrerInfo: { NO_REFERRER: 2 },
+      nsIScriptSecurityManager: "security",
+    },
+    ChromeUtils: {
+      generateQI: (names) => {
+        assert.deepEqual(Array.from(names), ["nsIRedirectHistoryEntry"]);
+        return function (iid) {
+          assert.equal(iid, "nsIRedirectHistoryEntry");
+          return this;
+        };
+      },
     },
     Cc: {
+      "@mozilla.org/referrer-info;1": {
+        createInstance: (kind) => {
+          assert.equal(kind, scope.Ci.nsIReferrerInfo);
+          return {
+            init(policy, send, uri) {
+              assert.equal(policy, 2);
+              assert.equal(send, false);
+              this.originalReferrer = uri;
+              this.sendReferrer = send;
+            },
+          };
+        },
+      },
+      "@mozilla.org/scriptsecuritymanager;1": {
+        getService: (kind) => {
+          assert.equal(kind, "security");
+          return {
+            createContentPrincipal: (uri, attributes) => {
+              assert.equal(Object.keys(attributes).length, 0);
+              return { nativePrincipal: true, uri };
+            },
+          };
+        },
+      },
       "@mozilla.org/reputationservice/application-reputation-service;1": {
         getService: (kind) => {
           operations.push("service");
@@ -42,6 +77,14 @@ function fixture(dispatch = () => {}) {
           return {
             queryReputation: (query, callback) => {
               queries.push({ query, callback });
+              if (consume) {
+                void query.sourceURI;
+                void query.referrerInfo;
+                void query.suggestedFileName;
+                for (const entry of query.redirects.entries) {
+                  void entry.QueryInterface("nsIRedirectHistoryEntry").principal;
+                }
+              }
               dispatch(callback);
             },
           };
@@ -98,7 +141,17 @@ test("fixed query binds exact empty bytes, unsigned metadata and loopback source
     ].sort(),
   );
   assert.equal(q.sourceURI.spec, "http://127.0.0.1/download-manager-protection-probe.txt");
-  assert.equal(q.referrerInfo, null);
+  assert.equal(
+    q.referrerInfo.originalReferrer.spec,
+    "http://127.0.0.1/download-manager-protection-referrer.html",
+  );
+  assert.equal(q.referrerInfo.sendReferrer, false);
+  assert.equal(q.redirects.entries.length, 1);
+  assert.equal(q.redirects.entries[0].principal.nativePrincipal, true);
+  assert.equal(
+    q.redirects.entries[0].principal.uri.spec,
+    "http://127.0.0.1/download-manager-protection-redirect.txt",
+  );
   assert.equal(q.fileSize, 0);
   assert.equal(q.suggestedFileName, "download-manager-protection-probe.txt");
   assert.equal(
@@ -109,13 +162,14 @@ test("fixed query binds exact empty bytes, unsigned metadata and loopback source
   assert.equal(q.redirects, f.redirects);
   f.queries[0].callback(false, 0, 0);
   assert.deepEqual(plain(await api.snapshot()), {
-    version: 1,
+    version: 2,
     qualification: false,
-    scope: "fixed-empty-loopback-text",
+    scope: "fixed-empty-loopback-context",
     stage: "settled",
     result: "not-blocked",
     attempted: true,
     callbacks: 1,
+    metadata_reads: 15,
   });
   await api.start();
   assert.equal(f.queries.length, 1);
@@ -257,7 +311,7 @@ test("Firefox API schema uses integer bounds and no synchronous returns on async
   for (const property of Object.values(schema.types[0].properties)) {
     if (property.type === "integer") assert.equal("enum" in property, false);
   }
-  assert.deepEqual(schema.types[0].properties.version, { type: "integer", minimum: 1, maximum: 1 });
+  assert.deepEqual(schema.types[0].properties.version, { type: "integer", minimum: 2, maximum: 2 });
   for (const fn of schema.functions) {
     assert.equal(fn.async, true);
     assert.equal("returns" in fn, false);
@@ -457,4 +511,37 @@ test("owned policy snapshot reads effective/default/user branches without prefer
   assert.equal(execute().applied, true);
   values["extensions.experiments.enabled"] = "malformed";
   assert.throws(execute, /owned policy preference type refused/u);
+});
+
+test("successful status cannot normalize missing context consumption into acceptance", async () => {
+  for (const omitted of ["sourceURI", "referrerInfo", "suggestedFileName", "principal"]) {
+    const f = fixture(() => {}, false);
+    const api = f.api();
+    await api.start();
+    const { query: q, callback } = f.queries[0];
+    for (const name of ["sourceURI", "referrerInfo", "suggestedFileName"]) {
+      if (name !== omitted) void q[name];
+    }
+    if (omitted !== "principal") void q.redirects.entries[0].principal;
+    callback(false, 0, 0);
+    assert.equal((await api.snapshot()).result, "unavailable", omitted);
+    assert.notEqual((await api.snapshot()).metadata_reads, 15, omitted);
+    await api.start();
+    assert.equal(f.queries.length, 1);
+  }
+});
+
+test("unexpected history metadata access remains unavailable even if service ignores its error", async () => {
+  for (const field of ["referrerURI", "remoteAddress"]) {
+    const f = fixture();
+    const api = f.api();
+    await api.start();
+    assert.throws(
+      () => f.queries[0].query.redirects.entries[0][field],
+      /Unexpected protection metadata/,
+    );
+    f.queries[0].callback(false, 0, 0);
+    assert.equal((await api.snapshot()).metadata_reads, 31);
+    assert.equal((await api.snapshot()).result, "unavailable");
+  }
 });

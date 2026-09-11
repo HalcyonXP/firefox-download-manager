@@ -62,11 +62,12 @@ window.wrappedJSObject.browser.managerProtection.start().then(done,()=>done(null
 
 
 def valid_receipt(value):
-    if (not isinstance(value,dict) or set(value)!={'version','qualification','scope','stage','result','attempted','callbacks'}
-            or type(value['version']) is not int or value['version'] != 1 or value['qualification'] is not False
-            or value['scope']!='fixed-empty-loopback-text' or value['stage']!='settled'
+    if (not isinstance(value,dict) or set(value)!={'version','qualification','scope','stage','result','attempted','callbacks','metadata_reads'}
+            or type(value['version']) is not int or value['version'] != 2 or value['qualification'] is not False
+            or value['scope']!='fixed-empty-loopback-context' or value['stage']!='settled'
             or value['result']!='not-blocked' or value['attempted'] is not True
-            or type(value['callbacks']) is not int or value['callbacks']!=1):
+            or type(value['callbacks']) is not int or value['callbacks']!=1
+            or type(value['metadata_reads']) is not int or value['metadata_reads']!=15):
         raise RuntimeError('protection service observation unavailable')
     return value
 

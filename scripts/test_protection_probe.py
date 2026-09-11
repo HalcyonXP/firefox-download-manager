@@ -74,10 +74,10 @@ class ProtectionProbeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError): inputs.inspect(self.directory,clean=False)
 
     def test_receipt_is_not_boolean_or_missing_callback_acceptance(self):
-        valid={'version':1,'qualification':False,'scope':'fixed-empty-loopback-text','stage':'settled',
-               'result':'not-blocked','attempted':True,'callbacks':1}
+        valid={'version':2,'qualification':False,'scope':'fixed-empty-loopback-context','stage':'settled',
+               'result':'not-blocked','attempted':True,'callbacks':1,'metadata_reads':15}
         self.assertEqual(driver.valid_receipt(valid),valid)
-        for key,value in [('version',True),('qualification',True),('stage','pending'),('result','unavailable'),
+        for key,value in [('version',True),('version',1),('metadata_reads',True),('metadata_reads',0),('metadata_reads',31),('qualification',True),('stage','pending'),('result','unavailable'),
                           ('result','blocked'),('callbacks',True),('callbacks',0),('callbacks',2),('attempted',False)]:
             with self.assertRaises(RuntimeError): driver.valid_receipt({**valid,key:value})
         with self.assertRaises(RuntimeError): driver.valid_receipt({**valid,'path':'unowned'})

@@ -21,7 +21,12 @@ export default tseslint.config(
     files: ["extension/protection-probe/api.js"],
     languageOptions: {
       sourceType: "script",
-      globals: { ExtensionAPI: "readonly", Cc: "readonly", Ci: "readonly" },
+      globals: {
+        ExtensionAPI: "readonly",
+        Cc: "readonly",
+        Ci: "readonly",
+        ChromeUtils: "readonly",
+      },
     },
   },
   {
