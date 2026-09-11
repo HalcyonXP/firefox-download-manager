@@ -23,6 +23,10 @@ mod coordinator_tests;
 mod coordinators;
 use coordinators::{Admission, Coordinators, RunOwner};
 
+mod protection;
+use protection::require_live_protection;
+pub use protection::{ProtectionDecision, ProtectionGate, ProtectionReceiver, ProtectionRequest};
+
 mod handoff;
 pub use handoff::{HandoffRequest, HandoffSnapshot};
 
@@ -272,6 +276,10 @@ pub enum CancelPartialPolicy {
 pub enum TaskFailureKind {
     /// Optional user checksum failed before publication.
     ChecksumMismatch,
+    /// The trusted protection owner refused publication.
+    ProtectionBlocked,
+    /// A required current protection owner/result is missing or uncertain.
+    ProtectionUnavailable,
     /// Recovery lost the memory-only session.
     AuthRequired,
     /// Server denied access or a transferred cookie expired.
@@ -887,6 +895,7 @@ pub struct TaskEngine {
 
 struct TaskEngineInner {
     store: Arc<TaskStore>,
+    protection: Option<ProtectionGate>,
     coordinators: Coordinators,
     #[cfg(test)]
     coordinator_test: Mutex<Option<Arc<coordinator_tests::Tail>>>,
@@ -918,6 +927,7 @@ struct ManagedTask {
 
 struct ManagedState {
     metadata: TaskMetadata,
+    fresh_protection_binding: bool,
     source_origin: String,
     workers: WorkerCount,
     partial: Option<PartialFile>,
@@ -939,6 +949,7 @@ impl fmt::Debug for ManagedState {
         formatter
             .debug_struct("ManagedState")
             .field("metadata", &self.metadata)
+            .field("fresh_protection_binding", &self.fresh_protection_binding)
             .field("source_origin", &self.source_origin)
             .field("workers", &self.workers)
             .field("has_partial", &self.partial.is_some())
@@ -1008,6 +1019,29 @@ impl TaskEngine {
         options: TaskEngineOptions,
         scheduler: DownloadScheduler,
     ) -> Result<Self, TaskEngineError> {
+        Self::open_inner(state_root, options, scheduler, None)
+    }
+
+    /// Opens with one opt-in trusted native protection receiver. No wire selection
+    /// or Firefox policy implementation is implied. Recovered protected tasks have
+    /// no live browser binding and cannot execute, even with a new receiver.
+    /// # Errors
+    /// Refuses unsafe stores and invalid client configuration.
+    pub fn open_with_protection(
+        state_root: &Path,
+        options: TaskEngineOptions,
+        scheduler: DownloadScheduler,
+        protection: ProtectionGate,
+    ) -> Result<Self, TaskEngineError> {
+        Self::open_inner(state_root, options, scheduler, Some(protection))
+    }
+
+    fn open_inner(
+        state_root: &Path,
+        options: TaskEngineOptions,
+        scheduler: DownloadScheduler,
+        protection: Option<ProtectionGate>,
+    ) -> Result<Self, TaskEngineError> {
         let store = TaskStore::open(state_root)?;
         let loaded = store.load_all()?;
         let probe_client = ProbeClient::with_admission(scheduler.admission())
@@ -1029,6 +1063,7 @@ impl TaskEngine {
         Ok(Self {
             inner: Arc::new(TaskEngineInner {
                 store: Arc::new(store),
+                protection,
                 coordinators: Coordinators::default(),
                 #[cfg(test)]
                 coordinator_test: Mutex::new(None),
@@ -1197,6 +1232,7 @@ impl TaskEngine {
             {
                 return Err(TaskEngineError::InvalidTaskState);
             }
+            require_live_protection(&self.inner, &state)?;
             let previous = state.metadata.state();
             let timestamp = next_timestamp(&state.metadata)?;
             let before = state.metadata.clone();
@@ -1256,6 +1292,7 @@ impl TaskEngine {
                 if state.running || state.metadata.state() != TaskState::Paused {
                     return Err(TaskEngineError::InvalidTaskState);
                 }
+                require_live_protection(&self.inner, &state)?;
                 state.failure = None;
                 state.estimator.reset();
                 let run = begin_run(&mut state)?;
@@ -1293,6 +1330,7 @@ impl TaskEngine {
             if state.running || state.metadata.state() != TaskState::Failed {
                 return Err(TaskEngineError::InvalidTaskState);
             }
+            require_live_protection(&self.inner, &state)?;
             let previous = state.metadata.state();
             let queued_at = next_timestamp(&state.metadata)?;
             let failed = state.metadata.clone();
@@ -2046,7 +2084,7 @@ async fn probe_with_retries(
     cancellation: &TransferCancellation,
     budget: &mut RetryBudget,
 ) -> Result<ResourceProbe, RunError> {
-    let context = {
+    let (context, protected) = {
         let tasks = lock(&inner.tasks);
         let task = tasks
             .get(&task_id)
@@ -2059,11 +2097,37 @@ async fn probe_with_retries(
                 TaskFailureKind::AuthRequired,
             )));
         }
-        state.context.clone()
+        require_live_protection(inner, &state).map_err(|_| {
+            RunError::Failed(TaskFailure::new(TaskFailureKind::ProtectionUnavailable))
+        })?;
+        (state.context.clone(), state.metadata.requires_protection())
     };
     loop {
+        if protected
+            && !inner
+                .protection
+                .as_ref()
+                .is_some_and(ProtectionGate::is_available)
+        {
+            return Err(RunError::Failed(TaskFailure::new(
+                TaskFailureKind::ProtectionUnavailable,
+            )));
+        }
+        let probe = async {
+            if protected {
+                inner
+                    .probe_client
+                    .probe_anonymous_without_redirects(url)
+                    .await
+            } else {
+                inner
+                    .probe_client
+                    .probe_with_context(url, context.clone())
+                    .await
+            }
+        };
         let result = tokio::select! {
-            result = inner.probe_client.probe_with_context(url, context.clone()) => result,
+            result = probe => result,
             () = cancellation.cancelled() => return Err(RunError::Cancelled),
         };
         match result {
@@ -2258,11 +2322,21 @@ async fn complete_run(
         finish_stop(inner, task, generation);
         return;
     }
-    let expected = lock(&task.state).metadata.expected_sha256();
+    let (expected, protected) = {
+        let state = lock(&task.state);
+        (
+            state.metadata.expected_sha256(),
+            state.metadata.requires_protection(),
+        )
+    };
     let owned_partial = partial.clone();
     let signal = cancellation.clone();
     let validation = tokio::task::spawn_blocking(move || {
-        owned_partial.validate(expected, || signal.is_cancelled())
+        if protected {
+            owned_partial.validate_with_fingerprint(expected, || signal.is_cancelled())
+        } else {
+            owned_partial.validate(expected, || signal.is_cancelled())
+        }
     })
     .await;
     let lease = match validation {
@@ -2294,16 +2368,12 @@ async fn complete_run(
         finish_stop(inner, task, generation);
         return;
     }
-    if let Err(failure) = enter_run_state(inner, task, generation, TaskState::Promoting) {
-        drop(lease);
-        finish_or_fail_completion(inner, task, generation, failure);
-        return;
-    }
-
-    let mut promotion = match lease.promote() {
+    let publication =
+        protection::publish_validated(inner, task, generation, lease, cancellation).await;
+    let mut promotion = match publication {
         Ok(promotion) => promotion,
-        Err(error) => {
-            fail_run(inner, task, generation, failure_from_storage(&error));
+        Err(failure) => {
+            finish_or_fail_completion(inner, task, generation, failure);
             return;
         }
     };
@@ -2820,6 +2890,7 @@ fn managed_task(
     };
     let state = ManagedState {
         metadata,
+        fresh_protection_binding: false,
         source_origin,
         workers,
         partial: None,

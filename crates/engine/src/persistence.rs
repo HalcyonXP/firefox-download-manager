@@ -31,6 +31,8 @@ use crate::storage::{
 pub const STATE_FORMAT_VERSION: u64 = 4;
 /// Opt-in handoff-bearing task envelope; ordinary tasks remain version4.
 pub const HANDOFF_FORMAT_VERSION: u64 = 5;
+/// Opt-in browser-bound publication requirement; older readers must refuse it.
+pub const PROTECTED_HANDOFF_FORMAT_VERSION: u64 = 6;
 /// Maximum bytes accepted for one task-state file.
 pub const MAX_STATE_BYTES: usize = 256 * 1024;
 /// Maximum canonical completed ranges accepted per task.
@@ -381,6 +383,7 @@ impl fmt::Debug for ResourceIdentity {
 #[derive(Clone, PartialEq, Eq)]
 pub struct TaskMetadata {
     handoff: Option<HandoffPhase>,
+    requires_protection: bool,
     task_id: TaskId,
     revision: u64,
     state: TaskState,
@@ -470,6 +473,7 @@ impl TaskMetadata {
         let display_name = sanitize_filename(suggested_filename).as_str().to_owned();
         Ok(Self {
             handoff: None,
+            requires_protection: false,
             task_id: TaskId::new(),
             revision: 1,
             state: TaskState::Queued,
@@ -536,6 +540,16 @@ impl TaskMetadata {
 
     pub(crate) fn require_checksum(&mut self, expected: ExpectedSha256) {
         self.expected_sha256 = Some(expected);
+    }
+
+    /// Immutable requirement for a live, owned browser-bound publication decision.
+    #[must_use]
+    pub const fn requires_protection(&self) -> bool {
+        self.requires_protection
+    }
+
+    pub(crate) fn require_protection(&mut self) {
+        self.requires_protection = true;
     }
 
     pub(crate) fn require_session(&mut self) {
@@ -1703,11 +1717,12 @@ impl TaskStore {
         if bytes.len() > MAX_STATE_BYTES {
             return Err(PersistenceError::ExistingStateInvalid);
         }
-        let (raw, handoff) =
+        let (raw, handoff, requires_protection) =
             decode_current_envelope(&bytes).map_err(|()| PersistenceError::ExistingStateInvalid)?;
         let mut durable_task =
             task_from_persisted(raw).map_err(|_| PersistenceError::ExistingStateInvalid)?;
         durable_task.handoff = handoff;
+        durable_task.requires_protection = requires_protection;
         validate_task(&durable_task).map_err(|_| PersistenceError::ExistingStateInvalid)?;
         if durable_task.task_id != task_id {
             return Err(PersistenceError::ExistingStateInvalid);
@@ -1798,7 +1813,36 @@ struct PersistedHandoffEnvelope {
     task: PersistedTask,
 }
 
-fn decode_current_envelope(bytes: &[u8]) -> Result<(PersistedTask, Option<HandoffPhase>), ()> {
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PersistedProtectedEnvelope {
+    format: String,
+    version: u64,
+    handoff: HandoffPhase,
+    #[serde(deserialize_with = "required_protection")]
+    protection: ProtectionPolicy,
+    task: PersistedTask,
+}
+
+#[derive(Serialize)]
+enum ProtectionPolicy {
+    #[serde(rename = "browser-bound-v1")]
+    BrowserBoundV1,
+}
+
+fn required_protection<'de, D>(deserializer: D) -> Result<ProtectionPolicy, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match String::deserialize(deserializer)?.as_str() {
+        "browser-bound-v1" => Ok(ProtectionPolicy::BrowserBoundV1),
+        _ => Err(serde::de::Error::custom("unsupported protection policy")),
+    }
+}
+
+fn decode_current_envelope(
+    bytes: &[u8],
+) -> Result<(PersistedTask, Option<HandoffPhase>, bool), ()> {
     let probe: VersionProbe = serde_json::from_slice(bytes).map_err(|_| ())?;
     if probe.format != STATE_FORMAT_NAME {
         return Err(());
@@ -1806,12 +1850,17 @@ fn decode_current_envelope(bytes: &[u8]) -> Result<(PersistedTask, Option<Handof
     match probe.version {
         STATE_FORMAT_VERSION => {
             let envelope: PersistedEnvelope = serde_json::from_slice(bytes).map_err(|_| ())?;
-            Ok((envelope.task, None))
+            Ok((envelope.task, None, false))
         }
         HANDOFF_FORMAT_VERSION => {
             let envelope: PersistedHandoffEnvelope =
                 serde_json::from_slice(bytes).map_err(|_| ())?;
-            Ok((envelope.task, Some(envelope.handoff)))
+            Ok((envelope.task, Some(envelope.handoff), false))
+        }
+        PROTECTED_HANDOFF_FORMAT_VERSION => {
+            let envelope: PersistedProtectedEnvelope =
+                serde_json::from_slice(bytes).map_err(|_| ())?;
+            Ok((envelope.task, Some(envelope.handoff), true))
         }
         _ => Err(()),
     }
@@ -2053,7 +2102,15 @@ struct PersistedRange {
 
 fn serialize_task(task: &TaskMetadata) -> Result<Vec<u8>, PersistenceError> {
     let raw = PersistedTask::from_task(task)?;
-    let bytes = if let Some(handoff) = task.handoff {
+    let bytes = if task.requires_protection {
+        serde_json::to_vec(&PersistedProtectedEnvelope {
+            format: STATE_FORMAT_NAME.to_owned(),
+            version: PROTECTED_HANDOFF_FORMAT_VERSION,
+            handoff: task.handoff.ok_or(PersistenceError::Serialization)?,
+            protection: ProtectionPolicy::BrowserBoundV1,
+            task: raw,
+        })
+    } else if let Some(handoff) = task.handoff {
         serde_json::to_vec(&PersistedHandoffEnvelope {
             format: STATE_FORMAT_NAME.to_owned(),
             version: HANDOFF_FORMAT_VERSION,
@@ -2178,21 +2235,21 @@ fn load_task_file(path: &Path, filename_id: TaskId) -> Result<LoadedTaskFile, Lo
     if version.format != STATE_FORMAT_NAME {
         return Err(LoadFailureReason::UnknownFormat);
     }
-    let (raw, migrated, handoff) = match version.version {
-        STATE_FORMAT_VERSION | HANDOFF_FORMAT_VERSION => {
-            let (raw, handoff) =
+    let (raw, migrated, handoff, requires_protection) = match version.version {
+        STATE_FORMAT_VERSION | HANDOFF_FORMAT_VERSION | PROTECTED_HANDOFF_FORMAT_VERSION => {
+            let (raw, handoff, protection) =
                 decode_current_envelope(&bytes).map_err(|()| LoadFailureReason::Malformed)?;
-            (raw, false, handoff)
+            (raw, false, handoff, protection)
         }
         3 => {
             let envelope: PersistedEnvelopeV3 =
                 serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
-            (envelope.task.migrate(), true, None)
+            (envelope.task.migrate(), true, None, false)
         }
         2 => {
             let envelope: PersistedEnvelopeV2 =
                 serde_json::from_slice(&bytes).map_err(|_| LoadFailureReason::Malformed)?;
-            (envelope.task.migrate(), true, None)
+            (envelope.task.migrate(), true, None, false)
         }
         1 => {
             let envelope: PersistedEnvelopeV1 =
@@ -2200,12 +2257,13 @@ fn load_task_file(path: &Path, filename_id: TaskId) -> Result<LoadedTaskFile, Lo
             if envelope.format != STATE_FORMAT_NAME || envelope.version != 1 {
                 return Err(LoadFailureReason::Malformed);
             }
-            (envelope.task.migrate(), true, None)
+            (envelope.task.migrate(), true, None, false)
         }
         found => return Err(LoadFailureReason::IncompatibleVersion { found }),
     };
     let mut task = task_from_persisted(raw).map_err(LoadFailureReason::InvalidTask)?;
     task.handoff = handoff;
+    task.requires_protection = requires_protection;
     validate_task(&task).map_err(LoadFailureReason::InvalidTask)?;
     if task.task_id != filename_id {
         return Err(LoadFailureReason::TaskIdMismatch);
@@ -2273,6 +2331,7 @@ fn task_from_persisted(raw: PersistedTask) -> Result<TaskMetadata, StateValidati
 
     let task = TaskMetadata {
         handoff: None,
+        requires_protection: false,
         task_id,
         expected_sha256: raw
             .expected_sha256
@@ -2297,9 +2356,16 @@ fn task_from_persisted(raw: PersistedTask) -> Result<TaskMetadata, StateValidati
     Ok(task)
 }
 
-fn validate_task(task: &TaskMetadata) -> Result<(), StateValidationError> {
-    if task.revision == 0 || task.updated_at < task.created_at {
-        return Err(StateValidationError::InvalidRevision);
+fn validate_handoff_requirement(task: &TaskMetadata) -> Result<(), StateValidationError> {
+    if task.requires_protection
+        && (task.handoff.is_none()
+            || task.needs_session
+            || task
+                .resource
+                .as_ref()
+                .is_some_and(|resource| resource.final_url != task.original_url))
+    {
+        return Err(StateValidationError::InvalidResource);
     }
     if let Some(handoff) = task.handoff {
         let valid_phase = match handoff {
@@ -2317,6 +2383,14 @@ fn validate_task(task: &TaskMetadata) -> Result<(), StateValidationError> {
         {
             return Err(StateValidationError::InconsistentState);
         }
+    }
+    Ok(())
+}
+
+fn validate_task(task: &TaskMetadata) -> Result<(), StateValidationError> {
+    validate_handoff_requirement(task)?;
+    if task.revision == 0 || task.updated_at < task.created_at {
+        return Err(StateValidationError::InvalidRevision);
     }
     validate_worker_count(task.workers)?;
     require_canonical_url(&task.original_url)?;

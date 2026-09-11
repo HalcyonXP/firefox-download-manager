@@ -34,6 +34,15 @@ impl HandoffRequest {
         }
         Ok(Self { metadata })
     }
+
+    /// Requires a fresh live native protection owner before execution and publication.
+    /// The handoff ID also identifies the memory-only browser context binding.
+    /// No browser metadata or verdict is accepted by this constructor.
+    #[must_use]
+    pub fn require_protection(mut self) -> Self {
+        self.metadata.require_protection();
+        self
+    }
 }
 
 /// Authoritative durable handoff phase plus the latest transfer snapshot.
@@ -88,6 +97,7 @@ impl TaskEngine {
                 || known.display_name() != metadata.display_name()
                 || known.workers() != metadata.workers()
                 || known.expected_sha256() != metadata.expected_sha256()
+                || known.requires_protection() != metadata.requires_protection()
             {
                 return Err(TaskEngineError::InvalidTaskState);
             }
@@ -98,7 +108,8 @@ impl TaskEngine {
         }
         let task = managed_task(metadata, self.inner.options.progress, None)?;
         let snapshot = {
-            let state = lock(&task.state);
+            let mut state = lock(&task.state);
+            state.fresh_protection_binding = state.metadata.requires_protection();
             self.inner.store.create(&state.metadata)?;
             HandoffSnapshot::from_state(&state)?
         };
@@ -139,6 +150,7 @@ impl TaskEngine {
                 Some(HandoffPhase::Prepared) => {}
                 _ => return Err(TaskEngineError::InvalidTaskState),
             }
+            super::require_live_protection(&self.inner, &state)?;
             let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
             let timestamp = next_timestamp(&state.metadata)?;
             let before = state.metadata.clone();

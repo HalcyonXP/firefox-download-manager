@@ -1257,7 +1257,10 @@ const fn failure_code(kind: TaskFailureKind) -> ErrorCode {
         TaskFailureKind::FileLocked => ErrorCode::FileLocked,
         TaskFailureKind::FileExists => ErrorCode::FileExists,
         TaskFailureKind::State => ErrorCode::StateCorrupt,
-        TaskFailureKind::Internal => ErrorCode::InternalError,
+        // No protected wire capability is selected; preserve the closed v2 enum.
+        TaskFailureKind::ProtectionBlocked
+        | TaskFailureKind::ProtectionUnavailable
+        | TaskFailureKind::Internal => ErrorCode::InternalError,
     }
 }
 
