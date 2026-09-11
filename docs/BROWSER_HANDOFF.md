@@ -28,7 +28,7 @@ The manager port publishes pending records and a blocked-state warning; the exte
 
 `capture-click.ts`, `capture-registration.ts` and `CapturePolicy` are preparatory source, not production build entry points or manifest content scripts. The current manifest grants own storage but no mandatory sites, webRequest or blocking permission. There is no capture toggle claiming an available automatic mode yet.
 
-The current conservative policy requires:
+The default conservative policy requires (the explicit cross-origin option is described below):
 
 - A trusted, unmodified primary click on an ordinary same-tab HTML link. The message must arrive before request creation; late delivery falls back rather than borrowing another request's authority.
 - One top-frame GET in an explicitly non-private default cookie store. Bind one click to one request ID; require the initiating document and initial link URL to match observed request data. Rapid clicks invalidate authority instead of guessing. Click/request counts and lifetimes are bounded.
@@ -37,7 +37,7 @@ The current conservative policy requires:
 - A final 200 attachment with a Windows-safe filename. Session-setting/challenge/range responses, ambiguous representation headers, nonidentity Content-Encoding and unsupported Vary refuse capture.
 - A still-live eligibility predicate through native preparation. Terminal proof must match the request ID, tab, immutable URL offered to Manager, final sent URL and supported context. Later request metadata cannot replace the URL already prepared.
 
-POST/blob, iframe, private/container, new-tab attribution, cross-origin redirects and ambiguous/expired/overflow cases stay with Firefox. Header screening does not independently establish server resource identity, output correctness or browser event ordering. Real supported-click acceptance must verify those separately, including safe Firefox fallback.
+POST/blob, iframe, private/container, new-tab attribution and ambiguous/expired/overflow cases stay with Firefox. Cross-origin redirects also stay with Firefox under the default policy. Header screening does not independently establish server resource identity, output correctness or browser event ordering. Real supported-click acceptance must verify those separately, including safe Firefox fallback.
 
 ## Evidence and remaining gates
 
@@ -47,7 +47,7 @@ Integration found an actual compatibility defect: the companion advertised `prep
 
 An owned temporary loopback XPI has now exercised the real coordinator/native/UI nominal path and nine cleanup checkpoints against an identified older clean package; see [INSTALLED_BROWSER_SLICE.md](INSTALLED_BROWSER_SLICE.md). This does not qualify production interception or persistence.
 
-Still required before production selection: further live recovery/fault cases, live phase-aware control qualification, orphan/tombstone/history reconciliation, activation/permission/off-on behavior, persistent unsigned exact-XPI restart/click acceptance and final artifact qualification. Existing API-probe and installed-native reports remain separate source-specific observations. No current component result closes #49/#50 or unblocks #51 acceptance.
+Still required before production selection: remaining live recovery/fault cases, orphan/tombstone/history reconciliation, activation/permission/off-on behavior, persistent unsigned exact-XPI restart/click acceptance and final artifact qualification. Existing API-probe and installed-native reports remain separate source-specific observations. No current component result closes #49/#50 or unblocks #51 acceptance.
 
 
 The dashboard now distinguishes durable native handoff phase from transfer state using `task_handoff_phase`; see [PROTOCOL.md](PROTOCOL.md#task-phase-metadata). Prepared/aborted/unknown snapshots do not offer ordinary mutating controls; committed history remains retained. A regression first demonstrated the former queued projection offered Pause/Start/Cancel for Prepared. The separate clean2df904b live diagnostic observed the updated-pair controls; component checks alone do not establish that result.
@@ -63,3 +63,6 @@ The default remains same-origin. `CaptureOptions.crossOriginRedirects` permits e
 `onBeforeRedirect` now supplies status and read-only response headers. Only301/302/303/307/308 with a single resolvable Location matching Firefox's target can authorize the next same-ID request. Missing/different transitions, changed tab/context, a post-decision redirect, session-setting/challenge/range redirect responses, missing or non-anonymous sent headers, more than eight transitions and any HTTPS→HTTP step invalidate the chain permanently. Each destination needs fresh sent-header evidence. Native preparation still receives only the immutable final URL/safe filename; no cookies, authorization or redirect-header values are replayed or added to ordinary observations.
 
 A modeled regression first showed the old same-origin policy accepting a later URL different from its observed redirect target. Explicit target consumption now rejects it. Cross-origin positive/refusal, registered response-header wiring and diagnostic origin-scope tests cover the new logic; eight targeted mutations reject target/default/TLS/session/scope/header-wiring/hop-bound omissions. These are not browser API ordering or provider-compatibility proof. The new temporary diagnostic is bounded to at most two exact loopback origins; production build/manifest selection is unchanged.
+
+
+Clean1cde75b subsequently passed the actual two-origin installed-browser diagnostic, plus nominal and missing-terminal regressions, against paired2df904b. [Source-specific observations](INSTALLED_BROWSER_SLICE.md#clean-cross-origin-observations-1cde75b--paired2df904b) include temporary reload, independent native/Firefox outputs and joined retirement. This establishes those owned loopback callbacks and controls, not general event ordering, distinct-host/TLS/provider behavior or persistent installation. The nine earlier cleanup faults remain scoped to2df904b; no production activation follows from these reports alone.

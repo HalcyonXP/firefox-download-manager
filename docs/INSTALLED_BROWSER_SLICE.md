@@ -60,10 +60,21 @@ The missing-terminal run observed real browser cancellation, withheld only its c
 Temporary XPI SHA256 values were `4fa4f73301b9d5214949b6a121be4767d291e0c22d7e717529073d8860d8ee35` (nominal) and `40ba63ec1b6fae6b9ce71f76ca027864d2dd997628e6092265967b677f1e150f` (missing terminal). Independently hashed archive payloads match; archive identity remains separate per build. These reports still assert `qualification:false`: temporary reloading is not persistent unsigned installation, production activation, cross-origin/provider acceptance, physical input or final-main qualification. Later code changes need their own observations.
 
 
-## Prepared cross-origin scenario (not yet observed in Firefox)
+## Cross-origin scenario
 
 `--scenario cross-origin` retains two owned loopback servers on distinct ports. The source preserves `/redirect?fixture=a%2Fb&x=1&x=2`; only its fixed302 Location points to the second server's extensionless attachment with the same query. Readiness supplies exactly one or two validated loopback origins, and reconfiguration disarms capture. Every redirect hop and final native offer must remain inside that set; ordinary production authority is unchanged.
 
 The scenario requires one completed native task/correlated cancellation/independently correct output, temporary reload without replay, and an unarmed redirected Firefox fallback. For that fallback only, the download's observed source may be either the exact clicked redirect URL or exact owned attachment URL; both are predetermined members of this fixture chain, not arbitrary matching origins. Direct scenarios retain a single exact expected source. Both servers are retained in the existing fixture-owner list and joined by existing success/failure cleanup.
 
-The retained two-server HTTP model verifies exact Location/query/body bounds and joined cleanup. It does not establish Firefox's cross-origin callbacks, distinct-host/DNS/TLS behavior, session eligibility or the public Hugging Face GGUF acceptance case. A live run of this changed driver remains required; the2df904b reports above remain scoped to their earlier source.
+The retained two-server HTTP model verifies exact Location/query/body bounds and joined cleanup. It does not establish Firefox's cross-origin callbacks, distinct-host/DNS/TLS behavior, session eligibility or the public Hugging Face GGUF acceptance case. The later clean1cde75b observations below establish the owned-browser slice; the2df904b reports above remain scoped to their earlier source.
+
+
+## Clean cross-origin observations (1cde75b / paired2df904b)
+
+Clean driver1cde75b against the unchanged clean paired2df904b helper/setup passed nominal, cross-origin and missing-terminal scenarios on Windows11/Firefox Developer Edition156. Reports `browser58-nominal.json`, `browser58-cross-origin.json` and `browser58-missing-terminal.json` preserve separate harness/package identities and `harness_worktree_dirty:false`.
+
+The cross-origin run observed the trusted extensionless302/query path through two distinct owned loopback origins, correlated cancellation, one independently correct1408-byte Manager output+Completed, temporary reload without replay, and a correct unarmed redirected Firefox fallback. Missing-terminal again required Prepared/Intent/no native output across restart followed by the actual verified continuation warning and same-ID completion. Each run required successful browser/Manager/setup exits, retained resource retirement, uninstall and fresh final app/registration absence. All six preserved Manager/Firefox output files were independently reread against the fixture afterward.
+
+Temporary XPI SHA256 values: nominal `450cb76aa53cf643b4327b35d7cd2baaed47f5882b60013f503681850e15675c`; cross-origin `f00bb5e75e47645bcad41f8e11af39dbd33ab1a45827bd3fe3eb084849c7a2b8`; missing-terminal `b40ce5f5573162baa4fc3f551e9fe4190bea20eb0abf0301c120c6acb11408e7`. Independently hashed payload inventories match across all three archives. The paired package descriptor remains `00a3de84c8e97493a1620ae735ccefc9cd6f1479f678c87dc9e14731cc2582a2`.
+
+These three positive observations do not transfer the earlier nine fault results from2df904b to1cde75b. Distinct loopback ports establish origin separation, not distinct-host/DNS/TLS or public-provider compatibility. All reports remain `qualification:false`, temporary-XPI and not persistent unsigned/final-main/physical-input/install-ready evidence. Production capture is still unselected; the public Hugging Face GGUF criterion remains open.

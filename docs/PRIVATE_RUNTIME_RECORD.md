@@ -150,3 +150,14 @@ CI34564989638 at61df8b6 failed two distinct observations. Package stopped in the
 
 
 CI34567722468 at2df904b subsequently passed all four jobs: quality, package qualification (including both clean builds/comparison), dependency policy and Windows11 emulation. This observed pass does not explain the earlier distinct bridge, pre-marker or post-readiness failures, nor qualify subsequent source changes. No deadline, concurrency or protection change was made.
+
+
+## Mixed adapter phases at1cde75b
+
+CI34570980630 passed Windows quality/dependency policy but failed package setup library tests (19 passed, seven failed); emulation was skipped. The seven failures comprise all five private-directory cases, the fileless bootstrap/resource-query control and malformed-receipt/stalled-creator control. They must not be summarized as seven pre-marker failures:
+
+- Five adapter attempts reached no observed startup bytes: retained creator/grant, directory/record composition, readonly-before-grant, unsafe parent/ancestor and the first existing-entry/lease attempt. Kernel/user microseconds and handles respectively:140625/234375/492,171875/171875/492,218750/156250/495,250000/265625/560 and203125/171875/492.
+- The second existing-entry/lease attempt observed startup/request at+10055ms after launch+5048ms, then missed readiness at+10059ms (234375/250000us,558 handles). The fileless control observed startup/request+10055ms after launch+5096ms, then missed readiness+10105ms (250000/250000us,558 handles). Both retained process waits and worker joins.
+- The malformed-receipt control observed launch+5241ms, startup/request+10055ms, request receipt+10133ms, readiness/close+10152ms, retirement request+10246ms, completion+10264ms and process/worker joins+10277ms. This is a post-readiness completion refusal, not a startup-marker or readiness-query failure.
+
+The epoch is process-wide; elapsed adapter times require subtracting that adapter's own launch/phase observations. Multiple startup reads with the same timestamp do not identify the underlying scheduling, I/O or security mechanism. CPU durations/handle counts are not system utilization or wait-reason evidence. All failed traces retained process waits/worker joins. No common/root cause, production fix, deadline/concurrency/protection change or transfer of earlier CI success is established. The independent live1cde75b browser observations do not waive this failed package gate.
