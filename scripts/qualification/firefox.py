@@ -201,7 +201,10 @@ class BrowserFixture(Fixture):
 
 
 class Firefox:
-    def __init__(self, executable, profile, environment, *, owned_peer=None):
+    def __init__(self, executable, profile, environment, *, owned_peer=None, fileless_experiment=False):
+        if type(fileless_experiment) is not bool or (fileless_experiment and owned_peer is not None):
+            raise RuntimeError("fileless experiment mode refuses combined browser ownership")
+        self.fileless_experiment = fileless_experiment
         if owned_peer is not None and type(owned_peer) is not BrowserPeer:
             raise RuntimeError("browser peer requires a retained setup witness")
         self.owned_peer = owned_peer
@@ -225,7 +228,7 @@ class Firefox:
 
     def start(self):
         self._require_apps_closed()
-        self.profile.mkdir(exist_ok=True)
+        self.profile.mkdir(exist_ok=not self.fileless_experiment)
         with socket.socket() as reservation:
             reservation.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             reservation.bind(("127.0.0.1", 0))
@@ -239,9 +242,13 @@ class Firefox:
             "datareporting.policy.dataSubmissionEnabled": False,
             "toolkit.telemetry.enabled": False,
         }
+        if self.fileless_experiment:
+            # Only the explicit fileless probe variant; profile creation above is exclusive.
+            preferences["extensions.experiments.enabled"] = True
         # Opt out of automation preference overrides before Firefox startup.
         # Only an exclusively created test profile, also on restart. No signing,
         # TLS, Safe Browsing, update, proxy or sandbox preference overrides.
+        # The fileless variant has only the explicit experiment-capability override.
         (self.profile / "user.js").write_text("\n".join(
             f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in preferences.items()), encoding="utf-8")
         self.process = subprocess.Popen([str(self.executable), "-no-remote", "-profile", str(self.profile),
@@ -271,7 +278,7 @@ class Firefox:
         self.signing = self.chrome("return {value:Services.prefs.getBoolPref('xpinstall.signatures.required'), user:Services.prefs.prefHasUserValue('xpinstall.signatures.required')};")
         if self.signing["user"]:
             raise RuntimeError("test profile has a signing preference override")
-        self.automation_policy = observe_policy(self)
+        self.automation_policy = observe_policy(self, fileless_experiment=self.fileless_experiment)
         return self
 
     def exact(self, size):
@@ -429,7 +436,7 @@ button.click();return true;""", [self.manager])
                     configuration_error = True
             if self.automation_policy is not None:
                 try:
-                    unchanged_policy(self, self.automation_policy)
+                    unchanged_policy(self, self.automation_policy, fileless_experiment=self.fileless_experiment)
                 except (OSError, RuntimeError):
                     configuration_error = True
             try:

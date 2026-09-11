@@ -86,7 +86,9 @@ def protections(browser):
 
 
 class ProtectionRun:
-    def __init__(self, directory, executable, report):
+    def __init__(self, directory, executable, report, *, fileless_experiment=False):
+        if type(fileless_experiment) is not bool: raise RuntimeError('explicit fileless experiment mode required')
+        self.fileless_experiment = fileless_experiment
         self.directory, self.executable, self.report = directory, executable, report
         self.browser = None
         self.plan = None
@@ -95,7 +97,7 @@ class ProtectionRun:
 
     def open(self, profile, environment):
         preflight()
-        self.browser = Firefox(self.executable, profile, environment)
+        self.browser = Firefox(self.executable, profile, environment, fileless_experiment=self.fileless_experiment)
         self.browser.start()  # Owner retained even if startup fails.
         return self.browser
 
@@ -160,6 +162,7 @@ class ProtectionRun:
                                       'harness_revision':commit,'harness_worktree_dirty':False,'temporary_loading_used':True,
                                       'initial_owned_protections':before,'protections_unchanged':True,'receipt':observed,
                                       'owned_automation_policy':browser.automation_policy,
+                                      'profile_mode':'fileless-experiment' if self.fileless_experiment else 'default',
                                       'temporary_load':self.load_result,
                                       'wrong_page_refused':True,'repeated_start_same_receipt':True,'closed_context_refused':True,
                                       'firefox_exe_sha256':browser_hash,'successful_browser_exits':1,'joined':True,
@@ -184,13 +187,14 @@ class ProtectionRun:
                         json.dump({'version':2,'stage':self.stage,'frames':frames,
                                    'temporary_load':self.load_result,'cleanup':cleanup_observation(self.browser),
                                    'owned_automation_policy':getattr(self.browser,'automation_policy',None),
+                                   'profile_mode':'fileless-experiment' if self.fileless_experiment else 'default',
                                    'initial_owned_protections':self.before,'final_owned_protections':self.after,
                                    'protections_unchanged':None if self.before is None or self.after is None else self.before==self.after},output)
             except BaseException: pass  # Failed recording must not claim success or lose an owner.
             raise RuntimeError('protection probe refused; owned domain preserved; no acceptance claimed') from None
 
 
-def run(directory, executable, report):
+def run(directory, executable, report, *, fileless_experiment=False):
     if not __debug__ or os.name!='nt' or ctypes.sizeof(ctypes.c_void_p)!=8:
         raise RuntimeError('protection probe requires assertions and 64-bit Windows')
-    return ProtectionRun(directory.absolute(),executable.absolute(),new_report(report)).execute()
+    return ProtectionRun(directory.absolute(),executable.absolute(),new_report(report),fileless_experiment=fileless_experiment).execute()

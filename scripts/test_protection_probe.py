@@ -1,5 +1,7 @@
 """Build/input/ownership policies only. No Firefox, installation or live service calls."""
 import hashlib
+import importlib.util
+import sys
 import io
 import json
 from pathlib import Path
@@ -158,9 +160,35 @@ class ProtectionProbeTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):run.execute()
         failure=json.loads((domain/'failure.private.json').read_text(encoding='utf-8'))
         self.assertEqual(failure['temporary_load'],loaded);self.assertEqual(failure['stage'],'temporary-load')
+        self.assertEqual(failure['profile_mode'],'default')
         self.assertEqual(failure['cleanup'],{'browser_created':True,'browser_started':True,'browser_joined':True,'browser_exit':0})
         self.assertTrue(failure['protections_unchanged']);self.assertTrue(browser.closed)
         self.assertFalse((domain/'report.json').exists())
+
+
+    def test_fileless_mode_is_default_off_and_propagates_only_explicit_boolean(self):
+        for enabled in (False,True):
+            run=driver.ProtectionRun(self.directory,Path('unused'),self.directory/'report.json',fileless_experiment=enabled)
+            with patch.object(driver,'preflight'),patch.object(driver,'Firefox') as factory:
+                run.open(self.directory/'profile',{'fixture':'owned'})
+                factory.assert_called_once_with(Path('unused'),self.directory/'profile',{'fixture':'owned'},fileless_experiment=enabled)
+            self.assertEqual(run.fileless_experiment,enabled)
+        self.assertFalse(driver.ProtectionRun(self.directory,Path('unused'),self.directory/'report.json').fileless_experiment)
+        for flag in (None,1,'true'):
+            with self.assertRaises(RuntimeError):driver.ProtectionRun(self.directory,Path('unused'),self.directory/'report.json',fileless_experiment=flag)
+
+
+    def test_cli_requires_execution_flag_and_never_enables_experiments_implicitly(self):
+        spec=importlib.util.spec_from_file_location('owned_protection_cli',Path(__file__).with_name('probe-download-protection.py'))
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        base=['probe-download-protection.py','--probe','unused','--firefox','unused','--report','unused']
+        for enabled in (False,True):
+            args=base+['--execute-owned-browser']+(['--enable-fileless-experiment'] if enabled else [])
+            with patch.object(sys,'argv',args),patch.object(module,'run') as run:
+                module.main();run.assert_called_once_with(Path('unused'),Path('unused'),Path('unused'),fileless_experiment=enabled)
+        with patch.object(sys,'argv',base+['--enable-fileless-experiment']),patch.object(module,'run') as run,patch('sys.stderr',new=io.StringIO()):
+            with self.assertRaises(SystemExit):module.main()
+            run.assert_not_called()
 
 
 if __name__=='__main__':unittest.main()

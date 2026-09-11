@@ -10,9 +10,11 @@ def main():
     parser.add_argument('--firefox',type=Path,required=True)
     parser.add_argument('--report',type=Path,required=True)
     parser.add_argument('--execute-owned-browser',action='store_true')
+    parser.add_argument('--enable-fileless-experiment',action='store_true',
+                        help='Enable only experimental APIs in a new disposable probe profile; not persistence qualification')
     args = parser.parse_args()
     if not args.execute_owned_browser: parser.error('explicit owned browser execution required')
-    run(args.probe,args.firefox,args.report)
+    run(args.probe,args.firefox,args.report,fileless_experiment=args.enable_fileless_experiment)
 
 
 if __name__=='__main__': main()

@@ -80,4 +80,77 @@ class FirefoxPolicyTests(unittest.TestCase):
         self.assertTrue(browser.closed)
 
 
+    def test_experiment_exception_is_explicit_exact_and_never_inferred(self):
+        value=baseline();value['preferences']['extensions.experiments.enabled'].update(value=True,user=True)
+        self.assertEqual(policy.validate(value,fileless_experiment=True),value)
+        with self.assertRaises(RuntimeError):policy.validate(value)
+        with self.assertRaises(RuntimeError):policy.validate(baseline(),fileless_experiment=True)
+        for flag in (None,1,'true',{}):
+            with self.assertRaises(RuntimeError):policy.validate(value,fileless_experiment=flag)
+        for key,replacement in [('value',1),('value',False),('default',True),('default',None),('user',1),('user',False)]:
+            changed=copy.deepcopy(value);changed['preferences']['extensions.experiments.enabled'][key]=replacement
+            with self.assertRaises(RuntimeError):policy.validate(changed,fileless_experiment=True)
+
+    def test_experiment_mode_cannot_excuse_other_overrides_or_signing_disabled(self):
+        value=baseline();value['preferences']['extensions.experiments.enabled'].update(value=True,user=True)
+        for name in set(policy.NAMES)-{'extensions.experiments.enabled'}:
+            changed=copy.deepcopy(value);changed['preferences'][name]['user']=True
+            with self.assertRaises(RuntimeError):policy.validate(changed,fileless_experiment=True)
+        changed=copy.deepcopy(value);changed['preferences']['xpinstall.signatures.required'].update(value=False,default=False)
+        with self.assertRaises(RuntimeError):policy.validate(changed,fileless_experiment=True)
+        browser=Mock();browser.chrome.return_value=copy.deepcopy(value)
+        policy.unchanged(browser,value,fileless_experiment=True)
+        browser.chrome.return_value=baseline()
+        with self.assertRaises(RuntimeError):policy.unchanged(browser,value,fileless_experiment=True)
+
+    def test_experiment_mode_is_fresh_profile_only_and_refuses_combined_owner(self):
+        for flag in (None,1,'true'):
+            with self.assertRaises(RuntimeError):firefox.Firefox(Path('unused'),Path('unused'),{},fileless_experiment=flag)
+        with self.assertRaises(RuntimeError):firefox.Firefox(Path('unused'),Path('unused'),{},owned_peer=object(),fileless_experiment=True)
+        ARTIFACTS.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ARTIFACTS,prefix='experiment-model-') as directory:
+            profile=Path(directory).resolve()/'profile';profile.mkdir()
+            marker=profile/'user.js';marker.write_bytes(b'owned existing fixture')
+            browser=firefox.Firefox(Path('unused'),profile,{},fileless_experiment=True);browser._require_apps_closed=Mock()
+            with patch.object(firefox.subprocess,'Popen',side_effect=AssertionError('unexpected launch attempt')) as launch:
+                with self.assertRaises(FileExistsError):browser.start()
+                launch.assert_not_called()
+            self.assertEqual(marker.read_bytes(),b'owned existing fixture')
+
+    def test_experiment_start_writes_only_fixed_capability_before_launch(self):
+        ARTIFACTS.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ARTIFACTS,prefix='experiment-model-') as directory:
+            profile=Path(directory).resolve()/'profile'
+            browser=firefox.Firefox(Path('unused'),profile,{},fileless_experiment=True);browser._require_apps_closed=Mock()
+            def launch(*args,**kwargs):
+                prefs=(profile/'user.js').read_text(encoding='utf-8')
+                values={json.loads('['+line[len('user_pref('):-2]+']')[0]:json.loads('['+line[len('user_pref('):-2]+']')[1] for line in prefs.splitlines()}
+                self.assertIs(values['remote.prefs.recommended'],False)
+                self.assertIs(values['extensions.experiments.enabled'],True)
+                self.assertEqual(set(values)&set(policy.NAMES),{'extensions.experiments.enabled'})
+                raise RuntimeError('owned synthetic pre-launch stop')
+            with patch.object(firefox.socket,'socket') as reservation,patch.object(firefox.subprocess,'Popen',side_effect=launch) as called:
+                reservation.return_value.__enter__.return_value.getsockname.return_value=('127.0.0.1',32100)
+                with self.assertRaises(RuntimeError):browser.start()
+                called.assert_called_once()
+            self.assertIsNone(browser.process)
+
+
+    def test_experiment_mode_flows_through_actual_start_and_shutdown_guards(self):
+        ARTIFACTS.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=ARTIFACTS,prefix='experiment-model-') as directory:
+            profile=Path(directory).resolve()/'profile';browser=firefox.Firefox(Path('unused'),profile,{},fileless_experiment=True)
+            browser._require_apps_closed=Mock();process=Mock();process.wait.return_value=0
+            browser.receive=Mock(return_value={'applicationType':'gecko','marionetteProtocol':3})
+            browser.command=Mock(return_value={'capabilities':{'moz:profile':str(profile),'browserName':'firefox','browserVersion':'156.0'}})
+            value=baseline();value['preferences']['extensions.experiments.enabled'].update(value=True,user=True)
+            browser.chrome=Mock(side_effect=[{'value':True,'user':False},value,{'value':True,'user':False},value])
+            with patch.object(firefox.socket,'socket') as reservation,patch.object(firefox.socket,'create_connection',return_value=Mock()), \
+                 patch.object(firefox.subprocess,'Popen',return_value=process):
+                reservation.return_value.__enter__.return_value.getsockname.return_value=('127.0.0.1',32100)
+                self.assertIs(browser.start(),browser);self.assertEqual(browser.automation_policy,value)
+                browser.close()
+            self.assertTrue(browser.closed);process.wait.assert_called_once_with(timeout=5)
+
+
 if __name__=='__main__':unittest.main()
