@@ -34,3 +34,12 @@ test("default build remains manual and candidate compiler/output are explicit", 
   assert.ok(build.includes("await mkdir(output)"));
   assert.ok(build.includes('flag: "wx"'));
 });
+
+test("UI requests only website origins while authority checks retain required APIs", async () => {
+  assert.deepEqual(candidate.optional_permissions, ["cookies"]);
+  const manager = await readFile("extension/src/manager.ts", "utf8");
+  assert.ok(manager.includes("browser.permissions.request(captureSitePermissions())"));
+  assert.ok(!manager.includes("browser.permissions.request(capturePermissions())"));
+  const background = await readFile("extension/src/background.ts", "utf8");
+  assert.ok(background.includes("browser.permissions.contains(capturePermissions())"));
+});

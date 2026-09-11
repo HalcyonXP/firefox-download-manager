@@ -29,7 +29,7 @@ The candidate has its own strict manifest validator; additional authority does n
 
 `CaptureAccess` observes permission changes and immediately revokes authorization before asynchronous readback. Revision checks prevent old permission reads from restoring stale grants. Partial listener registration stays failed; it cannot recover into authority without a revocation observer. This state is independent of the saved capture preference and never changes existing transfers or native history.
 
-The Manager UI separates the On preference from website authority. **Allow / check website access** requests only the declared site/webRequest permissions from its button handler. It never requests on startup, never infers authority from the prompt's result and never automatically replays an uncertain request. A background readback follows approval, denial or failure. Off remains a separate immediate control for new capture authorization.
+The Manager UI separates the On preference from website authority. **Allow / check website access** requests only the declared website origins from its button handler. Required webRequest API permissions remain part of the independent authority check, not an optional permission request. Firefox validates optional-request declarations before filtering already-held permissions; requesting required API permissions would reject before displaying a prompt. It never requests on startup, never infers authority from the prompt's result and never automatically replays an uncertain request. A background readback follows approval, denial or failure. Off remains a separate immediate control for new capture authorization.
 
 The underlying conservative policy is unchanged: prior trusted same-tab click, default-store nonprivate top-frame anonymous GET, bounded validated attachment/redirect chain and immutable terminal binding; observed cancellation precedes native commit. The cross-origin option is selected in the candidate but does not establish public-provider/TLS/session acceptance.
 
@@ -39,4 +39,22 @@ The source/build/permission models and prior loopback diagnostic observations ar
 
 Exact unsigned-XPI persistence remains unresolved as recorded in [FIREFOX_PERSISTENCE.md](FIREFOX_PERSISTENCE.md). Do not rerun unchanged defaults, inspect normal profiles, change signature enforcement, introduce signing, or use a temporary load to claim persistence. [PROJECT_PLAN.md](PROJECT_PLAN.md) defines the delivery blocks and remaining acceptance.
 
-Local verification: complete npm gates with249 TypeScript tests and14 protocol examples,119 Python tests including a real candidate build/ZIP readback and interrupted-wait model, strict candidate/manual manifest policy, and four targeted authority mutations pass. These are source/build models, not permission-prompt or live capture acceptance.
+Local verification covers complete npm/Python gates, strict candidate/manual manifest policy, real candidate build/ZIP readback, interrupted-wait models and targeted authority mutations. These are source/build models, not permission-prompt or live capture acceptance.
+
+## Consolidated owned campaign
+
+```powershell
+python scripts/test-candidate-campaign.py --package artifacts/<reviewed-paired-package> --candidate artifacts/<clean-candidate-directory> --firefox "<Developer Edition executable>" --report artifacts/<new-report>.json --execute-owned-browser
+```
+
+Requires the original fresh closed-app/registration preflights and reviewed owned-state execution. It creates no normal-profile state. The candidate is independently checked against its clean source/hash/eight-asset inventory, then loaded without diagnostic arming into the retained isolated browser. This is **temporary loading, not persistence**; the narrow normal-install observation policy is not broadened.
+
+The17 fixed harmless loopback cases cover direct and cross-origin capture, Off, navigation, POST, iframe, blob, new-tab, cookie/Set-Cookie/Vary fallback, container/private contexts, website revocation, denial, regrant and saved-Off restart. Revocation uses the public API only inside the owned candidate page; denial/regrant uses its actual button and the normal visible Firefox permission buttons, with a source/request-bound read-only witness. It does not directly grant permission or invoke a notification callback.
+
+Success requires3 independently correct native files,13 Firefox-only archived files, exact UI task identities and settled journal/authority readback, two successful retained browser lifetimes, same companion lifetime, independent native Committed receipts, fixture/process joins, uninstall and unchanged output. Existing cleanup refusal/retention remains authoritative. Models and a real bounded HTTP/ZIP check are separate from execution reports; a completed report must identify its exact candidate/native inputs and harness source. This campaign does not establish public-provider, same-URL race, download-protection parity, persistent installation or final-artifact acceptance. CI now discovers all `test_*.py` policies/build-only models in one step, retaining earlier cases; no live-browser CLI runs in CI.
+
+## Download-protection integration gap
+
+Firefox's `DownloadIntegration.shouldBlockForReputationCheck` obtains the saver SHA-256, signature information and redirect history before calling its application-reputation service. The current native handoff does not run that Firefox completion pipeline. Source inspection establishes the missing integration, not that a specific malicious file bypassed a verdict or that every file type would receive the same check.
+
+Accordingly, unchanged signing/TLS/Safe Browsing preferences are **not proof of equivalent download protection**. Release selection and public-provider capture acceptance remain blocked on an explicitly reviewed solution that preserves the applicable protection requirements. No enforcement preference is changed, no protection waiver is inferred, and a temporary harmless-fixture pass cannot close this gap.

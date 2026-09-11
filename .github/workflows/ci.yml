@@ -64,29 +64,10 @@ jobs:
       - name: Build Rust
         run: cargo build --workspace --all-features --locked
 
-      - name: Test package allowlist and deterministic archives
-        run: python -m unittest discover -s scripts -p "test_build_package.py"
-
-      - name: Test qualification fixture and reporting boundaries
-        run: python -m unittest discover -s scripts -p "test_qualification.py"
-
-      - name: Test setup driver ownership and uncertain dispatch
-        run: python -m unittest discover -s scripts -p "test_setup_owner.py"
-
-      - name: Test installed driver boundaries without registration
-        run: python -m unittest discover -s scripts -p "test_installed_driver.py"
-
-      - name: Test capture API probe policy without launching Firefox
-        run: python -m unittest discover -s scripts -p "test_capture_probe.py"
-
-      - name: Test retained companion browser preflight without launching Firefox
-        run: python -m unittest discover -s scripts -p "test_browser_peer.py"
-
-      - name: Test combined browser driver and build-only diagnostic without launching Firefox
-        run: python -m unittest discover -s scripts -p "test_browser_installed.py"
-
-      - name: Test explicit handoff recovery without launching Firefox
-        run: python -m unittest discover -s scripts -p "test_browser_recovery.py"
+      - name: Test all qualification policies and builders without browser execution
+        env:
+          PYTHONUTF8: "1"
+        run: python -m unittest discover -s scripts -p "test_*.py"
 
       - name: Upload extension build
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

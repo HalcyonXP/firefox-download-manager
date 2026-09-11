@@ -1,5 +1,5 @@
 import { expect, it, vi } from "vitest";
-import { CaptureAccess, capturePermissions } from "../src/capture-access";
+import { CaptureAccess, capturePermissions, captureSitePermissions } from "../src/capture-access";
 import { wireCaptureAccess } from "../src/capture-access-ui";
 
 const flush = async (): Promise<void> => {
@@ -125,4 +125,17 @@ it("permission UI only prompts on its button, never infers authority or replays 
   expect(status.textContent).toContain("connection lost");
   click();
   expect(request).toHaveBeenCalledTimes(1);
+});
+
+it("requests only website grants: Firefox refuses required API names before already-held filtering", () => {
+  const optionalPermissions = ["cookies"]; // Independently checked by candidate manifest policy.
+  const request = (value: browser.permissions.Permissions): boolean => {
+    if (value.permissions?.some((name) => !optionalPermissions.includes(name)))
+      throw new Error("Not declared as optional");
+    return value.origins?.join(",") === "http://*/*,https://*/*";
+  };
+  // The earlier UI used the full authority-check payload and would reject here.
+  expect(() => request(capturePermissions())).toThrow("Not declared as optional");
+  expect(request(captureSitePermissions())).toBe(true);
+  expect(captureSitePermissions().permissions).toBeUndefined();
 });

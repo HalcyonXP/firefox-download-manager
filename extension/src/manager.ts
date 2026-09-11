@@ -1,4 +1,4 @@
-import { capturePermissions, type CaptureAccessState } from "./capture-access";
+import { captureSitePermissions, type CaptureAccessState } from "./capture-access";
 import { wireCaptureAccess } from "./capture-access-ui";
 import type { CaptureState } from "./capture-control";
 import { renderCaptureControl } from "./capture-ui";
@@ -36,7 +36,7 @@ let port: browser.runtime.Port;
 const accessUi = wireCaptureAccess(
   element<HTMLButtonElement>("capture-access"),
   element("capture-access-status"),
-  () => browser.permissions.request(capturePermissions()),
+  () => browser.permissions.request(captureSitePermissions()),
   () => port.postMessage({ action: "capture-access-check" }),
 );
 let effectiveSettings: NativeSettings | undefined;

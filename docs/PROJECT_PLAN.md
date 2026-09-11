@@ -30,6 +30,7 @@ Use the candidate with a source-identified paired companion in owned state. Reus
 | Real provider | Original public Hugging Face GGUF link from #49, distinct-host/TLS redirect and attachment, independently checked output; no hardcoded expiring URL or logged opaque validators |
 | Recovery | Existing missing-terminal, lost-reply, unlinked and Aborted controls retain identity and explicit outcomes; no blind replay or unsafe history deletion |
 | Installed lifecycle | Visible companion, reconnect/restart behavior, shortcut/cold-start/Quit/uninstall, joined cleanup and preserved output |
+| Download protections | Resolve the native/Firefox post-download reputation-pipeline gap; unchanged settings alone are not protection parity (see CAPTURE_CANDIDATE.md) |
 | Persistent XPI | Exact unsigned artifact active after ordinary installation and restart without a loading API, profile injection or protection change |
 
 **Persistence limitation:** the owned default-profile observation refused the older unsigned XPI before approval. It does not determine normal-profile compatibility or create a signing/settings-change requirement. Exact persistence remains unverified, with no demonstrated permitted resolution yet. Do not repeat the unchanged default-profile attempt, count temporary loading as persistence, or label a partial campaign install-ready. See [FIREFOX_PERSISTENCE.md](FIREFOX_PERSISTENCE.md).

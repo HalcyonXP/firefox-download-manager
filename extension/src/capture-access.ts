@@ -11,6 +11,10 @@ export function capturePermissions(): browser.permissions.Permissions {
     origins: ["http://*/*", "https://*/*"],
   };
 }
+/** Required API permissions are checked, never requested as optional permissions. */
+export function captureSitePermissions(): browser.permissions.Permissions {
+  return { origins: ["http://*/*", "https://*/*"] };
+}
 interface AccessApi {
   contains(): Promise<boolean>;
   onAdded(listener: () => void): void;

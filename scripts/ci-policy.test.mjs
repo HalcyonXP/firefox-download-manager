@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import test from "node:test";
 
 // Structural guard, not a YAML interpreter or proof that hosted jobs passed.
@@ -31,13 +31,39 @@ test("debug checks and package qualification have separate unchanged resource bu
     "cargo clippy --workspace --all-targets --all-features --locked -- -D warnings",
     "cargo test --workspace --all-features --locked",
     "cargo build --workspace --all-features --locked",
-    "test_build_package.py",
-    "test_qualification.py",
+    'python -m unittest discover -s scripts -p "test_*.py"',
     "1..10 | ForEach-Object",
     "cargo test -p download-manager-engine --test scheduler stop --locked",
   ])
     assert.ok(quality.includes(command), `Missing quality gate: ${command}`);
   assert.ok(!quality.includes("build-package.ps1"));
+});
+
+test("one discovered Python suite retains earlier policies and the candidate campaign", () => {
+  const names = readdirSync(new URL(".", import.meta.url)).filter((name) =>
+    /^test_.*\.py$/u.test(name),
+  );
+  for (const name of [
+    "test_build_package.py",
+    "test_qualification.py",
+    "test_setup_owner.py",
+    "test_installed_driver.py",
+    "test_capture_probe.py",
+    "test_browser_peer.py",
+    "test_browser_installed.py",
+    "test_browser_recovery.py",
+    "test_capture_toggle.py",
+    "test_browser_contexts.py",
+    "test_xpi_persistence.py",
+    "test_capture_candidate.py",
+    "test_candidate_campaign.py",
+  ])
+    assert.ok(names.includes(name), `Missing discovered policy: ${name}`);
+  assert.equal(
+    quality.split('python -m unittest discover -s scripts -p "test_*.py"').length - 1,
+    1,
+  );
+  assert.doesNotMatch(quality, /run: python scripts\/(?:probe-|test-candidate-campaign)/u);
 });
 
 test("both clean builds and all exact-package checks remain together before artifact upload", () => {
