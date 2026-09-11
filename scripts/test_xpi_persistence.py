@@ -10,7 +10,7 @@ import zipfile
 
 from qualification.fixture import Fixture
 from qualification.xpi_policy import ADDON, PAYLOADS, approval, inspect_xpi, persistent_receipt
-from qualification.xpi_ui import WATCH, SNAPSHOT, RECEIPT as RECEIPT_SOURCE, approve_visible, protections, observe_failure, observe_install
+from qualification.xpi_ui import WATCH, SNAPSHOT, PROTECTIONS, RECEIPT as RECEIPT_SOURCE, approve_visible, protections, observe_failure, observe_install
 from qualification.xpi_persistence import PersistenceRun, handler_for, require_final_owners
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -154,6 +154,18 @@ for(const code of [undefined,-5]){
         with self.assertRaises(RuntimeError): require_final_owners("installed", [first, second], [fixture])
         second.process.returncode = 0; fixture.closed = False
         with self.assertRaises(RuntimeError): require_final_owners("installed", [first, second], [fixture])
+
+    def test_absent_preference_is_observed_not_defaulted_or_created(self):
+        script = """const assert=require('node:assert/strict');
+const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+global.Services={prefs:{getPrefType(name){return name==='xpinstall.enabled'?0:128;},
+getBoolPref(name){if(name==='xpinstall.enabled')throw new Error('absent');return true;}}};
+assert.deepEqual(new Function(source)(),{signatures_required:true,install_enabled:null});
+Services.prefs.getPrefType=()=>64;assert.throws(()=>new Function(source)());
+"""
+        subprocess.run(["node", "-e", script], input=json.dumps(PROTECTIONS).encode("utf-8"), capture_output=True, check=True, timeout=15)
+        browser = Mock(); browser.chrome.return_value = {"signatures_required": True, "install_enabled": None}
+        self.assertEqual(protections(browser)["install_enabled"], None)
 
     def test_observer_and_driver_have_no_install_or_protection_bypass(self):
         source = (ROOT / "scripts/qualification/xpi_ui.py").read_text(encoding="utf-8") + (ROOT / "scripts/qualification/xpi_persistence.py").read_text(encoding="utf-8")

@@ -46,16 +46,22 @@ done(addon?{id:addon.id,version:addon.version,active:addon.isActive,
 temporary:addon.temporarilyInstalled,scope:addon.scope,
 private_allowed:extension?.privateBrowsingAllowed??null}:null);},()=>done(null));"""
 
-PROTECTIONS = """return {
-signatures_required:Services.prefs.getBoolPref('xpinstall.signatures.required'),
-install_enabled:Services.prefs.getBoolPref('xpinstall.enabled'),
+PROTECTIONS = """function observed(name){
+const kind=Services.prefs.getPrefType(name);
+if(kind===0)return null; // Absent, not an assumed enabled/disabled default.
+if(kind!==128)throw new Error('unexpected preference type');
+return Services.prefs.getBoolPref(name);
+}return {
+signatures_required:observed('xpinstall.signatures.required'),
+install_enabled:observed('xpinstall.enabled'),
 };"""
 
 
 def protections(browser):
     result = browser.chrome(PROTECTIONS)
     if (not isinstance(result, dict) or set(result) != {"signatures_required", "install_enabled"}
-            or any(type(item) is not bool for item in result.values())):
+            or type(result["signatures_required"]) is not bool
+            or (result["install_enabled"] is not None and type(result["install_enabled"]) is not bool)):
         raise RuntimeError("owned install protection observation unavailable")
     return result
 
