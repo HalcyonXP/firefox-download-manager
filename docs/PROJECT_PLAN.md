@@ -16,7 +16,7 @@ Deliver one buildable candidate using the actual extension entry point and Manag
 - Same-tab/default-store/nonprivate anonymous attachment policy and bounded redirect binding remain authoritative; do not broaden eligibility merely to pass a provider test.
 - Separate development artifact and manifest; no change to default release selection or immutable v0.1.0 assets.
 
-**Current implementation:** [CAPTURE_CANDIDATE.md](CAPTURE_CANDIDATE.md). Candidate eligibility is now loopback-only while the Firefox protection gap remains open. New Windows final publication establishes verified Internet-zone metadata without URLs; it is not a Firefox/antivirus verdict. The separately built [fileless privileged service probe](FIREFOX_PROTECTION_BRIDGE.md) has not yet reached service execution: its first owned run stopped at temporary loading. The follow-up identified an experiment-privilege refusal; native publication integration remains unimplemented. The shared driver's obsolete automation opt-out is corrected with fail-closed baseline checks, but [corrected-policy runtime evidence](FIREFOX_TEST_POLICY.md) remains open. Permission/state/entry/build tests remain distinct from the earlier source-scoped browser observation.
+**Current implementation:** [CAPTURE_CANDIDATE.md](CAPTURE_CANDIDATE.md). Candidate eligibility is now loopback-only while the Firefox protection gap remains open. New Windows final publication establishes verified Internet-zone metadata without URLs; it is not a Firefox/antivirus verdict. The separately built [fileless privileged service probe](FIREFOX_PROTECTION_BRIDGE.md) passed at clean2b643c2 with one nonblocking callback and caller/replay guards. The explicit disposable experiment-mode run also verified [corrected automation policy](FIREFOX_TEST_POLICY.md) and joined shutdown; native byte/context/verdict binding and publication gating remain unimplemented. Permission/state/entry/build tests remain distinct from the earlier source-scoped browser observation.
 
 ### 2. Consolidated acceptance campaign
 
@@ -33,7 +33,7 @@ Use the candidate with a source-identified paired companion in owned state. Reus
 | Download protections | Resolve the native/Firefox post-download reputation-pipeline gap; unchanged settings alone are not protection parity (see CAPTURE_CANDIDATE.md) |
 | Persistent XPI | Exact unsigned artifact active after ordinary installation and restart without a loading API, profile injection or protection change |
 
-**Persistence limitation:** the owned default-profile observation refused the older unsigned XPI before approval. It does not determine normal-profile compatibility or create a signing/settings-change requirement. Exact persistence remains unverified, with no demonstrated permitted resolution yet. Do not repeat the unchanged default-profile attempt, count temporary loading as persistence, or label a partial campaign install-ready. See [FIREFOX_PERSISTENCE.md](FIREFOX_PERSISTENCE.md).
+**Persistence limitation:** the earlier isolated automated-profile observation refused the older unsigned XPI before approval. It does not determine normal-profile compatibility or create a signing/settings-change requirement. Exact persistence remains unverified, with no demonstrated permitted resolution yet. Do not repeat the unchanged default-profile attempt, count temporary loading as persistence, or label a partial campaign install-ready. See [FIREFOX_PERSISTENCE.md](FIREFOX_PERSISTENCE.md).
 
 A failed or ambiguous case stops its execution domain; owners must be retired/joined before analysis or another run. Record source identities and independently verify results. Failed/cancelled CI, older artifacts and component evidence never substitute for an acceptance result.
 
@@ -57,8 +57,9 @@ There is no signing account, signing submission, public marketplace or remote-up
 | Native transaction | Immutable Prepared/Committed/Aborted identity, durable commit-before-dispatch, lost-reply/status recovery | No arbitrary machine/storage failure exactly-once claim; safe history/expiry remains open |
 | Browser integration | Clean ff5e960 harness with clean paired2df904b passed seven owned loopback scenarios;15 output files independently checked | Temporary diagnostic XPI, not the new automatic candidate or persistence/public-provider qualification |
 | Candidate browser campaign | Clean f573c19 harness/candidate with paired2df904b passed17 cases/16 verified files, actual denial/regrant, API revocation, saved-Off restart and retained uninstall/joins | Temporary XPI; predates later protection restriction/native marker; no public-provider/protection parity/persistent/final acceptance |
+| Protection API | Clean2b643c2 fileless experiment-mode query, negative caller/replay checks, corrected policy and joined retirement | No real native file, publication gate, persistent installation or provider qualification |
 | Private/container | Actual container classification and private capability denial; correct Firefox-only output | Zero container identity is not default-cookie-store eligibility; no private/session replay authority |
-| Unsigned installation | Clean bc36eb5 / packaged2df904b observed signature-required refusal in owned defaults | No installed receipt, approval UI or persistent restart result |
+| Unsigned installation | Clean bc36eb5 / packaged2df904b observed signature-required refusal in an isolated automated profile | No installed receipt, approval UI or persistent restart result |
 | CI | CI34608070151 atf573c19 passed all four jobs | Earlier intermittent adapter/bridge failures remain unexplained; no timeout/concurrency workaround established |
 
 Detailed evidence belongs in the relevant reference, not repeated in this plan:
