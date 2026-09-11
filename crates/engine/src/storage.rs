@@ -860,6 +860,30 @@ impl PartialFile {
     pub fn validate(
         &self,
         expected: Option<ExpectedSha256>,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<ValidatedPartial, StorageError> {
+        self.validate_inner(expected, expected.is_some(), cancelled)
+    }
+
+    /// Performs complete validation and computes a fingerprint even without an
+    /// expected checksum. The fingerprint describes bytes held by the returned
+    /// lease; it is not a protection verdict or permission to publish.
+    ///
+    /// # Errors
+    /// Returns the same validation errors as [`Self::validate`], including
+    /// bounded-read cancellation and optional expected-checksum mismatch.
+    pub fn validate_with_fingerprint(
+        &self,
+        expected: Option<ExpectedSha256>,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<ValidatedPartial, StorageError> {
+        self.validate_inner(expected, true, cancelled)
+    }
+
+    fn validate_inner(
+        &self,
+        expected: Option<ExpectedSha256>,
+        hash_bytes: bool,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<ValidatedPartial, StorageError> {
         let expected_len = {
@@ -882,6 +906,7 @@ impl PartialFile {
         let mut lease = ValidatedPartial {
             partial: self.clone(),
             locked: false,
+            fingerprint: None,
         };
         {
             let mut file_guard = lock(&self.inner.file);
@@ -919,43 +944,13 @@ impl PartialFile {
             if cancelled() {
                 return Err(StorageError::ValidationCancelled);
             }
-            if let Some(expected) = expected {
-                file.seek(SeekFrom::Start(0))
-                    .map_err(|error| map_io(StorageOperation::Validate, &error))?;
-                let mut buffer = vec![0_u8; 256 * 1024];
-                let mut hasher = Sha256::new();
-                let mut read = 0_u64;
-                loop {
-                    if cancelled() {
-                        return Err(StorageError::ValidationCancelled);
-                    }
-                    let count = file
-                        .read(&mut buffer)
-                        .map_err(|error| map_io(StorageOperation::Validate, &error))?;
-                    if count == 0 {
-                        break;
-                    }
-                    read = read
-                        .checked_add(u64::try_from(count).map_err(|_| StorageError::NotActive)?)
-                        .ok_or(StorageError::NotActive)?;
-                    if read > expected_len {
-                        return Err(StorageError::FileLengthChanged {
-                            expected: expected_len,
-                            actual: read,
-                        });
-                    }
-                    hasher.update(&buffer[..count]);
-                }
-                if read != expected_len {
-                    return Err(StorageError::FileLengthChanged {
-                        expected: expected_len,
-                        actual: read,
-                    });
-                }
-                let actual: [u8; 32] = hasher.finalize().into();
-                if actual != expected.bytes() {
-                    return Err(StorageError::ChecksumMismatch);
-                }
+            if hash_bytes {
+                lease.fingerprint = Some(hash_validated_file(
+                    file,
+                    expected_len,
+                    expected,
+                    &mut cancelled,
+                )?);
             }
         }
         lock(&self.inner.state).lifecycle = Lifecycle::Validated;
@@ -1046,14 +1041,102 @@ impl PartialFile {
     }
 }
 
+fn hash_validated_file(
+    file: &mut File,
+    expected_len: u64,
+    expected: Option<ExpectedSha256>,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<ValidatedFingerprint, StorageError> {
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| map_io(StorageOperation::Validate, &error))?;
+    let mut buffer = vec![0_u8; 256 * 1024];
+    let mut hasher = Sha256::new();
+    let mut read = 0_u64;
+    loop {
+        if cancelled() {
+            return Err(StorageError::ValidationCancelled);
+        }
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| map_io(StorageOperation::Validate, &error))?;
+        if count == 0 {
+            break;
+        }
+        read = read
+            .checked_add(u64::try_from(count).map_err(|_| StorageError::NotActive)?)
+            .ok_or(StorageError::NotActive)?;
+        if read > expected_len {
+            return Err(StorageError::FileLengthChanged {
+                expected: expected_len,
+                actual: read,
+            });
+        }
+        hasher.update(&buffer[..count]);
+    }
+    if read != expected_len {
+        return Err(StorageError::FileLengthChanged {
+            expected: expected_len,
+            actual: read,
+        });
+    }
+    let actual: [u8; 32] = hasher.finalize().into();
+    if let Some(expected) = expected
+        && actual != expected.bytes()
+    {
+        return Err(StorageError::ChecksumMismatch);
+    }
+    Ok(ValidatedFingerprint {
+        length: read,
+        sha256: actual,
+    })
+}
+
+/// Informational identity of fully validated main-stream bytes. A copied
+/// fingerprint does not retain a lease, authorize publication, or survive a
+/// changed file as evidence about that file. It contains no filesystem path.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ValidatedFingerprint {
+    length: u64,
+    sha256: [u8; 32],
+}
+
+impl fmt::Debug for ValidatedFingerprint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ValidatedFingerprint(<redacted>)")
+    }
+}
+
+impl ValidatedFingerprint {
+    /// Complete byte length, without narrowing to a protocol or browser integer.
+    #[must_use]
+    pub const fn length(self) -> u64 {
+        self.length
+    }
+
+    /// SHA-256 computed from the same retained, length-checked file handle.
+    #[must_use]
+    pub const fn sha256(self) -> [u8; 32] {
+        self.sha256
+    }
+}
+
 /// Exclusive validated-file ownership; cannot be cloned or reconstructed from paths.
 /// Dropping an unpublished lease re-enables a future complete validation attempt.
 pub struct ValidatedPartial {
     partial: PartialFile,
     locked: bool,
+    fingerprint: Option<ValidatedFingerprint>,
 }
 
 impl ValidatedPartial {
+    /// Returns a computed fingerprint only when this validation hashed the
+    /// complete file. An ordinary validation without an expected hash returns
+    /// `None`; callers must not substitute a declared or cached checksum.
+    #[must_use]
+    pub const fn fingerprint(&self) -> Option<ValidatedFingerprint> {
+        self.fingerprint
+    }
+
     /// Publishes only this still-owned validated file with create-new semantics.
     /// # Errors
     /// Reports the same no-overwrite publication failures as `PartialFile::promote`.

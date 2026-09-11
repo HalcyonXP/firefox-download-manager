@@ -6,6 +6,7 @@ Implemented for #25. Target: Windows 11; wire protocol v2, internal task format 
 
 - **Expected SHA-256** is the immutable digest explicitly supplied for one Add, not a value taken from server headers. Obtain it from a trusted source. A checksum is not a signature or proof that its source is trustworthy.
 - **Structural validation** always requires joined writers, known exact size, and complete, disjoint, bounded coverage. Unknown-length streams must first seal a clean bounded EOF. Preallocation alone is never completed coverage.
+- **Computed fingerprint** is a complete64-bit byte length and SHA-256 computed from the retained file handle during validation, not a declared/server/cached expectation. A copied fingerprint is information, not a lease or protection verdict.
 - **Validation lease** is non-cloneable storage ownership that freezes helper writes, retains the file lock, and permits one no-overwrite promotion. It is not a persisted assertion that arbitrary future file contents are valid.
 
 Blank input means structural validation only. Otherwise the UI accepts 64 hexadecimal characters; the creation boundary canonicalizes case. Native decoding independently rejects other algorithms, malformed digests, duplicate keys, and unknown shapes. `sha256` must be advertised after the most recent reconnect; unsupported helpers never silently receive an Add with its expectation removed. The reserved v2 shape is now implemented without a wire-major change.
@@ -22,6 +23,12 @@ Cancellation is checked between bounded reads. The engine awaits blocking valida
 
 Windows byte-range locks reject ordinary competing file I/O during validation. They do not defeat malicious same-user processes, memory-mapped mutation, all namespace races, or hardware faults; other platforms may only provide advisory locking. The lease independently enforces helper-local ownership. Security/release review must not turn this into a claim of isolation from a compromised local account.
 
+## Opt-in fingerprint interface
+
+`PartialFile::validate_with_fingerprint(expected, cancelled)` always hashes the complete validated main stream, including empty files, whether or not an expected checksum was supplied. It shares the original bounded-read, coverage/length/identity/locking/cancellation path. `ValidatedPartial::fingerprint()` returns the path-free `ValidatedFingerprint` only after successful hashing and any requested checksum comparison. Debug output redacts it. An ordinary `validate(None, ...)` still performs structural validation without hashing and returns no fingerprint.
+
+The validation lease remains non-cloneable and blocks competing helper validation/promotion until consumed or dropped. Dropping it permits a new validation attempt; that attempt must compute new evidence, not reuse a copied fingerprint. The new interface is groundwork for native-byte-bound protection. It does not add a verdict, challenge, browser context or mandatory publication gate, and existing task completion does not select mandatory hashing without an expected checksum. No wire/persistence format or dependency changes are introduced.
+
 ## Mismatch and recovery
 
 `CHECKSUM_MISMATCH` fails before promotion, with no final file or success event. The existing helper-owned **retain partials on failure** setting explicitly governs retention (default: retain). Retained mismatched bytes are not silently treated as success, a fresh single stream, or an automatically corrected digest. Check the expected digest and Add a fresh task; Remove task & partial deliberately removes the old partial. Explicit retry retains the original expectation and can fail again on the same retained bytes.
@@ -32,6 +39,7 @@ Every retry/resumed prepublication run rehashes the complete owned file if an ex
 
 ## Evidence and limits
 
+- Fingerprint tests additionally cover hashing without an expectation, absence on structural-only validation, cancellation/expected mismatch, recomputation after changed bytes, lease exclusion, active writers/gaps and redacted output.
 - Storage tests cover independent empty/`abc`/million-`a` vectors, bounded read cadence, cancellation/revalidation, same-length disk corruption, active writers/gaps/length changes, exclusive lease ownership, and Windows competing-I/O/lock release.
 - Engine tests cover 1/2/4/8 configured workers, ranged/ignored-range/unknown-length/empty responses, collisions, validation → promotion → completion event ordering, both mismatch-retention policies, and restart/retry without dropping an expectation. Fixture digests were computed independently using Python `hashlib` and the published fixture formula.
 - Native dispatch tests assert `CHECKSUM_MISMATCH` snapshots. The actual process-kill/restart test now requires the independently computed 8 MiB digest `8da825cc025655c14fd604596e953db07bfdacdfa12361af4f89d67f00eaa934` as well as byte equality.

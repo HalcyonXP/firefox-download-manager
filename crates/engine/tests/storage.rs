@@ -721,3 +721,126 @@ fn windows_internet_zone_collision_never_marks_or_changes_existing_final_file() 
         b"[ZoneTransfer]\r\nZoneId=3\r\n"
     );
 }
+
+#[test]
+fn computed_fingerprints_require_complete_hashing_and_keep_the_validation_lease() {
+    use sha2::{Digest, Sha256};
+    let directory = TestDirectory::new("computed-fingerprints");
+    for (index, bytes) in [Vec::new(), b"abc".to_vec(), vec![b'a'; 1_000_000]]
+        .into_iter()
+        .enumerate()
+    {
+        let name = format!("fingerprint-{index}.bin");
+        let partial = if bytes.is_empty() {
+            PartialFile::create(directory.path(), &name, 0).expect("empty")
+        } else {
+            completed_storage(directory.path(), &name, &bytes)
+        };
+        let ordinary = partial
+            .validate(None, || false)
+            .expect("ordinary validation");
+        assert!(ordinary.fingerprint().is_none());
+        drop(ordinary);
+        let mut checks = 0;
+        let lease = partial
+            .validate_with_fingerprint(None, || {
+                checks += 1;
+                false
+            })
+            .expect("computed fingerprint");
+        let fingerprint = lease.fingerprint().expect("hashing was mandatory");
+        let expected: [u8; 32] = Sha256::digest(&bytes).into();
+        assert_eq!(fingerprint.sha256(), expected);
+        assert_eq!(
+            fingerprint.length(),
+            u64::try_from(bytes.len()).expect("fixture size")
+        );
+        assert_eq!(checks, bytes.len().div_ceil(256 * 1024) + 2);
+        assert_eq!(
+            format!("{fingerprint:?}"),
+            "ValidatedFingerprint(<redacted>)"
+        );
+        assert!(matches!(partial.promote(), Err(StorageError::NotActive)));
+        assert!(matches!(
+            partial.validate_with_fingerprint(None, || false),
+            Err(StorageError::NotActive)
+        ));
+        assert!(!directory.path().join(&name).exists());
+        let promotion = lease.promote().expect("same owned lease");
+        assert_eq!(fs::read(promotion.final_path()).expect("output"), bytes);
+    }
+}
+
+#[test]
+fn fingerprint_cancellation_expectation_and_changed_bytes_do_not_reuse_old_evidence() {
+    use download_manager_engine::integrity::ExpectedSha256;
+    use std::io::Write;
+    let directory = TestDirectory::new("fingerprint-retirement");
+    let partial = completed_storage(directory.path(), "large.bin", &vec![b'a'; 1_000_000]);
+    let mut checks = 0;
+    assert!(matches!(
+        partial.validate_with_fingerprint(None, || {
+            checks += 1;
+            checks == 3
+        }),
+        Err(StorageError::ValidationCancelled)
+    ));
+    let wrong = ExpectedSha256::parse(&"00".repeat(32)).expect("valid expected hash");
+    assert!(matches!(
+        partial.validate_with_fingerprint(Some(wrong), || false),
+        Err(StorageError::ChecksumMismatch)
+    ));
+    let correct =
+        ExpectedSha256::parse("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+    let lease = partial
+        .validate_with_fingerprint(correct, || false)
+        .expect("expected and computed");
+    let before = lease.fingerprint().expect("computed");
+    drop(lease);
+    let mut writer = OpenOptions::new()
+        .write(true)
+        .open(partial.partial_path())
+        .expect("owned fixture mutation");
+    writer.write_all(b"b").expect("change one byte");
+    writer.sync_all().expect("flush");
+    drop(writer);
+    let lease = partial
+        .validate_with_fingerprint(None, || false)
+        .expect("recompute");
+    let after = lease.fingerprint().expect("computed again");
+    assert_eq!(before.length(), after.length());
+    assert_ne!(before.sha256(), after.sha256());
+    drop(lease);
+    assert!(matches!(
+        partial.validate_with_fingerprint(correct, || false),
+        Err(StorageError::ChecksumMismatch)
+    ));
+    assert!(
+        partial
+            .validate(None, || false)
+            .expect("ordinary independent validation")
+            .fingerprint()
+            .is_none()
+    );
+    assert!(!directory.path().join("large.bin").exists());
+}
+
+#[test]
+fn fingerprints_cannot_be_obtained_from_gaps_or_active_assignments() {
+    let directory = TestDirectory::new("fingerprint-incomplete");
+    let partial = PartialFile::create(directory.path(), "gap.bin", 4).expect("create");
+    assert!(matches!(
+        partial.validate_with_fingerprint(None, || false),
+        Err(StorageError::IncompleteCoverage)
+    ));
+    let writer = partial.assign(range(0, 4)).expect("active assignment");
+    assert!(matches!(
+        partial.validate_with_fingerprint(None, || false),
+        Err(StorageError::ActiveAssignments { .. })
+    ));
+    drop(writer);
+    assert!(matches!(
+        partial.validate_with_fingerprint(None, || false),
+        Err(StorageError::IncompleteCoverage)
+    ));
+}
