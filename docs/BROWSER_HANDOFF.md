@@ -28,7 +28,7 @@ The manager port publishes pending records and a blocked-state warning; the exte
 
 `capture-click.ts`, `capture-registration.ts` and `CapturePolicy` are preparatory source, not production build entry points or manifest content scripts. The current manifest grants own storage but no mandatory sites, webRequest or blocking permission. There is no capture toggle claiming an available automatic mode yet.
 
-The proposed first slice requires:
+The current conservative policy requires:
 
 - A trusted, unmodified primary click on an ordinary same-tab HTML link. The message must arrive before request creation; late delivery falls back rather than borrowing another request's authority.
 - One top-frame GET in an explicitly non-private default cookie store. Bind one click to one request ID; require the initiating document and initial link URL to match observed request data. Rapid clicks invalidate authority instead of guessing. Click/request counts and lifetimes are bounded.
@@ -45,4 +45,6 @@ The TypeScript tests exercise the journal, deadline/write races, discarded repli
 
 Integration found an actual compatibility defect: the companion advertised `prepared_handoff`, but the previous extension and JSON schema rejected it. Both closed capability lists now accept the capability, with an explicit companion Hello example. A matching updated XPI is necessary; native component evidence did not establish extension compatibility. The storage permission also required updating both independent manifest-policy validators. A modeled later-request counterexample initially let mutable sent-header metadata redefine terminal URL correlation; retaining the immutable decision URL now rejects that case, including both original-URL and later-URL terminal events.
 
-Still required before production selection: live browser/native/UI integration and fault cases, reviewed owned-companion browser preflights, phase-aware queue controls, orphan/tombstone/history reconciliation, activation/permission/off-on behavior, persistent unsigned exact-XPI restart/click acceptance and final artifact qualification. Existing API-probe and installed-native reports remain separate source-specific observations. No current component result closes #49/#50 or unblocks #51 acceptance.
+An owned temporary loopback XPI has now exercised the real coordinator/native/UI nominal path and nine cleanup checkpoints against an identified older clean package; see [INSTALLED_BROWSER_SLICE.md](INSTALLED_BROWSER_SLICE.md). This does not qualify production interception or persistence.
+
+Still required before production selection: further live recovery/fault cases, phase-aware queue controls, orphan/tombstone/history reconciliation, activation/permission/off-on behavior, persistent unsigned exact-XPI restart/click acceptance and final artifact qualification. Existing API-probe and installed-native reports remain separate source-specific observations. No current component result closes #49/#50 or unblocks #51 acceptance.

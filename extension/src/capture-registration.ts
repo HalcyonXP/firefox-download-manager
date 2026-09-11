@@ -7,10 +7,11 @@ import { CapturePolicy } from "./capture-policy";
 export function registerCapture(
   handoff: Pick<BrowserHandoff, "capture" | "terminal">,
   enabled: () => boolean,
+  urls: string[] = ["http://*/*", "https://*/*"],
 ): void {
   const policy = new CapturePolicy(handoff, enabled);
   const filter: browser.webRequest.RequestFilter = {
-    urls: ["http://*/*", "https://*/*"],
+    urls,
     types: ["main_frame"],
   };
   browser.runtime.onMessage.addListener((message: unknown, sender) => {

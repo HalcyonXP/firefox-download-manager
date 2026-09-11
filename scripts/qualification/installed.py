@@ -161,7 +161,7 @@ class InstalledRun:
         self.package, self.report, self.fault = package, report, fault
         self.stage = "preflight"
         self.plan = self.process = self.owner = self.ui = self.binding = None
-        self.hosts, self.fixtures, self.checks = [], [], []
+        self.hosts, self.fixtures, self.checks, self.browsers = [], [], [], []
         self.install_requested = self.uninstall_requested = self.uninstalled = False
         self.manager_window = None
         self.cleanup_errors = []
@@ -245,6 +245,13 @@ class InstalledRun:
 
     def close_resources(self):
         errors = []
+        for browser in self.browsers:
+            try:
+                browser.close()
+                if browser.process is not None:
+                    browser.process.wait(timeout=0)
+            except BaseException:
+                errors.append("browser")
         for host in self.hosts:
             try:
                 host.close()
@@ -331,7 +338,7 @@ class InstalledRun:
         """
         announced = False
         while True:
-            processes = ([self.process] if self.process is not None else []) + [host.process for host in self.hosts if host.process is not None]
+            processes = ([self.process] if self.process is not None else []) + [actor.process for actor in [*self.hosts, *self.browsers] if actor.process is not None]
             live = any(process.poll() is None for process in processes)
             live = any(thread.is_alive() for thread in self.retained_threads()) or live
             if not live:
@@ -392,6 +399,37 @@ class InstalledRun:
         with (self.plan.path / "failure.private.json").open("x", encoding="utf-8") as stream:
             json.dump(snapshot, stream)
 
+    def scope(self):
+        return "owned installed setup companion native slice"
+
+    def additional_evidence(self):
+        return {}
+
+    def transfer(self, identity):
+        self.stage = "fixture-startup"
+        fixture = Fixture(large_size=0, owners=self.fixtures)
+        self.stage = "native-bridge-startup"
+        host = Host(self.binding.generation, self.plan.path, self.hosts, environment=self.environment)
+        architecture = owned_architecture(host)
+        self.checkpoint("bridge-started")
+        self.stage = "native-add"
+        task = host.add(fixture.url("range"), "owned-installed.bin")
+        assert host.terminal(task, 60)["state"] == "completed" and task in host.completed
+        output = self.destination / "owned-installed.bin"
+        ordinary(output)
+        assert output.stat().st_size == SMALL_SIZE and file_sha256(output) == expected_sha256(SMALL_SIZE)
+        self.checks.append("installed_native_bridge_completed_independent_8mib_output")
+        self.checkpoint("completed")
+        host.close(); host.process.wait(timeout=0)
+        self.stage = "native-reconnect"
+        host = Host(self.binding.generation, self.plan.path, self.hosts, environment=self.environment)
+        host.wait(lambda: task in host.tasks)
+        assert len(host.tasks) == 1 and host.tasks[task]["state"] == "completed"
+        assert self.owner._observe()[1] == identity and self.ui.tray(self.manager_window)
+        self.checks.append("native_eof_reconnect_same_companion_one_task")
+        self.checkpoint("reconnected")
+        return output, SMALL_SIZE, expected_sha256(SMALL_SIZE), architecture
+
     def execute(self):
         try:
             self.preflight = preflight_module()
@@ -421,28 +459,7 @@ class InstalledRun:
                 assert self.ui.visible(self.manager_window) and self.ui.tray(self.manager_window)
                 self.checks.append("real_setup_receipt2_registration_shortcut_visible_companion_tray")
                 self.checkpoint("companion-ready")
-                self.stage = "fixture-startup"
-                fixture = Fixture(large_size=0, owners=self.fixtures)
-                self.stage = "native-bridge-startup"
-                host = Host(self.binding.generation, self.plan.path, self.hosts, environment=self.environment)
-                architecture = owned_architecture(host)
-                self.checkpoint("bridge-started")
-                self.stage = "native-add"
-                task = host.add(fixture.url("range"), "owned-installed.bin")
-                assert host.terminal(task, 60)["state"] == "completed" and task in host.completed
-                output = self.destination / "owned-installed.bin"
-                ordinary(output)
-                assert output.stat().st_size == SMALL_SIZE and file_sha256(output) == expected_sha256(SMALL_SIZE)
-                self.checks.append("installed_native_bridge_completed_independent_8mib_output")
-                self.checkpoint("completed")
-                host.close(); host.process.wait(timeout=0)
-                self.stage = "native-reconnect"
-                host = Host(self.binding.generation, self.plan.path, self.hosts, environment=self.environment)
-                host.wait(lambda: task in host.tasks)
-                assert len(host.tasks) == 1 and host.tasks[task]["state"] == "completed"
-                assert self.owner._observe()[1] == identity and self.ui.tray(self.manager_window)
-                self.checks.append("native_eof_reconnect_same_companion_one_task")
-                self.checkpoint("reconnected")
+                output, size, digest, architecture = self.transfer(identity)
                 self.close_resources()
                 self.owner.quiesce()
                 # Failed child exit is sufficient for conservative cleanup, not
@@ -454,16 +471,17 @@ class InstalledRun:
                 self.checks.append("native_fixture_joins_manager_quit_parent_join_runtime_tray_removed")
                 self.checkpoint("manager-joined")
                 self.uninstall()
-                assert output.stat().st_size == SMALL_SIZE and file_sha256(output) == expected_sha256(SMALL_SIZE)
+                ordinary(output)
+                assert output.stat().st_size == size and file_sha256(output) == digest
                 self.checkpoint("uninstalled")
                 self.owner.retire()
                 assert self.process.returncode == 0
                 closed_apps(self.preflight); self.preflight.all_views_absent()
                 assert package_input(self.package) == self.descriptor and not self.cleanup_errors
                 self.checks.append("gui_uninstall_registration_shortcut_removal_output_preserved_setup_join")
-            write_report(self.report, {"scope": "owned installed setup companion native slice", "m5_install_ready": False,
+            write_report(self.report, {**self.additional_evidence(), "scope": self.scope(), "m5_install_ready": False,
                 "firefox_or_persistent_xpi_qualified": False, "physical_input": False, "normal_start_menu": False,
-                "checks": self.checks, "architecture": architecture, "windows_version": platform.version(), "bytes": SMALL_SIZE, "sha256": expected_sha256(SMALL_SIZE),
+                "checks": self.checks, "architecture": architecture, "windows_version": platform.version(), "bytes": size, "sha256": digest,
                 "package_source_commit": self.descriptor["commit"], "package_descriptor_sha256": file_sha256(self.package / "package.json"),
                 "harness_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True, timeout=15).strip(),
                 "harness_worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, timeout=15)),

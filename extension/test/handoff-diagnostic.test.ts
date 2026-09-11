@@ -1,0 +1,147 @@
+import { beforeEach, expect, it, vi } from "vitest";
+import { registerCapture } from "../src/capture-registration";
+
+const mocks = vi.hoisted(() => ({
+  connect: vi.fn(),
+  command: vi.fn(),
+  capture: vi.fn(),
+  terminal: vi.fn(),
+  recover: vi.fn(),
+  supports: vi.fn(),
+  state: vi.fn(),
+  view: vi.fn(),
+  listen: vi.fn(),
+}));
+vi.mock("../src/background", () => ({
+  nativeConnection: {
+    connect: mocks.connect,
+    command: mocks.command,
+    supports: mocks.supports,
+    state: mocks.state,
+  },
+  browserHandoff: {
+    capture: mocks.capture,
+    terminal: mocks.terminal,
+    recover: mocks.recover,
+    view: mocks.view,
+  },
+}));
+vi.mock("../src/capture-registration", () => ({ registerCapture: vi.fn() }));
+const inspector = { id: "owned", url: "moz-extension://owned/inspect.html" };
+let control: (message: unknown, sender: unknown) => unknown;
+beforeEach(async () => {
+  vi.resetModules();
+  vi.clearAllMocks();
+  mocks.state.mockReturnValue({
+    connected: true,
+    tasks: [],
+    settings: { destination: "owned-output" },
+  });
+  mocks.view.mockReturnValue({ blocked: false, pending: [] });
+  mocks.supports.mockReturnValue(true);
+  mocks.capture.mockResolvedValue({ cancel: true });
+  vi.stubGlobal("browser", {
+    runtime: {
+      id: "owned",
+      getURL: (name: string) => `moz-extension://owned/${name}`,
+      onMessage: { addListener: mocks.listen },
+    },
+  });
+  await import("../diagnostic/handoff");
+  control = mocks.listen.mock.calls[0]![0] as typeof control;
+});
+
+it("requires exact inspector and independently matched destination before arming", async () => {
+  expect(await control({ action: "arm" }, inspector)).toBeNull();
+  expect(
+    control(
+      { action: "ready", destination: "owned-output", origin: "http://127.0.0.1" },
+      { ...inspector, url: "http://127.0.0.1/page" },
+    ),
+  ).toBeUndefined();
+  expect(control({ action: "arm", extra: true }, inspector)).toBeUndefined();
+  expect(control({ action: "commit_handoff" }, inspector)).toBeUndefined();
+  expect(
+    await control({ action: "ready", destination: "other", origin: "http://127.0.0.1" }, inspector),
+  ).toMatchObject({
+    destinationVerified: false,
+  });
+  expect(await control({ action: "arm" }, inspector)).toBeNull();
+  expect(
+    await control(
+      { action: "ready", destination: "owned-output", origin: "http://127.0.0.1" },
+      inspector,
+    ),
+  ).toMatchObject({
+    destinationVerified: true,
+  });
+  expect(await control({ action: "arm" }, inspector)).toMatchObject({ enabled: true });
+  expect(await control({ action: "off" }, inspector)).toMatchObject({ enabled: false });
+  expect(mocks.command.mock.calls.every(([name]) => name === "get_settings")).toBe(true);
+});
+
+it("bounds authority to loopback and reports only correlated decisions/terminal classes", async () => {
+  const [handoff, enabled, urls] = vi.mocked(registerCapture).mock.calls[0]!;
+  expect(enabled()).toBe(false);
+  expect(urls).toEqual(["http://127.0.0.1/*"]);
+  expect(
+    await handoff.capture(
+      "foreign",
+      { url: "https://example.invalid/", suggested_filename: "unused" },
+      () => true,
+    ),
+  ).toEqual({});
+  expect(mocks.capture).not.toHaveBeenCalled();
+  await control(
+    { action: "ready", destination: "owned-output", origin: "http://127.0.0.1" },
+    inspector,
+  );
+  await control({ action: "arm" }, inspector);
+  expect(
+    await handoff.capture(
+      "other-port",
+      { url: "http://127.0.0.1:9999/direct", suggested_filename: "unused" },
+      () => true,
+    ),
+  ).toEqual({});
+  expect(mocks.capture).not.toHaveBeenCalled();
+  const eligible = () => true;
+  await handoff.capture(
+    "owned-request",
+    { url: "http://127.0.0.1/direct", suggested_filename: "owned.bin" },
+    eligible,
+  );
+  expect(mocks.capture).toHaveBeenCalledWith("owned-request", expect.anything(), eligible);
+  handoff.terminal("other-request", "NS_ERROR_ABORT");
+  handoff.terminal("owned-request", "NS_ERROR_ABORT");
+  const result = await control({ action: "snapshot" }, inspector);
+  expect(result).toMatchObject({
+    qualification: false,
+    records: [
+      { request: 1, stage: "decision", cancelled: true },
+      { request: 1, stage: "terminal", cancelled: true },
+    ],
+  });
+  expect(JSON.stringify(result)).not.toMatch(/owned-request|127\.0\.0\.1|owned\.bin|owned-output/u);
+});
+
+it("withholds only the selected terminal observation, never manufacture a cancellation", async () => {
+  await control(
+    { action: "ready", destination: "owned-output", origin: "http://127.0.0.1" },
+    inspector,
+  );
+  await control({ action: "arm-missing-terminal" }, inspector);
+  const [handoff] = vi.mocked(registerCapture).mock.calls[0]!;
+  await handoff.capture(
+    "request",
+    { url: "http://127.0.0.1/direct", suggested_filename: "owned.bin" },
+    () => true,
+  );
+  handoff.terminal("request", "NS_ERROR_ABORT");
+  expect(mocks.terminal).not.toHaveBeenCalled();
+  expect(await control({ action: "snapshot" }, inspector)).toMatchObject({
+    terminalSuppressed: true,
+  });
+  handoff.terminal("other");
+  expect(mocks.terminal).toHaveBeenCalledWith("other", undefined);
+});
