@@ -322,8 +322,8 @@ fn custom_faults_target_selected_requests_and_ranges() {
 }
 
 #[test]
-fn selected_response_pause_preserves_observation_and_releases_on_guard_or_server_drop() {
-    for release_server in [false, true] {
+fn selected_response_pause_preserves_observation_and_guard_release_serves_the_body() {
+    thread::scope(|scope| {
         let (server, fixture) = start_server(Vec::new());
         let range = ByteRange { start: 0, end: 15 };
         let selector = RequestSelector {
@@ -343,7 +343,7 @@ fn selected_response_pause_preserves_observation_and_releases_on_guard_or_server
         );
         assert!(!pause.wait_for_pending(1, Duration::ZERO));
         let address = server.address();
-        let reader = thread::spawn(move || get_at_address(address, "/fixture", Some(range)));
+        let reader = scope.spawn(move || get_at_address(address, "/fixture", Some(range)));
         assert!(pause.wait_for_pending(1, Duration::from_secs(3)));
         assert!(
             !reader.is_finished(),
@@ -355,13 +355,12 @@ fn selected_response_pause_preserves_observation_and_releases_on_guard_or_server
         let other = get(&server, "/fixture", None);
         assert_eq!(other.status, 200);
         assert_eq!(other.body, fixture.bytes(0, 1024, 0));
-        if release_server {
-            drop(server);
-        } else {
-            drop(pause);
-        }
+        // Guard release allows a complete reply. Server retirement instead
+        // interrupts owned I/O and joins handlers; it is tested independently
+        // and must not promise delivery after dropping the fixture owner.
+        drop(pause);
         let result = reader.join().expect("owned response reader");
         assert_eq!(result.status, 206);
         assert_eq!(result.body, fixture.bytes(0, 16, 0));
-    }
+    });
 }

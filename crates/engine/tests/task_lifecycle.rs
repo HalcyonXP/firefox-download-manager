@@ -375,7 +375,7 @@ async fn pause_checkpoints_retained_ranges_and_resume_requests_only_missing_byte
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn shutdown_stops_network_and_persists_recoverable_state() {
+async fn shutdown_retires_local_request_owners_and_persists_recoverable_state() {
     let fixture = Fixture {
         len: 8 * MIB,
         seed: 115,
@@ -393,8 +393,14 @@ async fn shutdown_stops_network_and_persists_recoverable_state() {
     })
     .expect("start shutdown server");
     let directories = TestDirectories::new("shutdown");
-    let engine = TaskEngine::open(directories.state(), TaskEngineOptions::default())
-        .expect("open task engine");
+    let scheduler = DownloadScheduler::new().expect("default scheduler");
+    let admission = scheduler.admission();
+    let engine = TaskEngine::open_with_scheduler(
+        directories.state(),
+        TaskEngineOptions::default(),
+        scheduler,
+    )
+    .expect("open task engine");
     let task = engine
         .create_task(
             &server.url("/fixture"),
@@ -416,9 +422,22 @@ async fn shutdown_stops_network_and_persists_recoverable_state() {
         .expect("shutdown snapshot");
     assert_eq!(paused.state(), TaskState::Paused);
     assert!(paused.bytes_completed() >= MIB);
-    let request_boundary = server.requests().len();
+    // Local request ownership is the shutdown boundary, not when a remote
+    // handler is scheduled to append its ledger. The fixture has a separate
+    // deterministic received-before-close / recorded-after-close counterexample.
+    assert_eq!(admission.active(), 0);
+    let closed = engine.resume(task.task_id()).await;
+    assert!(
+        matches!(closed, Err(TaskEngineError::InvalidTaskState)),
+        "shutdown must close coordinator admission"
+    );
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(server.requests().len(), request_boundary);
+    assert_eq!(admission.active(), 0);
+    let after = engine
+        .snapshot(task.task_id())
+        .expect("post-shutdown snapshot");
+    assert_eq!(after.state(), TaskState::Paused);
+    assert_eq!(after.bytes_completed(), paused.bytes_completed());
 
     drop(engine);
     let recovered = TaskEngine::open(directories.state(), TaskEngineOptions::default())
