@@ -32,6 +32,13 @@ class ParentTransportObservationTests(unittest.TestCase):
         with self.assertRaises(RuntimeError): evidence.accept(snapshot([raw]))
         self.assertFalse(evidence.resource_retired())
 
+    def test_pure_validation_does_not_accept_history_or_issue_a_receipt(self):
+        evidence=Observation(N,C);raw=json.dumps(native());value=snapshot([raw],True)
+        self.assertEqual(evidence.validate(value),((raw,),True,True))
+        self.assertEqual(evidence.records,());self.assertFalse(evidence.closed);self.assertFalse(evidence.removed)
+        with self.assertRaises(RuntimeError):evidence.require_removed()
+        evidence.accept(value);self.assertEqual(evidence.require_retired(),1)
+
     def test_no_spawn_and_failed_but_joined_are_not_success(self):
         for mode in ('not-invoked','failed-exit','forced'):
             value=native();receipt=value['receipt'];launcher=receipt['launcher'];transport=launcher['transport']

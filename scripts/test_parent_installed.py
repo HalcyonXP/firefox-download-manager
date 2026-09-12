@@ -29,10 +29,17 @@ class ParentInstalledTests(unittest.TestCase):
         evidence=SimpleNamespace(ready=False,records=(),failed=False)
         evidence.resource_retired=lambda:evidence.ready
         evidence.require_removed=lambda:{'qualified':False,'sdk':True}
-        observer=SimpleNamespace(evidence=evidence,removal_returned=False)
+        retirement=SimpleNamespace(records=(),failed=False,closed=False,removed=False)
+        retirement.resource_retired=lambda:evidence.ready
+        observer=SimpleNamespace(evidence=evidence,retirement=retirement,removal_returned=False,removal_attempted=False)
         def snapshot(): calls.append('snapshot');evidence.ready=True;return 1
-        def remove(): calls.append('observer-remove');observer.removal_returned=True;return True
-        observer.snapshot=snapshot;observer.remove=remove;b.observer=observer
+        def remove():
+            calls.append('observer-remove');observer.removal_attempted=True;observer.removal_returned=True
+            retirement.closed=retirement.removed=True;return True
+        observer.snapshot=observer.cleanup_snapshot=snapshot;observer.remove=remove
+        observer.cleanup_remove=lambda: observer.removal_returned or remove()
+        observer.cleanup_complete=lambda: observer.removal_returned
+        b.observer=observer
         lease=SimpleNamespace(handles=[1,2],released=False,acquired=True,failed=False)
         lease.cleanup_complete=lambda:lease.released
         lease.observe=lambda:(calls.append('parent-observe') or True)
@@ -61,6 +68,36 @@ class ParentInstalledTests(unittest.TestCase):
         self.assertNotIn('disable',calls);self.assertIn('disabled',calls);self.assertTrue(b.cleanup_complete())
         self.assertTrue(b.failed)
         with self.assertRaises(RuntimeError): b.evidence()
+
+    def test_real_observer_readback_closes_failed_browser_without_qualifying_or_replaying(self):
+        import json
+        from test_parent_cleanup_observation import Browser, N, C, native
+        for phase in ('snapshot','remove'):
+            b,calls=self.browser();b.verified=True;window_command=b.command
+            peer=Browser();failed=[False]
+            def command(name,args=None):
+                if name.startswith('WebDriver:') and name!='WebDriver:ExecuteAsyncScript': return window_command(name,args)
+                if name=='WebDriver:ExecuteAsyncScript' and args['args'][0]==phase and not failed[0]:
+                    failed[0]=True;peer.restore_failure=True
+                return peer.command(name,args)
+            b.command=command
+            with patch('qualification.parent_observation.uuid.uuid4',return_value=C): b.observer=p.ObserverClient(b,N)
+            b.observer.install();peer.record=json.dumps(native())
+            def bounded(condition,*_):
+                if not condition(): raise RuntimeError('modeled pending observation')
+            with patch.object(p,'wait',side_effect=bounded),patch.object(p.Firefox,'close',self.closed(calls)):
+                with self.assertRaises(RuntimeError): b.close()
+                self.assertFalse(b.closed);self.assertFalse(b.cleanup_complete())
+                b.close()
+            self.assertTrue(b.failed);self.assertTrue(b.cleanup_complete())
+            self.assertTrue(b.observer.evidence.failed)
+            self.assertEqual(peer.operations.count('remove'),1)
+            self.assertEqual(calls.count('disable'),1);self.assertEqual(calls.count('browser-close'),1)
+            if phase=='remove': self.assertFalse(b.observer.removal_returned)
+            with self.assertRaises(RuntimeError): b.evidence()
+            observation=b.diagnostic();self.assertEqual(observation['version'],2)
+            self.assertTrue(observation['observer']['cleanup']['removed'])
+            self.assertTrue(observation['observer']['failed'])
 
     def test_missing_sdk_retirement_preserves_readable_browser_and_exact_owner(self):
         b,calls=self.browser()
@@ -110,7 +147,7 @@ class ParentInstalledTests(unittest.TestCase):
                                      parent_transport_experiment=flag)
         r=object.__new__(p.ParentInstalledRun);r.setup_start_attempted=True;r.process=None;r.owner=None;r.fixtures=[];r.browsers=[];r.hosts=[]
         self.assertFalse(r.cleanup_complete())
-        r.process=Mock();r.process.poll.return_value=0;r.owner=SimpleNamespace(joined=True)
+        r.process=Mock();r.process.poll.return_value=0;r.owner=SimpleNamespace(joined=True,process=r.process)
         self.assertTrue(r.cleanup_complete())
         b,_=self.browser();r.browsers=[b];self.assertFalse(r.cleanup_complete())
 
@@ -299,7 +336,7 @@ class ParentInstalledTests(unittest.TestCase):
     def test_independent_cleanup_records_even_on_cancellation_and_does_not_replay(self):
         r=p.ParentInstalledRun(Path('unused'),Path('unused'),Path('unused'),'a'*64,Path('unused'),'b'*64,parent_transport_experiment=True)
         r.record_diagnostic=Mock(side_effect=OSError('model sink'));cancelled=KeyboardInterrupt()
-        with patch.object(p.InstalledRun,'failure_cleanup',side_effect=cancelled) as cleanup:
+        with patch.object(r,'_failure_step',side_effect=cancelled) as cleanup:
             with self.assertRaises(KeyboardInterrupt) as caught:r.failure_cleanup()
             self.assertIs(caught.exception,cancelled);r.failure_cleanup()
         cleanup.assert_called_once();r.record_diagnostic.assert_called_once_with('parent-cleanup.private.json')

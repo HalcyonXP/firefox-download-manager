@@ -33,18 +33,22 @@ class Observation:
 
     def invalidate(self): self.failed=True
 
+    def validate(self, value):
+        """Pure validation against retained history; not acceptance or a receipt."""
+        if self.failed: raise RuntimeError(ERROR)
+        _keys(value,'version qualification collector state removed failed records')
+        if (type(value['version']) is not int or value['version']!=1 or value['qualification'] is not False
+                or value['collector']!=self.collector or value['state'] not in ('active','closed')
+                or type(value['removed']) is not bool or value['failed'] is not False
+                or (value['removed'] and value['state']!='closed') or (self.closed and value['state']!='closed')
+                or (self.removed and not value['removed']) or type(value['records']) is not list
+                or len(value['records'])>1 or tuple(value['records'][:len(self.records)])!=self.records): raise RuntimeError(ERROR)
+        for raw in value['records']: record(raw)
+        return tuple(value['records']),value['state']=='closed',value['removed']
+
     def accept(self, value):
         try:
-            if self.failed: raise RuntimeError(ERROR)
-            _keys(value,'version qualification collector state removed failed records')
-            if (type(value['version']) is not int or value['version']!=1 or value['qualification'] is not False
-                    or value['collector']!=self.collector or value['state'] not in ('active','closed')
-                    or type(value['removed']) is not bool or value['failed'] is not False
-                    or (value['removed'] and value['state']!='closed') or (self.closed and value['state']!='closed')
-                    or (self.removed and not value['removed']) or type(value['records']) is not list
-                    or len(value['records'])>1 or tuple(value['records'][:len(self.records)])!=self.records): raise RuntimeError(ERROR)
-            for raw in value['records']: record(raw)
-            self.records=tuple(value['records']);self.closed=value['state']=='closed';self.removed=value['removed']
+            self.records,self.closed,self.removed=self.validate(value)
             return len(self.records)
         except BaseException:
             self.failed=True

@@ -16,10 +16,11 @@ from .firefox import Firefox, AutomationError
 from .browser_cases import value
 from .firefox_policy import validate as validate_policy
 from .fixture import Fixture, SMALL_SIZE, expected_sha256
-from .installed import InstalledRun, FAULTS, ordinary, wait
+from .installed import InstalledRun, FAULTS, REMOVED, absent, closed_apps, ordinary, wait
+from .setup_owner import SetupOwner
 from .native import file_sha256
 from .parent_candidate import candidate_input
-from .parent_transport_observation import ObserverClient
+from .parent_cleanup_observation import CleanupObserverClient as ObserverClient
 from .process_lease import ProcessLease
 from .support import new_report
 
@@ -137,14 +138,16 @@ class ParentBrowser(Firefox):
         # Bounded facts only; not process authority, policy or a retirement receipt.
         observer=None
         if self.observer is not None:
-            e=self.observer.evidence
-            if len(e.records)>1 or any(type(raw) is not str or not raw.isascii() or len(raw)>4096 for raw in e.records): raise RuntimeError(ERROR)
-            observer={'failed':e.failed,'records':list(e.records),'removal_returned':self.observer.removal_returned}
+            e=self.observer.evidence;r=self.observer.retirement
+            for record in (e,r):
+                if len(record.records)>1 or any(type(raw) is not str or not raw.isascii() or len(raw)>4096 for raw in record.records): raise RuntimeError(ERROR)
+            observer={'failed':e.failed,'records':list(e.records),'removal_returned':self.observer.removal_returned,
+                      'cleanup':{'failed':r.failed,'records':list(r.records),'closed':r.closed,'removed':r.removed}}
         lease=None if self.parent_lease is None else {'acquired':self.parent_lease.acquired,'released':self.parent_lease.released,
                                                      'failed':self.parent_lease.failed,'retained_handles':len(self.parent_lease.handles)}
         launcher_exit=None if self.original is None else self.original.poll()
         if launcher_exit is not None and type(launcher_exit) is not int: raise RuntimeError(ERROR)
-        return {'version':1,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
+        return {'version':2,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
                 'observer':observer,'parent_lease':lease,'launcher_exit_observed':launcher_exit,
                 'failed':self.failed,'load_attempted':self.load_attempted,'disable_attempted':self.disable_attempted,
                 'disabled_observed':self.disabled_observed,'browser_close_attempted':self.browser_close_attempted,
@@ -169,11 +172,15 @@ class ParentBrowser(Firefox):
                 self.stage='disabled-observation'
                 control(self,'disabled',{'state':'disabled'})
                 self.disabled_observed=True
-            if not self.observer.evidence.resource_retired():
-                self.stage='sdk-retirement-observation'
-                wait(lambda: self.observer.snapshot()==1 and self.observer.evidence.resource_retired(),20)
-        self.stage='observer-removal'
-        if self.observer is not None and not self.observer.remove(): raise RuntimeError(ERROR)
+            if not self.sdk_retired():
+                self.stage='sdk-retirement-readback' if self.failed else 'sdk-retirement-observation'
+                snapshot=self.observer.cleanup_snapshot if self.failed else self.observer.snapshot
+                wait(lambda: snapshot()==1 and self.sdk_retired(),20)
+        self.stage=('observer-removal-readback' if self.failed and self.observer is not None
+                    and self.observer.removal_attempted else 'observer-removal')
+        if self.observer is not None:
+            remove=self.observer.cleanup_remove if self.failed else self.observer.remove
+            if not remove(): raise RuntimeError(ERROR)
         error=None
         if not self.browser_close_attempted:
             self.stage='browser-close'
@@ -201,13 +208,21 @@ class ParentBrowser(Firefox):
             raise failure
         if error is not None: raise error
 
+    def sdk_retired(self):
+        if self.observer is None: return False
+        evidence=self.observer.retirement if self.failed else self.observer.evidence
+        return evidence.resource_retired()
+
+    def observer_removed(self):
+        return self.observer is None or (self.observer.cleanup_complete() is True if self.failed else self.observer.removal_returned is True)
+
     def cleanup_complete(self):
         return (self.launch_attempted is False or (self.launch_attempted is True and self.original is not None
                 and self.process is self.original and self.closed is True and type(self.original.poll()) is int)) and (
                 self.parent_lease is None or self.parent_lease.cleanup_complete() is True) and (
-                self.observer is None or self.observer.removal_returned is True) and (
+                self.observer_removed()) and (
                 self.load_attempted is False or (self.load_attempted is True and self.disabled_observed is True
-                and self.observer.evidence.resource_retired() is True))
+                and self.sdk_retired() is True))
 
     def evidence(self):
         if self.failed is not False or self.cleanup_complete() is not True or self.original is None: raise RuntimeError(ERROR)
@@ -219,8 +234,17 @@ class ParentBrowser(Firefox):
 
 
 class ParentInstalledRun(InstalledRun):
+    @property
+    def process(self): return getattr(self,'_setup_process',None)
+
+    @process.setter
+    def process(self, value):
+        if self.process is not None and value is not self.process: raise RuntimeError(ERROR)
+        self._setup_process=value
+
     def __init__(self, package, report, candidate, candidate_sha256, executable, browser_sha256,
                  *, parent_transport_experiment=False, fault=None):
+        if hasattr(self,'_setup_process'): raise RuntimeError(ERROR)
         if parent_transport_experiment is not True or not __debug__ or os.name!='nt' or struct.calcsize('P')!=8: raise RuntimeError(ERROR)
         if fault is not None and (type(fault) is not tuple or len(fault)!=2 or type(fault[0]) is not str or fault[0] not in FAULTS
                 or type(fault[1]) is not int or fault[1]<=0): raise RuntimeError(ERROR)
@@ -238,15 +262,92 @@ class ParentInstalledRun(InstalledRun):
         self.run_attempted=True
         super().execute()
 
+    def close_resources(self):
+        def attempt(label, action):
+            try: action()
+            except BaseException:
+                if label not in self.cleanup_errors: self.cleanup_errors.append(label)
+                raise
+        def browser_close(browser):
+            if browser.cleanup_complete() is not True: browser.close()
+            if browser.cleanup_complete() is not True: raise RuntimeError(ERROR)
+            if browser.original is not None: browser.original.wait(timeout=0)
+        def fixture_close(fixture):
+            fixture.close()
+            if fixture.closed is not True: raise RuntimeError(ERROR)
+        actions=[lambda b=b:attempt('browser',lambda:browser_close(b)) for b in self.browsers]
+        actions.extend(lambda f=f:attempt('fixture',lambda:fixture_close(f)) for f in self.fixtures)
+        if self.hosts:
+            def refuse(): raise RuntimeError(ERROR)
+            actions.append(lambda:attempt('unexpected-native-owner',refuse))
+        independent(actions) # Unlike generic cleanup, interruption remains interruption.
+
+    def observe_uninstalled(self):
+        # A continued observation of the ONE original Uninstall, not dispatch.
+        if not self.uninstall_requested or self.binding is None or self.owner is None:
+            raise RuntimeError(ERROR)
+        if self.owner.process is not self.process: raise RuntimeError(ERROR)
+        if self.owner._observe()!=('complete',None): raise RuntimeError(ERROR)
+        if self.text(310)!=REMOVED: raise RuntimeError(ERROR)
+        closed_apps(self.preflight,self.process)
+        self.preflight.all_views_absent()
+        for path in (self.binding.group,self.binding.generation,self.install/'installation.json',self.install/'transaction.json'):
+            absent(path)
+        self.uninstalled=True
+
+    def _failure_step(self):
+        errors=[]
+        def refuse(): raise RuntimeError(ERROR)
+        def attempt(label, action):
+            try: action();return True
+            except BaseException as error:
+                errors.append(error)
+                if label not in self.cleanup_errors: self.cleanup_errors.append(label)
+                return False
+        resources_clean=attempt('resources',self.close_resources)
+        if self.owner is None and self.process is not None:
+            if self.install_requested:
+                attempt('setup-owner-unresolved',refuse)
+            else:
+                def create_owner():
+                    self.owner=SetupOwner(self.process,self.observation,lambda:self.button(305),self.quit_manager)
+                attempt('setup-owner-unresolved',create_owner)
+        if self.owner is not None and not self.owner.joined:
+            def bound_owner():
+                if self.owner.process is not self.process: raise RuntimeError(ERROR)
+            if attempt('setup-identity',bound_owner):
+                settled=attempt('setup-or-manager',self.owner.quiesce)
+                if settled and resources_clean and self.install_requested and not self.uninstalled:
+                    action=self.observe_uninstalled if self.uninstall_requested else self.uninstall
+                    attempt('uninstall-unconfirmed',action)
+                # Keep the ORIGINAL setup UI/owner for later verified removal;
+                # a transient browser observation cannot discard this authority.
+                if settled and resources_clean and (not self.install_requested or self.uninstalled):
+                    attempt('setup-join-unconfirmed',self.owner.retire)
+        if errors:
+            raise next((e for e in errors if not isinstance(e,Exception)),errors[0])
+
     def failure_cleanup(self):
         if self.failure_cleanup_attempted: return
         self.failure_cleanup_attempted=True
-        independent((super().failure_cleanup,lambda:self.record_diagnostic('parent-cleanup.private.json')))
+        independent((self._failure_step,lambda:self.record_diagnostic('parent-cleanup.private.json')))
+
+    def continue_retirement(self):
+        if not self.run_attempted or not self.final_cleanup_attempted or not self.failure_cleanup_attempted:
+            raise RuntimeError(ERROR)
+        self._failure_step()
+        return self.cleanup_complete()
 
     def cleanup(self):
         if not self.final_cleanup_attempted:
             self.final_cleanup_attempted=True
-            if self.cleanup_complete() is not True: self.failure_cleanup()
+            if self.cleanup_complete() is not True:
+                if self.failure_cleanup_attempted:
+                    # One failure-only continuation before returning a hold.
+                    # This cannot repair the original execution or its evidence.
+                    try: self._failure_step()
+                    except Exception: return False
+                else: self.failure_cleanup()
         return self.cleanup_complete()
 
     def checkpoint(self, name):
@@ -329,8 +430,10 @@ class ParentInstalledRun(InstalledRun):
                 'parent_candidate_source':self.candidate_metadata['source_commit'],'firefox_exe_sha256':self.browser_sha256}
 
     def cleanup_complete(self):
-        setup=(self.setup_start_attempted is False or (self.setup_start_attempted is True and self.process is not None
-               and self.owner is not None and self.owner.joined is True and type(self.process.poll()) is int))
+        setup=((self.setup_start_attempted is False and self.process is None and self.owner is None)
+               or (self.setup_start_attempted is True and self.process is not None
+               and self.owner is not None and self.owner.process is self.process
+               and self.owner.joined is True and type(self.process.poll()) is int))
         return (setup and not self.hosts and all(b.cleanup_complete() is True for b in self.browsers)
                 and all(f.closed is True for f in self.fixtures) and all(not t.is_alive() for t in self.retained_threads()))
 
