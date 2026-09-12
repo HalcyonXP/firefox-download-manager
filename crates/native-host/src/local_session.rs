@@ -2,7 +2,7 @@
 use super::{
     EngineOwner, HostError, Inbound, Session, SessionOutput, negotiate, run_active_session,
 };
-use download_manager_local_ipc::{CancellationStatus, Channel, LocalPipe};
+use download_manager_local_ipc::{CancellationStatus, Channel, LocalPipe, PeerClass};
 use tokio::sync::{mpsc, oneshot};
 
 /// Normal local-session completion, separate from engine shutdown.
@@ -13,7 +13,9 @@ pub enum LocalSessionEnd {
 }
 
 impl EngineOwner {
-    /// Serve one already-authenticated local controller against this owner.
+    /// Serve one already-authenticated ordinary local controller against this owner.
+    /// Parent-class channels require a separate protected dispatcher; they cannot
+    /// silently enter ordinary handling or select authority through JSON claims.
     /// The mutable borrow prevents concurrent serving through this API. Installed
     /// generation/capability authority must be checked before constructing it.
     /// Signal `stop` and await completion for joined teardown; do not externally
@@ -28,6 +30,13 @@ impl EngineOwner {
         channel: Channel<LocalPipe>,
         stop: &mut oneshot::Receiver<()>,
     ) -> Result<LocalSessionEnd, HostError> {
+        if channel.peer_class() != PeerClass::NativeBridge {
+            // No application read/write or task dispatch has started. Dropping
+            // the exact channel requests cancellation; the caller still owns
+            // shutdown and the server's sticky cancellation-failure checks.
+            drop(channel);
+            return Err(HostError::LocalSession);
+        }
         let cancellation = channel.cancellation();
         let (mut reader, writer) = channel.split();
         let (inbound, mut received) = mpsc::channel(8);

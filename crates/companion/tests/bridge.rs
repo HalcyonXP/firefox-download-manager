@@ -32,6 +32,65 @@ impl Drop for Domain {
         }
     }
 }
+#[tokio::test]
+async fn ordinary_dispatch_refuses_parent_class_before_any_application_frame() {
+    let domain = Domain::new();
+    let mut owner = EngineOwner::open(&domain.config()).unwrap();
+    let endpoint = Endpoint::generate().unwrap();
+    let key = Arc::new(Capability::generate().unwrap());
+    let server = Server::bind(endpoint, Arc::clone(&key)).unwrap();
+    let (s, c) = tokio::join!(
+        server.accept_with_browser_parent(),
+        download_manager_local_ipc::connect_browser_parent(endpoint, &key)
+    );
+    let channel = s.unwrap();
+    let watch = channel.cancellation();
+    let (_stop, mut stopped) = tokio::sync::oneshot::channel();
+    let peer = async {
+        let (mut reader, mut writer) = c.unwrap().split();
+        let _sent = writer
+            .write(include_bytes!(
+                "../../../protocol/schema/v2/examples/hello.command.json"
+            ))
+            .await;
+        let received = tokio::time::timeout(Duration::from_secs(5), reader.read()).await;
+        let observation = (
+            matches!(received, Ok(Ok(_))),
+            matches!(
+                received,
+                Ok(Err(download_manager_local_ipc::Error::Transport))
+            ),
+        );
+        drop((reader, writer));
+        observation
+    };
+    let (outcome, (frame_received, closed)) =
+        tokio::join!(owner.serve_local(channel, &mut stopped), peer);
+    let tasks = owner.engine().snapshots().len();
+    let shutdown = owner.shutdown().await;
+    drop(owner);
+    let failed = server.cancellation_failed();
+    drop(server);
+    let reopened = EngineOwner::open(&domain.config()).unwrap();
+    let reopened_tasks = reopened.engine().snapshots().len();
+    let reopened_shutdown = reopened.shutdown().await;
+    drop(reopened);
+    drop(Server::bind(endpoint, key).unwrap());
+    assert!(shutdown.is_ok() && reopened_shutdown.is_ok());
+    assert!(!failed);
+    assert_eq!(
+        watch.status(),
+        download_manager_local_ipc::CancellationStatus::Requested
+    );
+    assert_eq!((tasks, reopened_tasks), (0, 0));
+    assert!(
+        !frame_received,
+        "ordinary dispatch accepted parent-class application input"
+    );
+    assert!(closed, "peer closure, not an idle deadline, is required");
+    assert!(matches!(outcome, Err(HostError::LocalSession)));
+}
+
 async fn until(stage: &str, mut condition: impl FnMut() -> bool) {
     tokio::time::timeout(Duration::from_secs(15), async {
         while !condition() {

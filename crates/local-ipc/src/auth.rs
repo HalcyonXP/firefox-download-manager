@@ -11,6 +11,35 @@ pub(crate) const HANDSHAKE_LIMIT: Duration = Duration::from_secs(2);
 const MAGIC: &[u8; 8] = b"DMIPC\x01\0\0";
 const CLIENT: &[u8] = b"DMIPC1/client-proof";
 const SERVER: &[u8] = b"DMIPC1/server-proof";
+const PARENT_CLIENT: &[u8] = b"DMIPC1/browser-parent/client-proof";
+const PARENT_SERVER: &[u8] = b"DMIPC1/browser-parent/server-proof";
+
+/// Authenticated proof domain, not add-on identity or browser policy authority.
+/// A capability holder can select either class. The native application must bind
+/// selection to a fixed entry mode before forwarding any untrusted stdio input.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PeerClass {
+    /// Unchanged ordinary bridge proof labels.
+    NativeBridge,
+    /// Explicit opt-in proof labels, never inferred from application messages.
+    BrowserParent,
+}
+
+impl PeerClass {
+    const fn client_label(self) -> &'static [u8] {
+        match self {
+            Self::NativeBridge => CLIENT,
+            Self::BrowserParent => PARENT_CLIENT,
+        }
+    }
+
+    const fn server_label(self) -> &'static [u8] {
+        match self {
+            Self::NativeBridge => SERVER,
+            Self::BrowserParent => PARENT_SERVER,
+        }
+    }
+}
 
 /// Transport key. Explicit protected runtime storage requires a separate authority gate.
 /// No serialization, automatic logging or secure-erasure claim is provided.
@@ -118,14 +147,26 @@ fn proof(
 }
 
 pub(crate) async fn server<S>(
-    mut io: S,
+    io: S,
     key: &Capability,
     endpoint: Endpoint,
 ) -> Result<Channel<S>, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
 {
-    tokio::time::timeout(HANDSHAKE_LIMIT, async {
+    server_inner(io, key, endpoint, false).await
+}
+
+pub(crate) async fn server_inner<S>(
+    mut io: S,
+    key: &Capability,
+    endpoint: Endpoint,
+    allow_parent: bool,
+) -> Result<Channel<S>, Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    let class = tokio::time::timeout(HANDSHAKE_LIMIT, async {
         let challenge = random()?;
         io.write_all(MAGIC).await.map_err(|_| Error::Transport)?;
         io.write_all(&challenge)
@@ -136,24 +177,47 @@ where
             .await
             .map_err(|_| Error::Transport)?;
         let client: &[u8; 32] = response[..32].try_into().expect("fixed nonce field");
-        proof(key, CLIENT, endpoint, &challenge, client)
+        let class = if proof(key, CLIENT, endpoint, &challenge, client)
             .verify_slice(&response[32..])
-            .map_err(|_| Error::Authentication)?;
-        let answer = proof(key, SERVER, endpoint, &challenge, client)
+            .is_ok()
+        {
+            PeerClass::NativeBridge
+        } else if allow_parent
+            && proof(key, PARENT_CLIENT, endpoint, &challenge, client)
+                .verify_slice(&response[32..])
+                .is_ok()
+        {
+            PeerClass::BrowserParent
+        } else {
+            return Err(Error::Authentication);
+        };
+        let answer = proof(key, class.server_label(), endpoint, &challenge, client)
             .finalize()
             .into_bytes();
         io.write_all(&answer).await.map_err(|_| Error::Transport)?;
-        Ok(())
+        Ok(class)
     })
     .await
     .map_err(|_| Error::Deadline)??;
-    Ok(Channel::new(io))
+    Ok(Channel::authenticated(io, class))
 }
 
 pub(crate) async fn client<S>(
+    io: S,
+    key: &Capability,
+    endpoint: Endpoint,
+) -> Result<Channel<S>, Error>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
+    client_inner(io, key, endpoint, PeerClass::NativeBridge).await
+}
+
+pub(crate) async fn client_inner<S>(
     mut io: S,
     key: &Capability,
     endpoint: Endpoint,
+    class: PeerClass,
 ) -> Result<Channel<S>, Error>
 where
     S: AsyncRead + AsyncWrite + Unpin,
@@ -168,7 +232,7 @@ where
         }
         let server: &[u8; 32] = hello[8..].try_into().expect("fixed nonce field");
         let nonce = random()?;
-        let answer = proof(key, CLIENT, endpoint, server, &nonce)
+        let answer = proof(key, class.client_label(), endpoint, server, &nonce)
             .finalize()
             .into_bytes();
         io.write_all(&nonce).await.map_err(|_| Error::Transport)?;
@@ -177,14 +241,18 @@ where
         io.read_exact(&mut confirmation)
             .await
             .map_err(|_| Error::Transport)?;
-        proof(key, SERVER, endpoint, server, &nonce)
+        proof(key, class.server_label(), endpoint, server, &nonce)
             .verify_slice(&confirmation)
             .map_err(|_| Error::Authentication)
     })
     .await
     .map_err(|_| Error::Deadline)??;
-    Ok(Channel::new(io))
+    Ok(Channel::authenticated(io, class))
 }
+
+#[cfg(test)]
+#[path = "auth_parent_tests.rs"]
+mod parent_tests;
 
 #[cfg(test)]
 mod tests {

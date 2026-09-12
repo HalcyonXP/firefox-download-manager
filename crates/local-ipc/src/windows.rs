@@ -24,7 +24,7 @@ use tokio::{
 };
 use widestring::U16CString;
 
-use crate::{Capability, Channel, Endpoint, Error, auth, identity};
+use crate::{Capability, Channel, Endpoint, Error, PeerClass, auth, identity};
 
 /// Includes waiting accepts, unauthenticated handshakes and live sessions.
 pub const MAX_CLIENTS: u8 = 4;
@@ -95,6 +95,20 @@ impl Server {
     /// # Errors
     /// Refuses capacity, transport, authentication and handshake deadline failures.
     pub async fn accept(&self) -> Result<Channel<LocalPipe>, Error> {
+        self.accept_inner(false).await
+    }
+
+    /// Opt in to both ordinary and browser-parent proof domains. The resulting
+    /// class authenticates a capability-holder claim, not Firefox identity. The
+    /// application must enforce its fixed entry and private command boundaries.
+    /// Capacity, deadlines and retained I/O requirements are unchanged.
+    /// # Errors
+    /// Returns the same fixed classifications as ordinary acceptance.
+    pub async fn accept_with_browser_parent(&self) -> Result<Channel<LocalPipe>, Error> {
+        self.accept_inner(true).await
+    }
+
+    async fn accept_inner(&self, allow_parent: bool) -> Result<Channel<LocalPipe>, Error> {
         let permit = Arc::clone(&self.permits)
             .try_acquire_owned()
             .map_err(|_| Error::Busy)?;
@@ -105,7 +119,11 @@ impl Server {
             cancellation: CancellationWatch::new(),
             server_failure: Some(Arc::clone(&self.cancellation_failure)),
         };
-        auth::server(io, &self.key, self.endpoint).await
+        if allow_parent {
+            auth::server_inner(io, &self.key, self.endpoint, true).await
+        } else {
+            auth::server(io, &self.key, self.endpoint).await
+        }
     }
 }
 
@@ -115,23 +133,42 @@ impl Server {
 /// # Errors
 /// Returns fixed transport/authentication/deadline classifications.
 pub async fn connect(endpoint: Endpoint, key: &Capability) -> Result<Channel<LocalPipe>, Error> {
+    connect_inner(endpoint, key, PeerClass::NativeBridge).await
+}
+
+/// Explicit browser-parent proof domain; never falls back to ordinary proofs.
+/// The application must select this before reading any caller-controlled frames,
+/// using a fixed private entry rather than a JSON capability or supplied verdict.
+/// # Errors
+/// Returns fixed transport/authentication/deadline classifications.
+pub async fn connect_browser_parent(
+    endpoint: Endpoint,
+    key: &Capability,
+) -> Result<Channel<LocalPipe>, Error> {
+    connect_inner(endpoint, key, PeerClass::BrowserParent).await
+}
+
+async fn connect_inner(
+    endpoint: Endpoint,
+    key: &Capability,
+    class: PeerClass,
+) -> Result<Channel<LocalPipe>, Error> {
     // Tokio explicitly sets SECURITY_IDENTIFICATION | SECURITY_SQOS_PRESENT.
     // Do not use Interprocess's client constructor, which does not set SQOS.
     // Opening a squatted endpoint must not grant server-side impersonation power.
     let io = ClientOptions::new()
         .open(endpoint.path())
         .map_err(|_| Error::Transport)?;
-    auth::client(
-        LocalPipe {
-            inner: Pipe::Client(io),
-            _permit: None,
-            cancellation: CancellationWatch::new(),
-            server_failure: None,
-        },
-        key,
-        endpoint,
-    )
-    .await
+    let io = LocalPipe {
+        inner: Pipe::Client(io),
+        _permit: None,
+        cancellation: CancellationWatch::new(),
+        server_failure: None,
+    };
+    match class {
+        PeerClass::NativeBridge => auth::client(io, key, endpoint).await,
+        PeerClass::BrowserParent => auth::client_inner(io, key, endpoint, class).await,
+    }
 }
 
 /// Observation of the cancellation request, NOT actual I/O completion.
@@ -246,6 +283,10 @@ impl AsyncWrite for LocalPipe {
         Poll::Ready(Ok(()))
     }
 }
+
+#[cfg(test)]
+#[path = "windows_parent_tests.rs"]
+mod parent_tests;
 
 #[cfg(test)]
 mod tests {

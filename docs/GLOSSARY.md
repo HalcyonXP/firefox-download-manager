@@ -182,6 +182,7 @@ See [NATIVE_QUALIFICATION.md](NATIVE_QUALIFICATION.md) for the demonstrated corr
 
 - **IPC capability**: a 32-byte private shared key, distinct from Firefox permissions and the wire protocol's advertised capability strings.
 - **IPC endpoint**: a canonical UUIDv4-derived local named-pipe address, not an HTTP endpoint or installation authority.
+- **Authenticated peer class**: immutable `NativeBridge`/`BrowserParent` proof-domain result retained by an IPC channel. Separate from client/server proof direction, advertised protocol capabilities, actual process/add-on identity and browser-context/policy authority. A capability holder can construct either class; the app must pin its fixed entry before forwarding caller input. The parent class is opt-in and has no selected protected dispatcher. See [LOCAL_IPC.md](LOCAL_IPC.md#opt-in-browser-parent-proof-domain).
 - **Transport authentication**: mutual key-possession proof on one connection; not signing, add-on identity, delivery, commit acknowledgement or safe replay.
 - **Cancellation request / peer closure / joined shutdown**: separate observations. CancelIoEx acceptance is not I/O completion; a successful write can merely enqueue bytes. Retain failure observations and join workers before reporting shutdown.
 - **Narrow FFI exception**: ADR0015 permits only the reviewed borrowed-handle CancelIoEx call in `crates/windows-io`; existing crates still inherit unsafe-forbid. Not a Windows/TLS/Firefox protection change.

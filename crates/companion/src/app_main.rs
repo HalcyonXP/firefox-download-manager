@@ -40,7 +40,7 @@ fn main() -> ExitCode {
 fn bridge(args: &[std::ffi::OsString]) -> Result<(), ()> {
     use download_manager_companion::relay;
     use download_manager_setup::{
-        EXTENSION_ID, HOST_NAME,
+        HOST_NAME,
         installed_image::InstalledImage,
         runtime_record::{RuntimeConnection, candidates},
     };
@@ -57,13 +57,8 @@ fn bridge(args: &[std::ffi::OsString]) -> Result<(), ()> {
         .parent()
         .ok_or(())?
         .join(format!("{HOST_NAME}.json"));
-    // Firefox platform arguments, or explicit redirected native-test stdio.
-    let valid = args.is_empty()
-        || (args.len() == 1 && args[0] == EXTENSION_ID)
-        || (args.len() == 2 && args[0] == manifest.as_os_str() && args[1] == EXTENSION_ID);
-    if !valid {
-        return Err(());
-    }
+    // Class is pinned before discovery/authentication or caller-frame forwarding.
+    let class = bridge_class(args, &manifest).ok_or(())?;
     let image = InstalledImage::open_current().map_err(|_| ())?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -86,7 +81,7 @@ fn bridge(args: &[std::ffi::OsString]) -> Result<(), ()> {
             }
             if let Ok(Ok(channel)) = tokio::time::timeout(
                 remaining,
-                download_manager_local_ipc::connect(record.endpoint(), record.capability()),
+                connect_for_class(record.endpoint(), record.capability(), class),
             )
             .await
             {
@@ -107,6 +102,138 @@ fn bridge(args: &[std::ffi::OsString]) -> Result<(), ()> {
     });
     drop(runtime); // Join runtime workers before reporting bridge completion.
     result
+}
+
+#[cfg(windows)]
+async fn connect_for_class(
+    endpoint: download_manager_local_ipc::Endpoint,
+    capability: &download_manager_local_ipc::Capability,
+    class: download_manager_local_ipc::PeerClass,
+) -> Result<
+    download_manager_local_ipc::Channel<download_manager_local_ipc::LocalPipe>,
+    download_manager_local_ipc::Error,
+> {
+    use download_manager_local_ipc::{PeerClass, connect, connect_browser_parent};
+    match class {
+        PeerClass::NativeBridge => connect(endpoint, capability).await,
+        PeerClass::BrowserParent => connect_browser_parent(endpoint, capability).await,
+    }
+}
+
+/// No caller-controlled native message or advertised capability selects this
+/// class. The private parent launcher must supply this fixed argument shape.
+#[cfg(windows)]
+fn bridge_class(
+    args: &[std::ffi::OsString],
+    manifest: &std::path::Path,
+) -> Option<download_manager_local_ipc::PeerClass> {
+    use download_manager_local_ipc::PeerClass;
+    use download_manager_setup::EXTENSION_ID;
+    match args {
+        [] => Some(PeerClass::NativeBridge),
+        [id] if id == EXTENSION_ID => Some(PeerClass::NativeBridge),
+        [path, id] if path == manifest.as_os_str() && id == EXTENSION_ID => {
+            Some(PeerClass::NativeBridge)
+        }
+        [mode, path, id]
+            if mode == "--browser-parent" && path == manifest.as_os_str() && id == EXTENSION_ID =>
+        {
+            Some(PeerClass::BrowserParent)
+        }
+        _ => None,
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::bridge_class;
+    use download_manager_local_ipc::PeerClass;
+    use download_manager_setup::EXTENSION_ID;
+    use std::{ffi::OsString, path::Path};
+
+    fn classify(args: &[&str]) -> Option<PeerClass> {
+        let args: Vec<_> = args.iter().map(OsString::from).collect();
+        bridge_class(&args, Path::new(r"C:\fixture\host.json"))
+    }
+
+    #[test]
+    fn ordinary_firefox_and_redirected_test_arguments_never_select_parent_class() {
+        for args in [
+            vec![],
+            vec![EXTENSION_ID],
+            vec![r"C:\fixture\host.json", EXTENSION_ID],
+        ] {
+            assert_eq!(classify(&args), Some(PeerClass::NativeBridge));
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn fixed_entry_routes_to_matching_authenticated_domain() {
+        use download_manager_local_ipc::{Capability, Channel, Endpoint, Server};
+        use std::sync::Arc;
+        for (args, expected) in [
+            (
+                vec![r"C:\fixture\host.json", EXTENSION_ID],
+                PeerClass::NativeBridge,
+            ),
+            (
+                vec!["--browser-parent", r"C:\fixture\host.json", EXTENSION_ID],
+                PeerClass::BrowserParent,
+            ),
+        ] {
+            let endpoint = Endpoint::generate().unwrap();
+            let key = Arc::new(Capability::generate().unwrap());
+            let server = Server::bind(endpoint, Arc::clone(&key)).unwrap();
+            let (s, c) = tokio::join!(
+                server.accept_with_browser_parent(),
+                super::connect_for_class(endpoint, &key, classify(&args).unwrap())
+            );
+            let observations = (
+                s.as_ref().map(Channel::peer_class).ok(),
+                c.as_ref().map(Channel::peer_class).ok(),
+            );
+            drop((s, c));
+            let failed = server.cancellation_failed();
+            drop(server);
+            drop(Server::bind(endpoint, key).unwrap());
+            assert!(!failed);
+            assert_eq!(observations, (Some(expected), Some(expected)));
+        }
+    }
+
+    #[test]
+    fn parent_class_requires_exact_fixed_mode_manifest_and_extension() {
+        assert_eq!(
+            classify(&["--browser-parent", r"C:\fixture\host.json", EXTENSION_ID]),
+            Some(PeerClass::BrowserParent)
+        );
+        for args in [
+            vec!["--browser-parent"],
+            vec!["--browser-parent", EXTENSION_ID],
+            vec!["--browser-parent", r"C:\fixture\other.json", EXTENSION_ID],
+            vec![
+                "--browser-parent",
+                r"C:\fixture\host.json",
+                "foreign-extension",
+            ],
+            vec![
+                "--browser-parent=true",
+                r"C:\fixture\host.json",
+                EXTENSION_ID,
+            ],
+            vec![r"C:\fixture\host.json", EXTENSION_ID, "--browser-parent"],
+            vec![
+                "--browser-parent",
+                r"C:\fixture\host.json",
+                EXTENSION_ID,
+                "extra",
+            ],
+            vec![r#"{"peer_class":"browser_parent"}"#],
+            vec![r"C:\fixture\host.json", "foreign-extension"],
+        ] {
+            assert_eq!(classify(&args), None);
+        }
+    }
 }
 
 #[cfg(not(windows))]

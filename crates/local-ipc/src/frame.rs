@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf};
 
-use crate::Error;
+use crate::{Error, PeerClass};
 
 /// Bounded opaque body, sharing the native wire limit rather than imposing a
 /// smaller incompatible bridge limit. JSON/command validation remains separate.
@@ -12,11 +12,24 @@ const FRAME_LIMIT: Duration = Duration::from_secs(2);
 /// Authenticated transport. Not evidence of installed authority or peer delivery.
 pub struct Channel<S> {
     io: S,
+    class: PeerClass,
 }
 
 impl<S: AsyncRead + AsyncWrite> Channel<S> {
+    #[cfg(test)]
     pub(crate) const fn new(io: S) -> Self {
-        Self { io }
+        Self::authenticated(io, PeerClass::NativeBridge)
+    }
+
+    pub(crate) const fn authenticated(io: S, class: PeerClass) -> Self {
+        Self { io, class }
+    }
+
+    /// Immutable authentication result. Not a live browser-context or policy
+    /// receipt. Inspect before consuming this channel into its I/O directions.
+    #[must_use]
+    pub const fn peer_class(&self) -> PeerClass {
+        self.class
     }
 
     #[cfg(windows)]
