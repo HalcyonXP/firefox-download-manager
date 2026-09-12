@@ -19,7 +19,9 @@ export default tseslint.config(
   },
   {
     files: ["extension/protection-bridge/*.js"],
-    languageOptions: { globals: { URL: "readonly" } },
+    languageOptions: {
+      globals: { URL: "readonly", TextEncoder: "readonly", TextDecoder: "readonly" },
+    },
   },
   {
     files: ["extension/protection-probe/api.js"],

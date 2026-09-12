@@ -27,7 +27,7 @@
     "privacy:publication": "node scripts/verify-publication.mjs",
     "repository:check": "node scripts/check-repository.mjs",
     "repository:test": "node --test scripts/repository-policy.test.mjs scripts/windows-io-policy.test.mjs scripts/ci-policy.test.mjs scripts/capture-probe.test.mjs",
-    "security:test": "node --test scripts/extension-policy.test.mjs scripts/capture-candidate.test.mjs scripts/protection-probe.test.mjs scripts/request-context.test.mjs"
+    "security:test": "node --test scripts/extension-policy.test.mjs scripts/capture-candidate.test.mjs scripts/protection-probe.test.mjs scripts/request-context.test.mjs scripts/native-transport.test.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
