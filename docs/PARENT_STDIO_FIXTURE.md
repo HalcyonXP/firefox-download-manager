@@ -13,6 +13,7 @@ Here **fileless** means no download-data file, scan or publication. The diagnost
 | Bootstrap | `extension/parent-probe/api.js` | Explicit SDK globals/imports, fixed no-argument API and nonce-correlated plain observations |
 | Background/schema | `extension/parent-probe/{background.js,schema.json}` | One call, no heartbeat/wakeup/network/capture, no caller-selected native data |
 | Builder | `scripts/build-parent-probe.mjs` | Fresh CLI compiler process, fixed owned inputs, five bounded payloads; no archive or browser launcher |
+| Archive input | `scripts/qualification/parent_input.py` | Externally pinned compiler domain/source/image/record, exclusive five-member archive and bounded independent readback; no compiler/native/browser execution |
 
 The bootstrap intentionally supplies **owned fixture metadata**, not `NativeManifests.lookupManifest`. It does not inspect or change shared native registration. A fixture result therefore cannot qualify registry lookup, installed-image checks, private native IPC authentication or browser policy.
 
@@ -49,17 +50,30 @@ The output is exactly `api.js`, `background.js`, `schema.json`, `manifest.json`,
 
 Compilation is CLI-only, with `ESBUILD_WORKER_THREADS=0`, `ESBUILD_MAX_BUFFER=16777216` and no binary override set **before Node starts**. An initial test imported esbuild before changing its worker environment and timed out before bundle output. Esbuild caches worker support at module initialization; a later worker inherits the changed environment and may not recognize its worker role. The failed test has no established retained join receipt and remains nonqualifying. Corrected tests use fresh bounded synchronous CLI children and preserve their exit/wait records; no SDK worker, timeout or test-concurrency workaround was introduced.
 
-Component evidence currently comprises four Rust units, seven session models and three builder/bundled-SDK cases. The bundled model exercises actual bootstrap/session/launcher/transport bytes with modeled SDK owners, explicit encoder/decoder import, cross-realm detached framing and process-versus-pipe retirement. Fifteen targeted mutations were rejected and restored: six Rust, seven session, one API-argument execution case and one compiled-global source-policy case. None is actual Firefox or native-fixture-process evidence. A standalone execution attempt refused its original closed-app preflight before domain creation or fixture launch; the guard was not relaxed.
+Component evidence currently comprises four Rust units, seven session models and three builder/bundled-SDK cases. The bundled model exercises actual bootstrap/session/launcher/transport bytes with modeled SDK owners, explicit encoder/decoder import, cross-realm detached framing and process-versus-pipe retirement. Fifteen targeted mutations were rejected and restored: six Rust, seven session, one API-argument execution case and one compiled-global source-policy case. Those models are not actual Firefox or native-fixture-process evidence. An initial standalone execution attempt refused its original closed-app preflight before domain creation or fixture launch; the guard was not relaxed.
+
+A subsequent standalone batch at clean `e852421d151aa2b8a1b863539be8a11527ff47f5` passed five cases after a retained clean-source build. The image SHA256 was `b8c635cc822d87afe837de6d631cb4cd8078aba1cd5346deebf3b99adf825b74`. Roundtrip and boundary EOF exited0; unknown frame, repeated frame and ordinary argv exited2. Every case independently compared expected output and fixed stderr; each permitted ready frame also matched the retained process PID. All five observed natural exit and retained process waits plus reader joins. Original closed-app/native-registration-absence preflights passed before each case and afterward. No Firefox, profile or registration operation occurred. This is **standalone Windows process evidence**, not SDK process/pipe/realm, authentication or installed acceptance.
+
+### Archive input boundary
+
+`BuildExpectation` carries the retained controller's exact compiler domain, source commit/dirty state, nonce and image/build-record hashes. These values must originate outside the input being inspected. A caller that merely copies self-reported hashes has not established compiler provenance, image ownership or execution authority. The module does not launch a compiler or validate a compiler wait receipt itself.
+
+The domain is pinned because the compiled API embeds absolute native paths: moving the archive inputs cannot silently redirect their ownership to another domain. Current source bytes, the exact native manifest, all five payload hashes and the closed extension manifest are checked. `clean=False` is an explicit diagnostic readback option, not permission to relabel a dirty build clean. A reproduced model exposed Python dictionary equality accepting numeric0 in place of `persistent:false`; typed JSON comparison now rejects that substitution.
+
+Packing exclusively creates `parent-stdio-fixture.xpi`; an archive appearing after validation is not overwritten. Readback requires an externally retained archive hash, five exact uncompressed ordinary members, bounded sizes, no duplicate/extra members, comments or extra fields, actual member-byte equality and a final input/source recheck. Failed or partially written domains remain for their owner to handle. These checks are integrity boundaries, not protection against an actively hostile same-user process or permission to use an existing profile. Bundles embed owned paths and remain private, nonqualifying test inputs, never release/CI publication inputs.
+
+Twelve metadata-only Python tests and eight rejected/restored mutations cover the compiler-domain pin, external build hash, dirty-state pin, typed manifest, actual archive bytes, final reread, exclusive output and image hash. A retained CLI compiler using **non-executable native metadata bytes** also passed builder-to-archive interoperability. The final validator independently reread that archive with unchanged compiled sources; no native process or Firefox was launched by this check.
 
 Maintainer checks, not installation instructions:
 
 ```powershell
 cargo test -p download-manager-test-server --bin download-manager-parent-fixture --features parent-stdio-fixture --locked -j 1
 node --test scripts/parent-fixture-session.test.mjs scripts/parent-fixture-build.test.mjs
+python -m unittest discover -s scripts -p test_parent_input.py
 ```
 
 ## Before live selection
 
 A separate driver still needs reviewed profile/process authority, new-domain tickets, clean source and exact image identity, original fresh closed-app/registration preflights, actual SDK launch/pipe/realm observations and independently retained process waits. Idle, explicit add-on disable and browser shutdown are distinct cases. Unknown startup or failed cleanup must preserve the domain and refuse success.
 
-No XPI archive, persistent installation, actual event-page lifetime, private helper readiness, one-controller integration, request/handoff/context association, complete policy enforcement or real-file publication is qualified by this preparation. Those remain requirements in [FIREFOX_PROTECTION_BRIDGE.md](FIREFOX_PROTECTION_BRIDGE.md) and [PROJECT_PLAN.md](PROJECT_PLAN.md).
+Archive integrity and standalone fixture evidence do not qualify persistent installation, actual event-page lifetime, private helper readiness, one-controller integration, request/handoff/context association, complete policy enforcement or real-file publication. Those remain requirements in [FIREFOX_PROTECTION_BRIDGE.md](FIREFOX_PROTECTION_BRIDGE.md) and [PROJECT_PLAN.md](PROJECT_PLAN.md).
