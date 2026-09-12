@@ -4,6 +4,7 @@ Retain the run before execute. Original installation/all-view and BrowserPeer
 preflights remain. No signing override, normal-profile access or PID adoption.
 """
 import copy
+import json
 from functools import wraps
 import os
 from pathlib import Path
@@ -11,7 +12,8 @@ import struct
 import time
 import uuid
 from .browser_peer import BrowserPeer
-from .firefox import Firefox
+from .firefox import Firefox, AutomationError
+from .browser_cases import value
 from .firefox_policy import validate as validate_policy
 from .fixture import Fixture, SMALL_SIZE, expected_sha256
 from .installed import InstalledRun, FAULTS, ordinary, wait
@@ -36,10 +38,20 @@ def retained_failure(method):
     @wraps(method)
     def invoke(self,*args,**kwargs):
         try: return method(self,*args,**kwargs)
-        except BaseException:
+        except BaseException as error:
             self.failed=True
+            self.note_failure(error)
             raise
     return invoke
+
+
+def independent(actions):
+    failure=None
+    for action in actions:
+        try: action()
+        except BaseException as caught:
+            if failure is None or (isinstance(failure,Exception) and not isinstance(caught,Exception)): failure=caught
+    if failure is not None: raise failure
 
 
 class ParentBrowser(Firefox):
@@ -48,15 +60,39 @@ class ParentBrowser(Firefox):
         self.original=self.parent_lease=self.observer=None
         self.load_attempted=self.disable_attempted=self.disabled_observed=self.browser_close_attempted=False
         self.failed=False
+        self.stage='new'
+        self.first_failure=None
+        self.command_failure=None
+        self.control_handle=self.manager_handle=None
+        self.tab_attempted=self.control_switch_attempted=False
+
+    def note_failure(self, error):
+        if self.first_failure is None:
+            self.first_failure={'stage':self.stage,'kind':error.kind if isinstance(error,AutomationError) else 'other'}
+
+    def command(self, name, arguments=None):
+        try: return super().command(name, arguments)
+        except AutomationError as error:
+            if self.command_failure is None:
+                allowed={'Marionette:SetContext','WebDriver:ExecuteScript','WebDriver:ExecuteAsyncScript',
+                         'WebDriver:SwitchToWindow','WebDriver:GetWindowHandle','WebDriver:GetCurrentURL','WebDriver:NewWindow','Marionette:Quit'}
+                self.command_failure={'stage':self.stage,'command':name if name in allowed else 'other','kind':error.kind}
+            raise
 
     @retained_failure
     def start(self):
         if self.failed or self.launch_attempted or self.original is not None or self.parent_lease is not None: raise RuntimeError(ERROR)
+        self.stage='browser-start'
         try: super().start()
         finally: self.original=self.process
+        self.stage='parent-lease'
         reported=self.chrome('return Services.appinfo.processID;')
         self.parent_lease=ProcessLease(self.original,reported,self.executable)
         self.parent_lease.acquire()  # Retained before acquisition and add-on code.
+        self.stage='control-tab-retention'
+        self.control_handle=value(self.command('WebDriver:GetWindowHandle'))
+        if not self.valid_handle(self.control_handle) or value(self.command('WebDriver:GetCurrentURL'))!='about:blank': raise RuntimeError(ERROR)
+        self.stage='observer-install'
         self.observer=ObserverClient(self,str(uuid.uuid4()))
         self.observer.install()
         if self.observer.snapshot()!=0: raise RuntimeError(ERROR)
@@ -66,43 +102,98 @@ class ParentBrowser(Firefox):
     @retained_failure
     def load(self, xpi):
         if self.failed or self.load_attempted or self.parent_lease is None or self.parent_lease.acquired is not True: raise RuntimeError(ERROR)
+        if self.tab_attempted or not self.valid_handle(self.control_handle): raise RuntimeError(ERROR)
+        self.stage='manager-tab-creation'
+        self.tab_attempted=True
+        tab=value(self.command('WebDriver:NewWindow',{'type':'tab'}))
+        if (type(tab) is not dict or set(tab)!={'handle','type'} or tab['type']!='tab'
+                or not self.valid_handle(tab['handle']) or tab['handle']==self.control_handle): raise RuntimeError(ERROR)
+        self.manager_handle=tab['handle']
+        self.command('WebDriver:SwitchToWindow',{'handle':self.manager_handle})
+        self.stage='candidate-load'
         self.load_attempted=True
         super().load(xpi)
         expected={'state':'active','id':'download-manager@halcyonxp.local','version':'0.3.0',
                   'temporary':True,'privateAllowed':False,'persistentBackground':False}
         control(self,'info',expected)
 
+    @staticmethod
+    def valid_handle(handle):
+        return type(handle) is str and handle.isascii() and 0<len(handle)<=128 and all(32<ord(c)<127 for c in handle)
+
+    def select_control(self):
+        # Extension shutdown may remove its UI tab. Do not run disable from that
+        # tab or change close-last-tab preferences. No discovered-window adoption.
+        self.stage='control-tab-selection'
+        if not self.valid_handle(self.control_handle): raise RuntimeError(ERROR)
+        if not self.control_switch_attempted:
+            self.control_switch_attempted=True
+            self.command('WebDriver:SwitchToWindow',{'handle':self.control_handle})
+        # An uncertain selection permits only current-handle/URL observation.
+        if (value(self.command('WebDriver:GetWindowHandle'))!=self.control_handle
+                or value(self.command('WebDriver:GetCurrentURL'))!='about:blank'): raise RuntimeError(ERROR)
+
+    def diagnostic(self):
+        # Bounded facts only; not process authority, policy or a retirement receipt.
+        observer=None
+        if self.observer is not None:
+            e=self.observer.evidence
+            if len(e.records)>1 or any(type(raw) is not str or not raw.isascii() or len(raw)>4096 for raw in e.records): raise RuntimeError(ERROR)
+            observer={'failed':e.failed,'records':list(e.records),'removal_returned':self.observer.removal_returned}
+        lease=None if self.parent_lease is None else {'acquired':self.parent_lease.acquired,'released':self.parent_lease.released,
+                                                     'failed':self.parent_lease.failed,'retained_handles':len(self.parent_lease.handles)}
+        launcher_exit=None if self.original is None else self.original.poll()
+        if launcher_exit is not None and type(launcher_exit) is not int: raise RuntimeError(ERROR)
+        return {'version':1,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
+                'observer':observer,'parent_lease':lease,'launcher_exit_observed':launcher_exit,
+                'failed':self.failed,'load_attempted':self.load_attempted,'disable_attempted':self.disable_attempted,
+                'disabled_observed':self.disabled_observed,'browser_close_attempted':self.browser_close_attempted,
+                'control_tab_retained':self.control_handle is not None,'manager_tab_retained':self.manager_handle is not None,
+                'control_switch_attempted':self.control_switch_attempted,
+                'original_process_retained':self.original is not None and self.process is self.original}
+
     @retained_failure
     def close(self):
         if self.launch_attempted and self.original is None: raise RuntimeError(ERROR)
         if self.original is not None and self.process is not self.original: raise RuntimeError(ERROR)
         if self.load_attempted:
+            if not self.disabled_observed: self.select_control()
             if not self.disable_attempted:
+                self.stage='disable-dispatch'
                 self.disable_attempted=True
                 control(self,'disable',{'state':'disabled'})
                 self.disabled_observed=True
             if not self.disabled_observed:
                 # Unknown command delivery permits fresh metadata observation,
                 # never another disable dispatch or a presumed application state.
+                self.stage='disabled-observation'
                 control(self,'disabled',{'state':'disabled'})
                 self.disabled_observed=True
             if not self.observer.evidence.resource_retired():
+                self.stage='sdk-retirement-observation'
                 wait(lambda: self.observer.snapshot()==1 and self.observer.evidence.resource_retired(),20)
+        self.stage='observer-removal'
         if self.observer is not None and not self.observer.remove(): raise RuntimeError(ERROR)
         error=None
         if not self.browser_close_attempted:
+            self.stage='browser-close'
             self.browser_close_attempted=True
             try: super().close()
-            except BaseException as failure: error=failure
+            except BaseException as failure:
+                error=failure
+                self.note_failure(failure)
         elif not self.closed and self.original is not None:
             # Only continued exact wait/closed-app observations; never repeat Quit.
+            self.stage='browser-wait'
             self.original.wait(timeout=5)
             self._require_apps_closed()
             self.closed=True
         try:
             if self.parent_lease is not None and not self.parent_lease.cleanup_complete():
                 if self.parent_lease.handles and not self.parent_lease.released:
+                    self.stage='parent-lease-observation'
                     wait(self.parent_lease.observe,5)
+                    self.stage='parent-lease-release'
                     self.parent_lease.release()
                 if not self.parent_lease.cleanup_complete(): raise RuntimeError(ERROR)
         except BaseException as failure:
@@ -150,7 +241,7 @@ class ParentInstalledRun(InstalledRun):
     def failure_cleanup(self):
         if self.failure_cleanup_attempted: return
         self.failure_cleanup_attempted=True
-        super().failure_cleanup()
+        independent((super().failure_cleanup,lambda:self.record_diagnostic('parent-cleanup.private.json')))
 
     def cleanup(self):
         if not self.final_cleanup_attempted:
@@ -175,6 +266,18 @@ class ParentInstalledRun(InstalledRun):
         self.report=new_report(self.report)
         self.inputs()
         super().prepare()
+
+    def record_diagnostic(self, name):
+        if name not in ('parent-failure.private.json','parent-cleanup.private.json'): raise RuntimeError(ERROR)
+        if self.plan is not None and self.plan.created:
+            if len(self.browsers)>2: raise RuntimeError(ERROR)
+            with (self.plan.path/name).open('x',encoding='utf-8') as out:
+                json.dump({'version':1,'qualification':False,'browsers':[b.diagnostic() for b in self.browsers]},out)
+
+    def failure_record(self, error):
+        # Neither diagnostic sink may prevent the other or mask cancellation.
+        independent((lambda:super(ParentInstalledRun,self).failure_record(error),
+                     lambda:self.record_diagnostic('parent-failure.private.json')))
 
     def scope(self): return 'owned installed parent transport and manual Firefox UI'
 

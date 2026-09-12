@@ -6,6 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 from qualification import parent_installed as p
+from qualification.firefox import AutomationError
 from test_firefox_policy import baseline
 from qualification.parent_supervisor import ParentSupervisor
 
@@ -15,17 +16,24 @@ class ParentInstalledTests(unittest.TestCase):
         calls=[];b=object.__new__(p.ParentBrowser)
         b.original=b.process=Mock(pid=97);b.original.poll.return_value=0;b.original.wait.return_value=0
         b.automation_policy=baseline();b.automation_policy['preferences']['extensions.experiments.enabled'].update(value=True,user=True)
-        b.failed=False;b.launch_attempted=True;b.closed=False;b.load_attempted=True;b.disable_attempted=b.disabled_observed=b.browser_close_attempted=False
+        b.failed=False;b.stage='model';b.first_failure=None;b.command_failure=None;b.launch_attempted=True;b.closed=False;b.load_attempted=True;b.disable_attempted=b.disabled_observed=b.browser_close_attempted=False
+        b.control_handle='control';b.manager_handle='manager';b.control_switch_attempted=False;b.tab_attempted=True
+        def command(name,args=None):
+            if name=='WebDriver:SwitchToWindow': calls.append('control-select');return None
+            if name=='WebDriver:GetWindowHandle': return {'value':'control'}
+            if name=='WebDriver:GetCurrentURL': return {'value':'about:blank'}
+            raise AssertionError('unexpected model command')
+        b.command=Mock(side_effect=command)
         b.chrome=Mock(side_effect=lambda *a:(calls.append(a[1][0]) or {'state':'disabled'}))
         b._require_apps_closed=Mock(side_effect=lambda:calls.append('closed-apps'))
-        evidence=SimpleNamespace(ready=False)
+        evidence=SimpleNamespace(ready=False,records=(),failed=False)
         evidence.resource_retired=lambda:evidence.ready
         evidence.require_removed=lambda:{'qualified':False,'sdk':True}
         observer=SimpleNamespace(evidence=evidence,removal_returned=False)
         def snapshot(): calls.append('snapshot');evidence.ready=True;return 1
         def remove(): calls.append('observer-remove');observer.removal_returned=True;return True
         observer.snapshot=snapshot;observer.remove=remove;b.observer=observer
-        lease=SimpleNamespace(handles=[1,2],released=False)
+        lease=SimpleNamespace(handles=[1,2],released=False,acquired=True,failed=False)
         lease.cleanup_complete=lambda:lease.released
         lease.observe=lambda:(calls.append('parent-observe') or True)
         def release(): calls.append('parent-release');lease.released=True
@@ -39,7 +47,7 @@ class ParentInstalledTests(unittest.TestCase):
     def test_disable_sdk_pipe_observation_removal_launcher_parent_waits_before_evidence(self):
         b,calls=self.browser()
         with patch.object(p.Firefox,'close',self.closed(calls)): b.close()
-        self.assertEqual(calls,['disable','snapshot','observer-remove','browser-close','parent-observe','parent-release'])
+        self.assertEqual(calls,['control-select','disable','snapshot','observer-remove','browser-close','parent-observe','parent-release'])
         self.assertTrue(b.cleanup_complete());self.assertEqual(b.evidence()['launcher_exit'],0)
         b.original.wait.assert_called_with(timeout=0)
 
@@ -213,6 +221,88 @@ class ParentInstalledTests(unittest.TestCase):
         with self.assertRaises(RuntimeError): supervisor.finish()
         self.assertFalse(r.cleanup());r.failure_cleanup.assert_called_once()
 
+
+    def test_disable_uses_retained_neutral_tab_not_the_extension_tab(self):
+        b,calls=self.browser();selected=['manager'];original=b.command.side_effect
+        def command(name,args=None):
+            if name=='WebDriver:SwitchToWindow': selected[0]=args['handle']
+            return original(name,args)
+        b.command.side_effect=command
+        def control(browser,operation,expected):
+            if selected[0]=='manager':
+                raise AutomationError('WebDriver:ExecuteAsyncScript',{'error':'no such window','message':'private model text'})
+            calls.append(operation)
+        with patch.object(p,'control',side_effect=control),patch.object(p.Firefox,'close',self.closed(calls)):
+            b.close()
+        self.assertEqual(selected[0],'control');self.assertTrue(b.cleanup_complete())
+
+    def test_uncertain_control_selection_is_observed_not_replayed_or_adopted(self):
+        b,calls=self.browser();b.command.side_effect=AutomationError('WebDriver:SwitchToWindow',{'error':'no such window'})
+        with self.assertRaises(AutomationError):b.close()
+        self.assertEqual(b.first_failure,{'stage':'control-tab-selection','kind':'no such window'})
+        self.assertFalse(b.disable_attempted)
+        b.command.side_effect=lambda name,args=None:{'value':'wrong'}
+        with self.assertRaises(RuntimeError):b.close()
+        self.assertEqual(sum(c.args[0]=='WebDriver:SwitchToWindow' for c in b.command.call_args_list),1)
+        self.assertEqual(b.first_failure['kind'],'no such window');self.assertFalse(b.disable_attempted)
+
+    def test_control_handle_with_changed_url_refuses_before_disable(self):
+        b,_=self.browser();b.command.side_effect=lambda name,args=None:({'value':'control'} if name=='WebDriver:GetWindowHandle' else {'value':'about:other'})
+        with patch.object(p.Firefox,'close',self.closed([])):
+            with self.assertRaises(RuntimeError):b.close()
+        b.chrome.assert_not_called();self.assertFalse(b.disable_attempted)
+
+    def test_new_manager_tab_is_retained_before_addon_effects_and_cannot_replay(self):
+        b,_=self.browser();b.load_attempted=False;b.tab_attempted=False;b.manager_handle=None;b.parent_lease.acquired=True
+        def command(name,args=None):
+            if name=='WebDriver:NewWindow': return {'value':{'handle':'new-manager','type':'tab'}}
+            self.assertEqual(args,{'handle':'new-manager'});self.assertEqual(b.manager_handle,'new-manager')
+        b.command.side_effect=command
+        def load(browser,xpi):
+            self.assertTrue(browser.load_attempted);self.assertTrue(browser.tab_attempted);self.assertEqual(browser.manager_handle,'new-manager')
+        with patch.object(p.Firefox,'load',load),patch.object(p,'control'):
+            b.load(Path('metadata-only.xpi'))
+            with self.assertRaises(RuntimeError): b.load(Path('metadata-only.xpi'))
+        self.assertEqual(sum(c.args[0]=='WebDriver:NewWindow' for c in b.command.call_args_list),1)
+
+    def test_failed_tab_creation_does_not_claim_or_dispatch_addon_load(self):
+        b,_=self.browser();b.load_attempted=False;b.tab_attempted=False;b.parent_lease.acquired=True
+        b.command.side_effect=RuntimeError('unknown tab creation')
+        with patch.object(p.Firefox,'load') as load:
+            with self.assertRaises(RuntimeError):b.load(Path('metadata-only.xpi'))
+            with self.assertRaises(RuntimeError):b.load(Path('metadata-only.xpi'))
+        load.assert_not_called();self.assertFalse(b.load_attempted);self.assertTrue(b.tab_attempted)
+
+    def test_first_command_failure_is_not_replaced_by_context_restore_failure(self):
+        b,_=self.browser();b.stage='disable-dispatch';del b.command
+        primary=AutomationError('WebDriver:ExecuteAsyncScript',{'error':'script timeout','message':'not-retained'})
+        restore=AutomationError('Marionette:SetContext',{'error':'no such window'})
+        with patch.object(p.Firefox,'command',side_effect=[primary,restore]):
+            with self.assertRaises(AutomationError):b.command('WebDriver:ExecuteAsyncScript')
+            with self.assertRaises(AutomationError):b.command('Marionette:SetContext',{'value':'content'})
+        self.assertEqual(b.command_failure,{'stage':'disable-dispatch','command':'WebDriver:ExecuteAsyncScript','kind':'script timeout'})
+        self.assertNotIn('not-retained',str(b.diagnostic()))
+
+    def test_bounded_failure_record_survives_ordinary_sink_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            r=p.ParentInstalledRun(Path('unused'),Path('unused'),Path('unused'),'a'*64,Path('unused'),'b'*64,parent_transport_experiment=True)
+            r.plan=SimpleNamespace(path=Path(directory),created=True);b,_=self.browser();r.browsers=[b]
+            error=AutomationError('WebDriver:ExecuteAsyncScript',{'error':'script timeout','message':'must-not-persist-opaque-model-detail'})
+            b.chrome.side_effect=error
+            with self.assertRaises(AutomationError):b.close()
+            with patch.object(p.InstalledRun,'failure_record',side_effect=RuntimeError('ordinary sink')):
+                with self.assertRaises(RuntimeError):r.failure_record(error)
+            self.assertTrue((r.plan.path/'parent-failure.private.json').exists())
+            text=(r.plan.path/'parent-failure.private.json').read_text(encoding='utf-8')
+            self.assertIn('disable-dispatch',text);self.assertIn('script timeout',text);self.assertNotIn('must-not-persist',text)
+
+    def test_independent_cleanup_records_even_on_cancellation_and_does_not_replay(self):
+        r=p.ParentInstalledRun(Path('unused'),Path('unused'),Path('unused'),'a'*64,Path('unused'),'b'*64,parent_transport_experiment=True)
+        r.record_diagnostic=Mock(side_effect=OSError('model sink'));cancelled=KeyboardInterrupt()
+        with patch.object(p.InstalledRun,'failure_cleanup',side_effect=cancelled) as cleanup:
+            with self.assertRaises(KeyboardInterrupt) as caught:r.failure_cleanup()
+            self.assertIs(caught.exception,cancelled);r.failure_cleanup()
+        cleanup.assert_called_once();r.record_diagnostic.assert_called_once_with('parent-cleanup.private.json')
 
     def test_invalid_report_refuses_before_domain_preparation_or_application_effects(self):
         r=p.ParentInstalledRun(Path('unused'),Path('unused'),Path('unused'),'a'*64,Path('unused'),'b'*64,parent_transport_experiment=True)
