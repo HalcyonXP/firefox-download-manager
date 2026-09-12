@@ -13,6 +13,7 @@ Here **fileless** means no download-data file, scan or publication. The diagnost
 | Bootstrap | `extension/parent-probe/api.js` | Explicit SDK globals/imports, fixed no-argument API and nonce-correlated plain observations |
 | Background/schema | `extension/parent-probe/{background.js,schema.json}` | One call, no heartbeat/wakeup/network/capture, no caller-selected native data |
 | Builder | `scripts/build-parent-probe.mjs` | Fresh CLI compiler process, fixed owned inputs, five bounded payloads; no archive or browser launcher |
+| Compiler owner | `scripts/qualification/parent_build.py` | Retained Node process, external input pins, exclusive native metadata copy and archive preparation; no browser/native-fixture execution |
 | Archive input | `scripts/qualification/parent_input.py` | Externally pinned compiler domain/source/image/record, exclusive five-member archive and bounded independent readback; no compiler/native/browser execution |
 | Observer | `scripts/qualification/parent_observer.js` | Separate named chrome sandbox, parent-process check, two bounded original JSON strings, exact collector removal controls |
 | Observation client | `scripts/qualification/parent_observation.py` | One retained automation owner/collector, strict monotonic receipts and sticky command uncertainty; no browser/native launch |
@@ -78,6 +79,24 @@ node --test scripts/parent-observer.test.mjs
 python -m unittest discover -s scripts -p test_parent_observation.py
 ```
 
+## Retained compiler owner
+
+`ParentBuild` produces the archive expectations used by the SDK controller; it is not a live supervisor or a new execution mode. Its caller must retain the object before `execute()`, the already-created `DomainPlan`, and separate provenance for the native fixture image. `BuildPins` is an immutable input record with a tuple of externally reviewed source/compiler identities, source revision/dirty state, Node and fixture-image hashes and nonce. Copying arbitrary input hashes does not prove that an image is executable or that its native compiler was joined.
+
+Only a fresh domain containing its creation witness is accepted. A build claim, native directory, renamed image, fixed native manifest and compiler home/temp directories are exclusive; partial or occupied domains are not adopted or overwritten. Sixteen inputs are pinned, including the seven fixture sources, builder/controller/archive code, package/lock files, esbuild JavaScript and both relevant package manifests plus its Windows binary. Node/image/source hashes and Git state are checked before launch, after the exact compiler wait and after archive readback. The platform package manifest matters because package resolution can otherwise select a different binary without changing the pinned executable file.
+
+The command is fixed to the pinned `node.exe` and `build-parent-probe.mjs`. Its minimal child-only environment places home/temp data in the owned domain, sets synchronous esbuild controls before Node starts, and does not inherit Node preload/search/coverage/warning hooks or a binary override. Standard streams are DEVNULL; no raw compiler diagnostics or paths enter receipts. The controller is Windows64/assertions-only and never changes parent/global environment, normal profiles, registration or protections.
+
+Start intent precedes `Popen`, and the returned process is retained before waiting. The Node wait has a120-second observation budget; timeout or interruption leaves the exact owner retained and permanently disqualifies that attempt. Cleanup may wait it later but never kills/restarts the compiler or restores success. A start attempt without a returned owner stays unknown. Cleanup before execution consumes the controller. Nonzero exits, untyped exit values, changed inputs and mismatched archive readback refuse expectations. A regression first exposed retained output expectations after late receipt construction failed; any failed execution now clears exposed expectations while retaining process ownership and partial files.
+
+Only a successful joined Node invocation and complete pack/inspect/final-input checks expose `BuildExpectation` and the XPI hash. The receipt is explicitly nonqualifying: `compiler_waited` concerns the returned Node process, **not independently acquired esbuild-descendant handles** or the native fixture's earlier compiler. The existing synchronous build path remains separate from an observed Firefox SDK process. `ParentBuild.cleanup_complete()` is correspondingly scoped to its returned Node owner, not arbitrary compiler descendants. It cannot establish native-image provenance or justify exiting a live SDK supervisor with unknown browser/native ownership.
+
+Eleven compiler-owner models and eleven rejected/restored mutations cover fixed inputs/environment, one-shot start, unknown start, actual wait/type checks, timeout followed by later join, final rereads and output revocation. A real retained Node invocation also built and independently reread an exclusive five-payload XPI using deliberately **non-executable native metadata bytes**, with natural Node exit0. That dirty-source interop domain is private and must never be executed, relocated, relabeled clean or published as a candidate. No Firefox or native fixture was launched. The complete live supervisor still needs refusal containment: it must keep unresolved owners alive rather than let a driver exception discard them. Original browser/registration preflights remain prerequisites for later SDK execution, not for this build-only component.
+
+```powershell
+python -m unittest discover -s scripts -p test_parent_build.py
+```
+
 ## Independent observation boundary
 
 The observer/client is a **driver component**, not a complete live driver or a new profile-mode authorization. The caller must separately own and review its disposable Firefox profile/process. No product entry, preference setting, browser launch or native launch selects this component.
@@ -100,7 +119,7 @@ The current client requires a readable owned chrome realm. Explicit add-on disab
 
 ## SDK exchange/disable controller
 
-`ParentRun` is a separate default-off controller library. Its exact-boolean `parent_stdio_experiment=True` mode is not selected by the service-probe CLI or any product. It requires 64-bit Windows with assertions, a retained already-created `DomainPlan`, externally established clean build/archive expectations and an independently pinned Firefox image. There is no compiler or runnable CLI here: the separately reviewed outer supervisor must retain the build/process owners and `ParentRun` **before** calling `execute()`. Metadata-only image domains must never be supplied for execution. Hashes and the build expectation class alone do not establish executable provenance.
+`ParentRun` is a separate default-off controller library. Its exact-boolean `parent_stdio_experiment=True` mode is not selected by the service-probe CLI or any product. It requires 64-bit Windows with assertions, a retained already-created `DomainPlan`, externally established clean build/archive expectations and an independently pinned Firefox image. ParentRun itself supplies no compiler or runnable CLI; the separate ParentBuild handles archive preparation only. The separately reviewed outer supervisor must retain the build/process owners and `ParentRun` **before** calling `execute()`. Metadata-only image domains must never be supplied for execution. Hashes and the build expectation class alone do not establish executable provenance.
 
 The controller exclusively claims a new run ticket before preflight; neither a consumed controller/domain nor an existing profile can be reused. Cleanup before execution also closes that controller permanently. Original closed-app/all-view registration guards run before preparation, immediately before browser ownership and after retirement. Inputs are rechecked before launch, before temporary loading and after shutdown. Isolated home/local/roaming directories and an exclusively new profile are mandatory; no registration or normal-profile operation is selected. This distinct profile mode uses the existing exact experiment preference tuple, not a new protection exception. See [FIREFOX_TEST_POLICY.md](FIREFOX_TEST_POLICY.md).
 
