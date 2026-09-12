@@ -166,6 +166,14 @@ The Windows ABI was checked against SDK10.0.26100.0 headers; 64-bit structure si
 python -m unittest discover -s scripts -p test_process_lease.py
 ```
 
+## Failure containment
+
+`qualification/parent_supervisor.py` retains compiler and SDK controllers before their actions. Cleanup is one-shot and reversed; one failed inverse does not skip another owner. Only exact `cleanup_complete() is True` permits exit. A failed or uncertain attempt stays failed even if later retirement becomes observable. Cancellation propagates only after the retained owners settle.
+
+The fixed local control channel accepts one `start`, read-only `status`, and conditional `finish`. `finish` cannot terminate an unresolved host. EOF, invalid commands, output failure or a failed warning invoke containment rather than discarding controller objects. The owning entry point must remain alive in that hold; it must not wrap the call in an exit/kill timeout. There is no process discovery, arbitrary command, retry, termination fallback or automatic repair of unknown SDK ownership. Holds require ownership review and never qualify acceptance. The supervisor's exit code is not an SDK receipt.
+
+Eleven models cover owner retention, reverse cleanup, sticky failure, cancellation, typed settlement, duplicate start, premature finish and disconnected control. Two actual owned Python process cases also observed premature-finish refusal and EOF containment while a retained fixture remained active. The fixtures exited naturally; the host observed their waits, then its outer owner waited the failed host and joined its reader. No browser/native fixture was executed for these containment checks.
+
 ## Before live selection
 
 A complete independently supervised build/run batch still needs exact compiler/image/Firefox ownership review and actual SDK launch/pipe/realm observations. The controller models are not execution authority or a completed live batch. Idle, explicit add-on disable and browser shutdown remain distinct cases. Unknown startup or failed cleanup must preserve the domain and refuse success.
