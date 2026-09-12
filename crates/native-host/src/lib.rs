@@ -7,6 +7,8 @@
 #[cfg(all(windows, feature = "local-bridge"))]
 mod local_session;
 #[cfg(all(windows, feature = "local-bridge"))]
+mod parent_transport;
+#[cfg(all(windows, feature = "local-bridge"))]
 pub use local_session::LocalSessionEnd;
 mod handoff;
 mod settings;

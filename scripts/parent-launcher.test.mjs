@@ -677,3 +677,16 @@ test("indeterminate SDK startup retains native-port scheduling without claiming 
   assert.equal(await f.owner.start(f.context), false);
   assert.equal(f.calls.length, 1);
 });
+
+test("broker caller check has no launch effects and cannot cache earlier permission", async () => {
+  const f = fixture();
+  f.owner.assertCaller(f.context);
+  assert.equal(f.lookups.length, 0);
+  assert.equal(f.calls.length, 0);
+  assert.throws(() => f.owner.assertCaller({ ...f.context, incognito: true }));
+  f.extension.permitted = false;
+  assert.throws(() => f.owner.assertCaller(f.context));
+  assert.equal(f.calls.length, 0);
+  assert.equal((await f.owner.close()).successful, true);
+  assert.throws(() => f.owner.assertCaller(f.context));
+});

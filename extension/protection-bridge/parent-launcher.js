@@ -104,6 +104,12 @@ export class FixedParentLauncher {
     }
   }
 
+  // Internal brokers need the same live guard even when they are only retaining
+  // a pre-admission Hello. This neither starts a process nor sends a message.
+  assertCaller(context) {
+    this.#requireCaller(context);
+  }
+
   // SDK event-page scheduling tag for this actual retained native-port attempt.
   // This is not peer authentication, process creation or publication authority.
   get native() {

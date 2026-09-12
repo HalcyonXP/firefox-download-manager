@@ -1,4 +1,6 @@
 #![cfg(windows)]
+#[path = "bridge/parent_transport.rs"]
+mod parent_transport;
 use download_manager_companion::worker::Worker;
 use download_manager_engine::{
     persistence::{PersistenceError, TaskState},

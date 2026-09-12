@@ -14,8 +14,8 @@ pub enum LocalSessionEnd {
 
 impl EngineOwner {
     /// Serve one already-authenticated ordinary local controller against this owner.
-    /// Parent-class channels require a separate protected dispatcher; they cannot
-    /// silently enter ordinary handling or select authority through JSON claims.
+    /// Parent-class channels require a separate entry; they cannot silently enter
+    /// this handler or select protection authority through JSON claims.
     /// The mutable borrow prevents concurrent serving through this API. Installed
     /// generation/capability authority must be checked before constructing it.
     /// Signal `stop` and await completion for joined teardown; do not externally
@@ -37,6 +37,36 @@ impl EngineOwner {
             drop(channel);
             return Err(HostError::LocalSession);
         }
+        self.serve_channel(channel, stop).await
+    }
+
+    /// Explicit parent-class transport admission followed by ordinary wire2.
+    /// This does not enable captured handoffs, protection decisions or browser
+    /// policy authority. Default listeners and `serve_local` remain ordinary-only.
+    /// The caller must retain this future through stop and joined completion,
+    /// exactly as for `serve_local`; transport loss never shuts down the engine.
+    ///
+    /// # Errors
+    /// Refuses ordinary peers before I/O, invalid admission, protocol/transport
+    /// failures and incomplete reader retirement. No command is replayed.
+    pub async fn serve_parent_transport(
+        &mut self,
+        channel: Channel<LocalPipe>,
+        stop: &mut oneshot::Receiver<()>,
+    ) -> Result<LocalSessionEnd, HostError> {
+        if channel.peer_class() != PeerClass::BrowserParent {
+            drop(channel);
+            return Err(HostError::LocalSession);
+        }
+        self.serve_channel(channel, stop).await
+    }
+
+    async fn serve_channel(
+        &mut self,
+        channel: Channel<LocalPipe>,
+        stop: &mut oneshot::Receiver<()>,
+    ) -> Result<LocalSessionEnd, HostError> {
+        let parent = channel.peer_class() == PeerClass::BrowserParent;
         let cancellation = channel.cancellation();
         let (mut reader, writer) = channel.split();
         let (inbound, mut received) = mpsc::channel(8);
@@ -68,13 +98,17 @@ impl EngineOwner {
             std::io::sink(),
             Some(self.settings.current.destination.clone().into()),
         );
-        session.handoff_enabled = true;
+        // Existing ordinary handoffs are not a protected-capture dispatcher.
+        session.handoff_enabled = !parent;
         session.writer = SessionOutput::Local(tokio::sync::Mutex::new(writer));
         session.settings = Some(&mut self.settings);
         let outcome = tokio::select! {
             biased;
             _ = stop => Ok(LocalSessionEnd::StopRequested),
             outcome = async {
+                if parent {
+                    super::parent_transport::admit(&session, &mut received).await?;
+                }
                 if negotiate(&mut received, &mut session, &self.engine).await? {
                     run_active_session(&mut received, &mut session, &mut self.engine).await.map(|()| LocalSessionEnd::Disconnected)
                 } else { Ok(LocalSessionEnd::Disconnected) }
