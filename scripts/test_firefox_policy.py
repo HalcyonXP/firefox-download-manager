@@ -61,9 +61,10 @@ class FirefoxPolicyTests(unittest.TestCase):
             weak=baseline();weak['recommended']=True
             browser.chrome=Mock(side_effect=[{'value':True,'user':False},weak])
             with patch.object(firefox.socket,'socket') as reservation,patch.object(firefox.socket,'create_connection',return_value=Mock()), \
-                 patch.object(firefox.subprocess,'Popen',return_value=process):
+                 patch.object(firefox.subprocess,'Popen',return_value=process) as spawn:
                 reservation.return_value.__enter__.return_value.getsockname.return_value=('127.0.0.1',32100)
                 with self.assertRaises(RuntimeError):browser.start()
+            self.assertEqual(spawn.call_args.kwargs.get('cwd'),profile)
             self.assertIs(browser.process,process);self.assertIsNone(browser.automation_policy)
             prefs=(profile/'user.js').read_text(encoding='utf-8')
             self.assertIn('user_pref("remote.prefs.recommended", false);',prefs)

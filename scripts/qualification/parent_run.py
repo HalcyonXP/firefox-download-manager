@@ -209,10 +209,12 @@ class ParentRun:
             self.stage = 'observer-install'
             self.observer = ObserverClient(self.browser, self.expected.nonce)
             self.observer.install()
-            self.stage = 'temporary-load'
+            self.stage = 'input-readback-before-load'
             self._inputs()
+            self.stage = 'fixed-id-absence'
             if self.browser.chrome(CONTROL, ['absent'], True) != {'state':'absent'}:
                 raise RuntimeError('existing parent fixture add-on refused')
+            self.stage = 'temporary-load'
             self.load_attempted = True
             self.load_result = load_observation(self.browser.chrome(LOAD, [str(self.plan.path/'probe'/ARCHIVE), ADDON], True))
             if self.load_result['state'] != 'loaded': raise RuntimeError(ERROR)

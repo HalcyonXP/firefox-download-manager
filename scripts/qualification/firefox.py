@@ -253,7 +253,7 @@ class Firefox:
             f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in preferences.items()), encoding="utf-8")
         self.process = subprocess.Popen([str(self.executable), "-no-remote", "-profile", str(self.profile),
                                          "--marionette", "--remote-allow-system-access", "about:blank"],
-                                        env=self.environment, stdin=subprocess.DEVNULL,
+                                        cwd=self.profile, env=self.environment, stdin=subprocess.DEVNULL,
                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.monotonic() + 30
         while self.connection is None:

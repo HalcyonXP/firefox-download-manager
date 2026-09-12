@@ -269,6 +269,16 @@ class ParentRunTests(unittest.TestCase):
             self.assertFalse(f.owner.cleanup_complete())
             self.assertFalse(f.owner.browser_joined)
 
+    def test_preload_input_and_absence_refusals_have_distinct_stages(self):
+        for options,stage in [({'fault':('input',3)},'input-readback-before-load'),
+                              ({'existing_addon':True},'fixed-id-absence')]:
+            with fixture(**options) as f:
+                with self.assertRaises(RuntimeError):f.owner.execute()
+                evidence=json.loads((f.plan.path/'sdk-failure.private.json').read_text(encoding='utf-8'))
+                self.assertEqual(evidence['stage'],stage)
+                self.assertFalse(evidence['load_attempted'])
+                self.assertTrue(evidence['cleanup_complete'])
+
     def test_late_preflights_and_input_checks_are_not_omitted(self):
         for fault in [('preflight',2),('preflight',3),('input',2),('input',3),('input',4)]:
             with self.subTest(fault=fault), fixture(fault=fault) as f:
