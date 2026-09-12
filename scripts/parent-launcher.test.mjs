@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import vm from "node:vm";
 import { win32 as path } from "node:path";
 import {
   FixedParentLauncher,
@@ -24,6 +25,8 @@ function fixture({ holdLookup = false, holdSpawn = false, holdPipes = false, onD
   const contextHooks = new Set();
   const blockers = new Set();
   const events = new Map();
+  const nativePorts = new WeakSet();
+  const nativePortCalls = [];
   const calls = [];
   const lookups = [];
   const writes = [];
@@ -38,6 +41,7 @@ function fixture({ holdLookup = false, holdSpawn = false, holdPipes = false, onD
   const extension = {
     id: ID,
     hasShutdown: false,
+    persistentBackground: false,
     permitted: true,
     hasPermission: (name) => name === "nativeMessaging" && extension.permitted,
     baseURI: { resolve: (file) => `moz-extension://owned/${file}` },
@@ -55,6 +59,17 @@ function fixture({ holdLookup = false, holdSpawn = false, holdPipes = false, onD
     unloaded: false,
     envType: "addon_parent",
     viewType: "background",
+    isBackgroundContext: true,
+    activeNativePorts: nativePorts,
+    trackNativeAppPort: (port) => {
+      nativePortCalls.push(["track", port]);
+      if (port.native && context.isBackgroundContext && !extension.persistentBackground)
+        context.activeNativePorts.add(port);
+    },
+    untrackNativeAppPort: (port) => {
+      nativePortCalls.push(["untrack", port]);
+      context.activeNativePorts.delete(port);
+    },
     isTopContext: true,
     incognito: false,
     uri: { spec: extension.baseURI.resolve("_generated_background_page.html") },
@@ -168,6 +183,8 @@ function fixture({ holdLookup = false, holdSpawn = false, holdPipes = false, onD
     extensionHooks,
     blockers,
     events,
+    nativePorts,
+    nativePortCalls,
     calls,
     lookups,
     writes,
@@ -527,5 +544,136 @@ test("opaque JSON is frozen before queueing and does not change fixed launch opt
     /parent launch refused/u,
   );
   await f.finish();
+  assert.equal(f.calls.length, 1);
+});
+
+test("own native port keepalive precedes lookup and retains late process and pipe retirement", async () => {
+  const f = fixture({ holdLookup: true, holdSpawn: true, holdPipes: true });
+  const started = f.owner.start(f.context);
+  await flush();
+  const beforeLookup = f.nativePorts.has(f.owner);
+  f.lookup.resolve(f.info);
+  await flush();
+  const retired = f.owner.close();
+  const duringStartup = f.nativePorts.has(f.owner);
+  f.spawn.resolve(f.process);
+  await flush();
+  const duringPipes = f.nativePorts.has(f.owner);
+  f.pipes.resolve();
+  assert.equal(await started, false);
+  const receipt = await retired;
+  assert.equal(receipt.successful, true);
+  assert.equal(beforeLookup, true, "owned native port was not registered before lookup");
+  assert.equal(duringStartup, true);
+  assert.equal(duringPipes, true);
+  assert.equal(f.nativePorts.has(f.owner), false);
+  assert.deepEqual(f.nativePortCalls, [
+    ["track", f.owner],
+    ["untrack", f.owner],
+  ]);
+});
+
+test("pre-existing exact native-port registration is not adopted or reported as clean retirement", async () => {
+  const f = fixture();
+  f.nativePorts.add(f.owner);
+  assert.equal(await f.owner.start(f.context), false);
+  const receipt = await f.owner.close();
+  assert.equal(f.calls.length, 0);
+  assert.equal(f.lookups.length, 0);
+  assert.equal(f.nativePorts.has(f.owner), true);
+  assert.equal(f.nativePortCalls.length, 0);
+  assert.equal(receipt.successful, false, "unknown pre-existing registration reported as clean");
+  assert.equal(f.blockers.size, 1);
+});
+
+test("native-port scheduling requires exact nonpersistent background booleans", async () => {
+  for (const value of [false, 1, undefined]) {
+    const f = fixture();
+    f.context.isBackgroundContext = value;
+    assert.throws(() => f.owner.start(f.context), /parent launch refused/u);
+    assert.equal((await f.finish()).successful, true);
+    assert.equal(f.hooks(), 0);
+    assert.equal(f.lookups.length, 0);
+    assert.equal(f.nativePortCalls.length, 0);
+  }
+  for (const value of [true, 0, undefined]) {
+    const f = fixture();
+    f.extension.persistentBackground = value;
+    assert.throws(() => f.owner.start(f.context), /parent launch refused/u);
+    assert.equal((await f.finish()).successful, true);
+    assert.equal(f.hooks(), 0);
+    assert.equal(f.lookups.length, 0);
+    assert.equal(f.nativePortCalls.length, 0);
+  }
+});
+
+test("uncertain native-port registration or removal retains its exact shutdown guard", async () => {
+  for (const kind of ["missing-add", "throw-after-add", "missing-remove", "replaced-registry"]) {
+    const f = fixture();
+    if (kind === "missing-add") f.context.trackNativeAppPort = () => {};
+    if (kind === "throw-after-add") {
+      f.context.trackNativeAppPort = (port) => {
+        f.nativePorts.add(port);
+        throw new Error("opaque registration failure");
+      };
+    }
+    if (kind === "missing-remove") f.context.untrackNativeAppPort = () => Promise.resolve(true);
+    const started = await f.owner.start(f.context);
+    if (kind === "replaced-registry") f.context.activeNativePorts = new WeakSet();
+    const receipt = await f.owner.close();
+    assert.equal(receipt.successful, false, kind);
+    assert.equal(receipt.hooks_removed, false, kind);
+    assert.equal(f.blockers.size, 1, kind);
+    assert.equal(f.nativePorts.has(f.owner), kind !== "missing-add", kind);
+    assert.equal(started, kind === "missing-remove" || kind === "replaced-registry", kind);
+    assert.equal(f.calls.length, started ? 1 : 0, kind);
+    if (started) assert.equal(receipt.transport.successful, true, kind);
+    assert.equal(f.nativePortCalls.filter(([operation]) => operation === "untrack").length, 0);
+    const blocker = [...f.blockers][0];
+    await assert.rejects(blocker(), /parent launch refused/u);
+  }
+});
+
+test("only the exact owner is tracked in a genuine cross-realm native-port registry", async () => {
+  const f = fixture();
+  const ports = vm.runInNewContext("new WeakSet()");
+  const other = { native: true };
+  ports.add(other);
+  f.context.activeNativePorts = ports;
+  assert.equal(await f.owner.start(f.context), true);
+  assert.equal(f.owner.native, true);
+  assert.throws(() => {
+    f.owner.native = false;
+  }, TypeError);
+  assert.equal(ports.has(f.owner), true);
+  assert.equal((await f.owner.close()).successful, true);
+  assert.equal(ports.has(f.owner), false);
+  assert.equal(ports.has(other), true);
+  assert.deepEqual(f.nativePortCalls, [
+    ["track", f.owner],
+    ["untrack", f.owner],
+  ]);
+
+  const fake = fixture();
+  fake.context.activeNativePorts = { [Symbol.toStringTag]: "WeakSet", has: () => false };
+  assert.equal(await fake.owner.start(fake.context), false);
+  assert.equal((await fake.owner.close()).successful, true);
+  assert.equal(fake.nativePortCalls.length, 0);
+  assert.equal(fake.lookups.length, 0);
+});
+
+test("indeterminate SDK startup retains native-port scheduling without claiming native readiness", async () => {
+  const f = fixture({ holdSpawn: true });
+  const started = f.owner.start(f.context);
+  await flush();
+  f.spawn.reject(new Error("opaque post-invocation failure"));
+  assert.equal(await started, false);
+  const receipt = await f.owner.close();
+  assert.equal(receipt.successful, false);
+  assert.equal(receipt.transport.startup, "indeterminate");
+  assert.equal(receipt.transport.process_waited, false);
+  assert.equal(f.nativePorts.has(f.owner), true);
+  assert.equal(f.blockers.size, 1);
+  assert.equal(await f.owner.start(f.context), false);
   assert.equal(f.calls.length, 1);
 });

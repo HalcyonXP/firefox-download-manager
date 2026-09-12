@@ -83,6 +83,8 @@ export class FixedParentLauncher {
         extension.id === EXTENSION &&
         context.envType === "addon_parent" &&
         context.viewType === "background" &&
+        context.isBackgroundContext === true &&
+        extension.persistentBackground === false &&
         context.isTopContext === true &&
         context.incognito === false &&
         context.uri?.spec === extension.baseURI.resolve("_generated_background_page.html") &&
@@ -102,6 +104,12 @@ export class FixedParentLauncher {
     }
   }
 
+  // SDK event-page scheduling tag for this actual retained native-port attempt.
+  // This is not peer authentication, process creation or publication authority.
+  get native() {
+    return true;
+  }
+
   // A true result observes transport startup only, not a private native Hello,
   // installed authority, captured request, permission to cancel or policy result.
   start(context) {
@@ -114,10 +122,10 @@ export class FixedParentLauncher {
     return this.#startup;
   }
 
-  #register(install, remove, context, barrier = false) {
+  #register(install, remove, context, retainOnFailure = false) {
     // A throwing registration may already have installed its hook. Always retain
     // the exact inverse before attempting it, and never proceed on uncertainty.
-    this.#undo.push({ remove, barrier });
+    this.#undo.push({ remove, retainOnFailure });
     try {
       install();
     } catch {
@@ -125,6 +133,32 @@ export class FixedParentLauncher {
       refused();
     }
     this.#requireCaller(context);
+  }
+
+  #keepAlive(context) {
+    // Inspect membership of this owner only, never enumerate other native ports.
+    const ports = context.activeNativePorts;
+    const contains = WeakSet.prototype.has.bind(ports, this);
+    if (contains()) {
+      // Its provenance is unknown: neither adopt/remove it nor disarm the
+      // shutdown observation by claiming a clean no-invocation retirement.
+      this.#failed = true;
+      refused();
+    }
+    this.#register(
+      () => {
+        if (context.activeNativePorts !== ports) refused();
+        context.trackNativeAppPort(this);
+        if (context.activeNativePorts !== ports || !contains()) refused();
+      },
+      () => {
+        if (context.activeNativePorts !== ports) refused();
+        context.untrackNativeAppPort(this);
+        if (context.activeNativePorts !== ports || contains()) refused();
+      },
+      context,
+      true,
+    );
   }
 
   async #start(context) {
@@ -166,6 +200,7 @@ export class FixedParentLauncher {
         () => extension.off("remove-permissions", removed),
         context,
       );
+      this.#keepAlive(context);
       const info = await platform.lookup(context);
       this.#requireCaller(context);
       const options = launchOptions(info, platform);
@@ -239,10 +274,10 @@ export class FixedParentLauncher {
     const transport = this.#transport === null ? null : await this.#transport.close();
     const disconnected = await this.#disconnect;
     let hooksRemoved = true;
-    const barriers = [];
+    const guards = [];
     for (const undo of this.#undo.splice(0).reverse()) {
-      if (undo.barrier) {
-        barriers.push(undo);
+      if (undo.retainOnFailure) {
+        guards.push(undo);
         continue;
       }
       try {
@@ -254,10 +289,10 @@ export class FixedParentLauncher {
     }
     const settled =
       !this.#failed && disconnected && hooksRemoved && (transport?.successful ?? true);
-    // A failed owner must not silently remove the shutdown failure observation.
-    // Keep the blocker and exact failed inverses retained, not just a Boolean.
-    for (const undo of barriers) {
-      if (!settled) {
+    // Keep failed native-port scheduling and shutdown guards, not just Booleans.
+    // If removing an earlier guard fails, do not disarm the later blocker.
+    for (const undo of guards) {
+      if (!settled || !hooksRemoved) {
         hooksRemoved = false;
         this.#undo.push(undo);
         continue;
