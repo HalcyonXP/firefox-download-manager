@@ -12,9 +12,30 @@
     const { AddonManager } = ChromeUtils.importESModule(
       "resource://gre/modules/AddonManager.sys.mjs",
     );
+    await AddonManager.readyPromise;
+    if (AddonManager.isReady !== true) return null;
     const addon = await AddonManager.getAddonByID(id);
-    if (operation === "absent") return addon === null ? { state: "absent" } : null;
-    if (addon === null) return operation === "disable" ? { state: "absent" } : null;
+    if (AddonManager.isReady !== true) return null;
+    if (operation === "absent" || (operation === "disable" && addon === null)) {
+      // Public lookup can mask provider/database errors as null. Cross-check
+      // only this fixed ID in current XPI state and the active extension map.
+      // These are current in-memory observations, not a filesystem/race proof.
+      const { XPIExports } = ChromeUtils.importESModule(
+        "resource://gre/modules/addons/XPIExports.sys.mjs",
+      );
+      const { ExtensionParent } = ChromeUtils.importESModule(
+        "resource://gre/modules/ExtensionParent.sys.mjs",
+      );
+      if (
+        addon !== null ||
+        XPIExports.XPIInternal.XPIStates.findAddon(id) !== undefined ||
+        ExtensionParent.GlobalManager.getExtension(id) !== undefined ||
+        AddonManager.isReady !== true
+      )
+        return null;
+      return { state: "absent" };
+    }
+    if (addon === null) return null;
     if (
       addon.id !== id ||
       addon.version !== "0.0.1" ||

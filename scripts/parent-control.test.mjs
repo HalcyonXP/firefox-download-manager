@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const source = readFileSync(new URL("qualification/parent_control.js", import.meta.url), "utf8");
 function fixture() {
-  const state = { disables: 0, lookup: 0, channel: "aurora" };
+  const state = { disables: 0, lookup: 0, channel: "aurora", ready: true };
   const addon = {
     id: "download-manager@halcyonxp.local",
     version: "0.0.1",
@@ -38,9 +38,16 @@ function fixture() {
             if (name === "resource://gre/modules/AddonManager.sys.mjs")
               return {
                 AddonManager: {
+                  get readyPromise() {
+                    return state.startup ?? Promise.resolve();
+                  },
+                  get isReady() {
+                    return state.ready;
+                  },
                   async getAddonByID(id) {
                     assert.equal(id, addon.id);
                     state.lookup++;
+                    state.afterLookup?.();
                     return state.absent ? null : addon;
                   },
                 },
@@ -51,7 +58,22 @@ function fixture() {
                   GlobalManager: {
                     getExtension(id) {
                       assert.equal(id, addon.id);
-                      return extension;
+                      state.duringRuntime?.();
+                      return (state.runtimePresent ?? !state.absent) ? extension : undefined;
+                    },
+                  },
+                },
+              };
+            if (name === "resource://gre/modules/addons/XPIExports.sys.mjs")
+              return {
+                XPIExports: {
+                  XPIInternal: {
+                    XPIStates: {
+                      findAddon(id) {
+                        assert.equal(id, addon.id);
+                        state.duringIndex?.();
+                        return (state.indexed ?? !state.absent) ? {} : undefined;
+                      },
                     },
                   },
                 },
@@ -176,4 +198,64 @@ test("preload absence check never treats an installed ID as absent", async () =>
   f.state.absent = true;
   assert.equal((await f.invoke("absent")).state, "absent");
   assert.equal(f.state.disables, 0);
+});
+
+test("masked public lookup failure cannot clear a known own-ID registration", async () => {
+  for (const key of ["indexed", "runtimePresent"]) {
+    const f = fixture();
+    f.state.absent = true;
+    f.state[key] = true;
+    assert.equal(await f.invoke("absent"), null);
+    assert.equal(await f.invoke("disable"), null);
+    assert.equal(f.state.disables, 0);
+  }
+});
+
+test("startup/shutdown state must be ready before controls", async () => {
+  for (const value of [false, 1, undefined]) {
+    const f = fixture();
+    f.state.ready = value;
+    for (const operation of ["absent", "info", "disable"])
+      assert.equal(await f.invoke(operation), null);
+    assert.equal(f.state.lookup, 0);
+    assert.equal(f.state.disables, 0);
+  }
+});
+
+test("retirement during awaited lookup or exact-ID checks refuses", async () => {
+  for (const key of ["afterLookup", "duringIndex", "duringRuntime"]) {
+    const f = fixture();
+    f.state.absent = true;
+    f.state[key] = () => {
+      f.state.ready = false;
+    };
+    assert.equal(await f.invoke("absent"), null);
+    assert.equal(f.state.disables, 0);
+  }
+  const f = fixture();
+  f.state.afterLookup = () => {
+    f.state.ready = false;
+  };
+  assert.equal(await f.invoke("disable"), null);
+  assert.equal(f.state.disables, 0);
+});
+
+test("startup settlement is awaited and failed startup refuses", async () => {
+  const f = fixture();
+  let release;
+  f.state.startup = new Promise((resolve) => {
+    release = resolve;
+  });
+  const pending = f.invoke("info");
+  try {
+    await new Promise(setImmediate);
+    assert.equal(f.state.lookup, 0);
+  } finally {
+    release();
+  }
+  assert.equal((await pending).state, "active");
+  const failed = fixture();
+  failed.state.startup = Promise.reject(Error("modeled startup refusal"));
+  assert.equal(await failed.invoke("info"), null);
+  assert.equal(failed.state.lookup, 0);
 });
