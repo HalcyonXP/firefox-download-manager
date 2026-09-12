@@ -62,6 +62,13 @@ export default tseslint.config(
     },
   },
   {
+    files: ["scripts/qualification/parent_observer.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: { Services: "readonly", arguments: "readonly" },
+    },
+  },
+  {
     files: ["scripts/**/*.mjs", "*.config.mjs"],
     languageOptions: {
       globals: globals.node,

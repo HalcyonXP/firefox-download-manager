@@ -1,6 +1,8 @@
 // SDK-shaped model for the actual compiled bootstrap/launcher/transport bundle.
 // No Firefox, native process, registry, download or policy operation is performed.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import vm from "node:vm";
 import { win32 as path } from "node:path";
 
@@ -21,6 +23,47 @@ export async function verifyBundledFixture(source, nonce, command) {
   const calls = [];
   const writes = [];
   const observations = [];
+  const observers = new Set();
+  const collector = randomUUID();
+  const observerSource = readFileSync("scripts/qualification/parent_observer.js", "utf8");
+  const observerService = {
+    addObserver(observer, topic, weak) {
+      assert.equal(topic, "download-manager-owned-parent-fixture");
+      assert.equal(weak, false);
+      observers.add(observer);
+    },
+    removeObserver(observer, topic) {
+      assert.equal(topic, "download-manager-owned-parent-fixture");
+      assert.equal(observers.delete(observer), true);
+    },
+    notifyObservers(subject, topic, data) {
+      assert.equal(subject, null);
+      assert.equal(topic, "download-manager-owned-parent-fixture");
+      const value = JSON.parse(data);
+      if (!Object.hasOwn(value, "control")) observations.push(value);
+      for (const observer of observers) observer.observe(subject, topic, data);
+    },
+  };
+  const observerSandbox = vm.createContext({
+    Services: { obs: observerService, appinfo: { processType: 0 } },
+  });
+  function collect(operation) {
+    let value = null;
+    let delivered = 0;
+    observerSandbox.arguments = [
+      operation,
+      nonce,
+      collector,
+      (result) => {
+        value = plain(result);
+        delivered++;
+      },
+    ];
+    vm.runInContext(observerSource, observerSandbox);
+    assert.equal(delivered, 1);
+    return value;
+  }
+  let collected;
   const imports = [];
   const blockers = new Set();
   const hooks = new Set();
@@ -175,13 +218,7 @@ export async function verifyBundledFixture(source, nonce, command) {
       isAbsolute: path.isAbsolute,
     },
     Services: {
-      obs: {
-        notifyObservers: (subject, topic, data) => {
-          assert.equal(subject, null);
-          assert.equal(topic, "download-manager-owned-parent-fixture");
-          observations.push(JSON.parse(data));
-        },
-      },
+      obs: observerService,
     },
   });
   sandbox.Cu = {
@@ -197,6 +234,7 @@ export async function verifyBundledFixture(source, nonce, command) {
   let error = null;
   let running = Promise.resolve();
   try {
+    assert.equal(collect("install").state, "active");
     await assert.rejects(caller.run({ host: "other-host" }), /fixture API refused/u);
     assert.equal(calls.length, 0);
     running = caller.run().then(
@@ -246,6 +284,7 @@ export async function verifyBundledFixture(source, nonce, command) {
     await running;
     for (let count = 0; count < 20 && observations.at(-1)?.kind !== "retired"; count++)
       await flush();
+    collected = collect("remove");
   }
   const receipt = observations.at(-1);
   assert.equal(receipt.kind, "retired");
@@ -260,4 +299,13 @@ export async function verifyBundledFixture(source, nonce, command) {
   assert.equal(imports.length, 4);
   await assert.rejects(caller.run(), /fixture API refused/u);
   assert.equal(calls.length, 1);
+  assert.equal(collected.removed, true);
+  assert.equal(collected.failed, false);
+  assert.equal(collected.state, "closed");
+  assert.equal(observers.size, 0);
+  assert.deepEqual(
+    collected.records.map((value) => JSON.parse(value)),
+    observations,
+  );
+  return { nonce, collector, snapshot: collected };
 }

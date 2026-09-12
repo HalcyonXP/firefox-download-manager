@@ -14,6 +14,8 @@ Here **fileless** means no download-data file, scan or publication. The diagnost
 | Background/schema | `extension/parent-probe/{background.js,schema.json}` | One call, no heartbeat/wakeup/network/capture, no caller-selected native data |
 | Builder | `scripts/build-parent-probe.mjs` | Fresh CLI compiler process, fixed owned inputs, five bounded payloads; no archive or browser launcher |
 | Archive input | `scripts/qualification/parent_input.py` | Externally pinned compiler domain/source/image/record, exclusive five-member archive and bounded independent readback; no compiler/native/browser execution |
+| Observer | `scripts/qualification/parent_observer.js` | Separate named chrome sandbox, parent-process check, two bounded original JSON strings, exact collector removal controls |
+| Observation client | `scripts/qualification/parent_observation.py` | One retained automation owner/collector, strict monotonic receipts and sticky command uncertainty; no browser/native launch |
 
 The bootstrap intentionally supplies **owned fixture metadata**, not `NativeManifests.lookupManifest`. It does not inspect or change shared native registration. A fixture result therefore cannot qualify registry lookup, installed-image checks, private native IPC authentication or browser policy.
 
@@ -70,7 +72,29 @@ Maintainer checks, not installation instructions:
 cargo test -p download-manager-test-server --bin download-manager-parent-fixture --features parent-stdio-fixture --locked -j 1
 node --test scripts/parent-fixture-session.test.mjs scripts/parent-fixture-build.test.mjs
 python -m unittest discover -s scripts -p test_parent_input.py
+node --test scripts/parent-observer.test.mjs
+python -m unittest discover -s scripts -p test_parent_observation.py
 ```
+
+## Independent observation boundary
+
+The observer/client is a **driver component**, not a complete live driver or a new profile-mode authorization. The caller must separately own and review its disposable Firefox profile/process. No product entry, preference setting, browser launch or native launch selects this component.
+
+The collector lives in a separately named Marionette chrome sandbox and requires the default parent process. Its controller creates a fresh collector ID distinct from the fixture nonce. Both are correlation labels, not native/browser authentication. Snapshot/removal commands require the same collector; an occupied slot is never replaced or adopted. The exact observer inverse is retained before registration, including registration that acts then throws. The immutable slot remains after removal, so the same sandbox cannot be rearmed.
+
+Only two original ASCII JSON strings of at most8192 bytes each are retained. No API object, extension context, process owner or raw exception is retained in the records. Foreign nonces are ignored; malformed/oversized data, subjects and excess matching notifications cause sticky refusal. Original JSON is preserved rather than parsed and reserialized: the external Python parser must reject duplicate members and nonfinite numbers itself. Invalid records do not become public report content.
+
+Observer removal is separate from native retirement. It first observes a synchronous, collector-bound positive control, then calls the exact removal inverse and checks that a subsequent control does not invoke this observer. It never enumerates unrelated observers. A model first exposed a false removal result when both removal and notifications were silently suppressed; requiring positive control prevents that. Cleanup still attempts the inverse if that control fails. Removal exceptions or late callbacks remain failures, and removal is not blindly retried.
+
+The external validator requires an immutable cumulative prefix, ordered echoed/retired records, the same positive u32 PID, exact booleans and every nested startup/process-exit/actual-pipe/I/O/hook observation. Master `successful:true` cannot replace those checks. Repeated polling of identical records is allowed; duplicate notifications, rewritten prefixes, truncation and PID changes refuse. Exchange, SDK retirement and collector removal are distinct checkpoints, all `qualification:false`; none independently joins the outer Firefox process.
+
+The client retains one verified automation process identity and one named sandbox, restores content context after commands and attempts removal even after uncertain delivery. A reproduced lost-command model initially allowed later valid records to restore success. Command failures now invalidate evidence permanently while retaining cleanup. A separate interruption regression confirmed that cancellation must also invalidate evidence; interruption still propagates rather than being swallowed. A missing/replaced sandbox or failed cleanup cannot create a replacement observer or a successful receipt.
+
+Eleven actual-source observer models, nine Python receipt/client models and thirteen rejected/restored mutations pass. The bundled API/session/launcher/transport model now delivers its actual JSON into a separate collector sandbox; an independently waited Node run also passed those records through the Python validator. These are modeled SDK owners, not native or Firefox execution.
+
+Matching Firefox source review at revision `574c275bcf5b4f86198c979b7e61f4a844aba0ea` covered `remote/marionette/{driver,evaluate}.sys.mjs` and `xpcom/ds/nsObserver{Service,List}.cpp`. Scripts are function-wrapped with an appended asynchronous callback; named sandboxes are cached only while their window remains valid and unchanged. Observer notification invokes a cloned observer list synchronously. Removal during service shutdown can return without acting, whereas notification refuses during shutdown; a returned removal call alone is not evidence. This source review does not establish live realm/global/wire compatibility.
+
+The current client requires a readable owned chrome realm. Explicit add-on disable followed by observed native retirement can be tested before Firefox exits; whole-browser shutdown needs a separately reviewed way to observe late receipts and retain outer/native lifetime evidence. No such shutdown delivery path or complete SDK run/profile controller is implemented here.
 
 ## Before live selection
 
