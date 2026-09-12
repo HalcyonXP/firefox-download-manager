@@ -12,7 +12,10 @@ from qualification import parent_run as run
 
 
 @contextmanager
-def fixture(fault=None, interrupt=None, terminal=True, replacement=False, exit_code=0, reported_pid=1709, receipt=True, existing_addon=False):
+def fixture(fault=None, interrupt=None, terminal=True, replacement=False, exit_code=0, reported_pid=1709, receipt=True, existing_addon=False, child_topology=False, parent_stays_live=False, lease_snapshot_failure=False):
+    for injected in (fault,interrupt):
+        assert injected is None or (type(injected) is tuple and len(injected)==2
+                                    and type(injected[0]) is str and type(injected[1]) is int and injected[1]>0)
     with tempfile.TemporaryDirectory(prefix='parent-controller-model-') as temporary, ExitStack() as stack:
         root = Path(temporary).resolve()
         plan = run.DomainPlan.record(root, root)
@@ -63,6 +66,29 @@ def fixture(fault=None, interrupt=None, terminal=True, replacement=False, exit_c
             def close(self):
                 hit('close')
                 self.closed = True
+        class Lease:
+            def __init__(self, launcher, candidate, image):
+                self.launcher, self.candidate = launcher, candidate
+                self.handles = []; self.released = self.acquired = self.dirty = False
+            def acquire(self):
+                assert owner.parent_lease is self
+                hit('parent-acquire')
+                if lease_snapshot_failure:
+                    self.dirty = True
+                    raise RuntimeError('snapshot inverse refused')
+                if self.candidate != self.launcher.pid and not child_topology: raise RuntimeError('not an owned child')
+                self.handles = [1] if self.candidate == self.launcher.pid else [1,2]
+                self.acquired = True
+            def observe(self):
+                hit('parent-wait')
+                return owner.browser.closed and not parent_stays_live
+            def release(self):
+                hit('parent-release'); self.released = True
+            def cleanup_complete(self): return not self.dirty and (not self.handles or self.released)
+            def receipt(self):
+                if not self.released or not self.acquired: raise RuntimeError('parent not retired')
+                return {'qualification':False,'parent_pid':self.candidate,
+                        'topology':'direct-child' if child_topology else 'same-process'}
         class Observer:
             def __init__(self, browser, nonce):
                 self.removal_attempted = False
@@ -98,7 +124,7 @@ def fixture(fault=None, interrupt=None, terminal=True, replacement=False, exit_c
         clock = iter(range(0, 10000, 21))
         replacements = {'ARTIFACTS':root,'preflight':lambda: hit('preflight'),
             'inspect':lambda *a, **k: (hit('input') or {'qualification':False,'source_commit':expected.commit}),
-            'file_sha256':lambda p: 'e'*64,'new_report':lambda p:p,'Firefox':Browser,'ObserverClient':Observer,
+            'file_sha256':lambda p: 'e'*64,'new_report':lambda p:p,'Firefox':Browser,'ObserverClient':Observer,'ProcessLease':Lease,
             'policy':lambda value, **kw:value,'unchanged_policy':unchanged,'write_report':publish}
         for name, value in replacements.items(): stack.enter_context(patch.object(run, name, value))
         stack.enter_context(patch.object(run.time, 'monotonic', lambda: next(clock)))
@@ -119,6 +145,47 @@ class ParentRunTests(unittest.TestCase):
             self.assertFalse(f.reports[0]['qualification'])
             self.assertFalse(f.reports[0]['browser_shutdown_with_active_native_qualified'])
 
+    def test_separate_parent_is_retained_without_replacing_launcher(self):
+        with fixture(reported_pid=1710, child_topology=True) as f:
+            f.owner.execute()
+            self.assertEqual(f.owner.process.pid,1709)
+            self.assertEqual(f.owner.browser_pid,1710)
+            self.assertTrue(f.owner.parent_lease.released)
+            self.assertEqual(f.reports[0]['browser_parent_owner']['topology'],'direct-child')
+            self.assertLess(f.events.index('parent-acquire'),f.events.index('load'))
+            self.assertLess(f.events.index('parent-release'),f.events.index('report'))
+
+    def test_active_parent_lease_prevents_success_after_launcher_close(self):
+        with fixture(parent_stays_live=True) as f:
+            with self.assertRaises(RuntimeError): f.owner.execute()
+            self.assertTrue(f.owner.browser_joined)
+            self.assertFalse(f.owner.cleanup_complete())
+            self.assertFalse(f.owner.parent_lease.released)
+            self.assertFalse(f.reports)
+
+    def test_parent_acquisition_refusal_precedes_native_loading(self):
+        with fixture(fault=('parent-acquire',1)) as f:
+            with self.assertRaises(RuntimeError):f.owner.execute()
+            self.assertNotIn('load',f.events)
+            self.assertFalse(f.owner.load_attempted)
+            self.assertIsNotNone(f.owner.parent_lease)
+
+    def test_early_control_failure_still_releases_parent_handles(self):
+        with fixture(fault=('policy',1)) as f:
+            with self.assertRaises(RuntimeError):f.owner.execute()
+            self.assertTrue(f.owner.parent_lease.acquired)
+            self.assertTrue(f.owner.parent_lease.released)
+            self.assertTrue(f.owner.cleanup_complete())
+            self.assertFalse(f.reports)
+
+    def test_failed_snapshot_inverse_remains_owned_without_process_handles(self):
+        with fixture(lease_snapshot_failure=True) as f:
+            with self.assertRaises(RuntimeError):f.owner.execute()
+            self.assertTrue(f.owner.browser_joined)
+            self.assertFalse(f.owner.parent_lease.handles)
+            self.assertFalse(f.owner.cleanup_complete())
+            self.assertFalse(f.reports)
+
     def test_default_off_exact_mode_and_retained_domain(self):
         with fixture() as f:
             args = (f.plan,f.expected,'d'*64,f.root/'none','e'*64,f.root/'report.json')
@@ -129,7 +196,7 @@ class ParentRunTests(unittest.TestCase):
             self.assertFalse(f.events)
 
     def test_all_failure_checkpoints_refuse_report_and_keep_browser_owner(self):
-        for phase in ('preflight','input','construct','start','install','load','info','snapshot','disable','remove','policy','close','report'):
+        for phase in ('preflight','input','construct','start','parent-acquire','install','load','info','snapshot','disable','remove','policy','close','parent-wait','parent-release','report'):
             with self.subTest(phase=phase), fixture(fault=(phase,1)) as f:
                 with self.assertRaisesRegex(RuntimeError,'retain controller'): f.owner.execute()
                 self.assertFalse(f.reports)

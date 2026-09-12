@@ -19,6 +19,7 @@ from .installed import ordinary
 from .native import file_sha256
 from .parent_input import ADDON, ARCHIVE, BuildExpectation, inspect
 from .parent_observation import ObserverClient
+from .process_lease import ProcessLease
 from .protection_run import LOAD, load_observation
 from .setup_owner import DomainPlan
 from .support import ARTIFACTS, new_report, write_report
@@ -58,6 +59,7 @@ class ParentRun:
         self.plan, self.expected, self.archive_sha256 = plan, expected, archive_sha256
         self.executable, self.browser_sha256, self.report = executable, browser_sha256, report
         self.browser = self.observer = self.process = None
+        self.parent_lease = None
         self.started = self.load_attempted = self.disable_attempted = False
         self.browser_start_attempted = False
         self.browser_close_attempted = self.cleanup_attempted = False
@@ -105,6 +107,11 @@ class ParentRun:
         self.browser_joined, self.browser_exit = True, code
         if code != 0: raise RuntimeError('successful retained Firefox exit required')
 
+    def _retire_parent_lease(self):
+        if self.parent_lease is None or not self.parent_lease.handles or self.parent_lease.released: return
+        if not self.parent_lease.observe(): raise RuntimeError('retained browser-parent handles remain active')
+        self.parent_lease.release()
+
     def cleanup(self):
         """Best effort once, without dropping owners or converting errors to success."""
         if self.cleanup_attempted: return self.cleanup_complete()
@@ -127,6 +134,7 @@ class ParentRun:
             attempt('observer-remove', remove)
         # Never skip the retained browser owner because a control/observer failed.
         attempt('browser-close', self._close_browser)
+        attempt('parent-lease', self._retire_parent_lease)
         if interruptions: raise interruptions[0]
         return self.cleanup_complete()
 
@@ -136,7 +144,8 @@ class ParentRun:
         # Loading can invoke the SDK before the load response. Missing receipt is
         # UNKNOWN native lifetime, even after observed browser exit/absence.
         native_settled = not self.load_attempted or self.native_receipt is not None
-        return not self.cleanup_errors and browser_settled and native_settled and (self.observer is None or self.observer_removed)
+        lease_settled = self.parent_lease is None or self.parent_lease.cleanup_complete()
+        return not self.cleanup_errors and browser_settled and native_settled and lease_settled and (self.observer is None or self.observer_removed)
 
     def _failure(self):
         value = {'version':1, 'qualification':False,'stage':self.stage,'load_attempted':self.load_attempted,
@@ -145,6 +154,7 @@ class ParentRun:
                  'browser_joined':self.browser_joined,'browser_exit':self.browser_exit,'browser_pid':self.browser_pid,
                  'native_retirement':'observed' if self.native_receipt is not None else 'unknown' if self.load_attempted else 'not-invoked',
                  'observer_removed':self.observer_removed,'cleanup_complete':self.cleanup_complete(),
+                 'parent_handles_released':None if self.parent_lease is None else self.parent_lease.released,
                  'cleanup_errors':list(self.cleanup_errors)}
         try:
             with (self.plan.path / 'sdk-failure.private.json').open('x', encoding='utf-8') as out: json.dump(value,out)
@@ -184,11 +194,17 @@ class ParentRun:
             if self.process is None: raise RuntimeError(ERROR)
             pid = self.process.pid
             reported = self.browser.chrome('return Services.appinfo.processID;')
-            if (type(pid) is not int or not 0 < pid <= 0xffffffff or type(reported) is not int or reported != pid):
+            if (type(pid) is not int or not 0 < pid <= 0xffffffff
+                    or type(reported) is not int or not 0 < reported <= 0xffffffff):
                 raise RuntimeError('parent Firefox process correlation refused')
-            self.browser_pid = pid
+            # Keep the Popen launcher intact; retain a separate same/direct-child
+            # OS owner before opening the diagnostic extension or its native peer.
+            self.parent_lease = ProcessLease(self.process, reported, self.executable)
+            self.parent_lease.acquire()
+            self.browser_pid = reported
             with (self.plan.path/'browser-owner.private.json').open('x', encoding='utf-8') as out:
-                json.dump({'version':1,'qualification':False,'pid':pid,'image_sha256':self.browser_sha256},out)
+                json.dump({'version':1,'qualification':False,'launcher_pid':pid,'parent_pid':reported,
+                           'image_sha256':self.browser_sha256},out)
             self.before = copy.deepcopy(policy(self.browser.automation_policy, fileless_experiment=True))
             self.stage = 'observer-install'
             self.observer = ObserverClient(self.browser, self.expected.nonce)
@@ -217,6 +233,9 @@ class ParentRun:
             self.stage = 'browser-close'
             self._close_browser()
             if not self.browser_joined or self.browser_exit != 0: raise RuntimeError(ERROR)
+            self.stage = 'parent-process-waits'
+            self._retire_parent_lease()
+            parent_receipt = self.parent_lease.receipt()
             self.stage = 'postflight'
             preflight()
             self._inputs()
@@ -226,7 +245,7 @@ class ParentRun:
                 'm5_install_ready':False,'temporary_loading_used':True,'profile_mode':'parent-stdio-experiment',
                 'identity':self.identity,'firefox_exe_sha256':self.browser_sha256,'owned_automation_policy':self.before,
                 'receipt':self.native_receipt,'explicit_disable_observed':True,'browser_joined':True,'browser_exit':0,
-                'browser_pid':self.browser_pid,
+                'browser_pid':self.browser_pid,'launcher_pid':self.process.pid,'browser_parent_owner':parent_receipt,
                 'registration_unchanged_absent':True,'native_retired_before_browser_close':True,
                 'browser_shutdown_with_active_native_qualified':False})
         except BaseException as error:
