@@ -27,6 +27,8 @@ function fixture() {
   const remoteTab = {};
   const context = {
     extension,
+    active: true,
+    unloaded: false,
     envType: "addon_parent",
     viewType: "background",
     isTopContext: true,
@@ -122,6 +124,90 @@ test("registered final-source metadata is copied without sent-header substitutio
   assert.throws(() => JSON.stringify(record), /not serializable/u);
   f.reader.close();
   refuses(() => record.read());
+});
+
+test("inactive or unloaded callers refuse before close-hook registration and lookup", () => {
+  for (const [field, values] of [
+    ["active", [false, undefined, null, 1, "true"]],
+    ["unloaded", [true, undefined, null, 0, "false"]],
+  ]) {
+    for (const value of values) {
+      const f = fixture();
+      try {
+        f.context[field] = value;
+        refuses(() => capture(f));
+        assert.equal(f.closes.length, 0);
+        assert.equal(f.calls.length, 0);
+      } finally {
+        f.reader.close();
+      }
+    }
+  }
+});
+
+test("lifetime changes during hook registration refuse before channel lookup", () => {
+  for (const field of ["active", "unloaded"]) {
+    const f = fixture();
+    try {
+      f.context.callOnClose = (hook) => {
+        f.closes.push(hook);
+        // BaseContext only registers a hook; registration is not a live receipt.
+        f.context[field] = field === "unloaded";
+      };
+      refuses(() => capture(f));
+      assert.equal(f.closes.length, 1);
+      assert.equal(f.calls.length, 0);
+    } finally {
+      f.reader.close();
+    }
+  }
+});
+
+test("cached metadata cannot bypass current caller lifetime checks", () => {
+  for (const field of ["active", "unloaded"]) {
+    const f = fixture();
+    try {
+      const record = capture(f);
+      f.context[field] = field === "unloaded";
+      refuses(() => capture(f));
+      assert.equal(f.calls.length, 1);
+      // A prior copy remains historical information, not current authority.
+      assert.equal(record.read().requestId, "17");
+      f.reader.close();
+      refuses(() => record.read());
+    } finally {
+      f.reader.close();
+    }
+  }
+});
+
+test("final matcher and lifetime getters cannot publish after caller retirement", () => {
+  for (const field of ["active", "unloaded", "reentrant"]) {
+    const f = fixture();
+    try {
+      let matches = 0;
+      f.wrapper.matches = () => {
+        matches++;
+        if (matches === 2) {
+          if (field === "reentrant") {
+            Object.defineProperty(f.context, "active", {
+              get: () => {
+                f.reader.close();
+                return true;
+              },
+            });
+          } else {
+            f.context[field] = field === "unloaded";
+          }
+        }
+        return true;
+      };
+      refuses(() => capture(f));
+      assert.equal(matches, 2);
+    } finally {
+      f.reader.close();
+    }
+  }
 });
 
 test("caller and numeric identity refusal precede registered-channel lookup", () => {

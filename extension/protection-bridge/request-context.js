@@ -131,7 +131,14 @@ export class RegisteredRequestContexts {
     }
   }
 
+  #requireLive(context) {
+    // BaseContext.callOnClose does not close an already-unloaded caller. Read
+    // closure last: even a reentrant lifetime getter must not revive this owner.
+    if (context.active !== true || context.unloaded !== false || this.#closed) refused();
+  }
+
   #capture(context, requestId, tabId) {
+    this.#requireLive(context);
     if (
       this.#closed ||
       context.extension !== this.#extension ||
@@ -158,6 +165,7 @@ export class RegisteredRequestContexts {
         refused();
       }
     }
+    this.#requireLive(context);
     const prior = this.#records.get(requestId);
     if (prior) {
       if (prior.read().tabId !== tabId) refused();
@@ -208,6 +216,7 @@ export class RegisteredRequestContexts {
     defaultAttributes(loadInfo.originAttributes, this.#platform);
     const stillMatches = wrapper.matches({ types: ["main_frame"], incognito: false }, policy);
     if (this.#closed || stillMatches !== true) refused();
+    this.#requireLive(context);
     const snapshot = new RequestMetadata(
       { requestId, tabId, sourceURI, referrerInfo, redirects },
       () => this.#records.delete(requestId),
