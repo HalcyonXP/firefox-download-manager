@@ -36,7 +36,22 @@ export default tseslint.config(
     },
   },
   {
-    files: ["extension/protection-probe/probe.js"],
+    files: ["extension/parent-probe/api.js"],
+    languageOptions: {
+      globals: {
+        ExtensionAPI: "readonly",
+        Cu: "readonly",
+        ChromeUtils: "readonly",
+        Services: "readonly",
+        PathUtils: "readonly",
+        __OWNED_FIXTURE_NONCE__: "readonly",
+        __OWNED_FIXTURE_COMMAND__: "readonly",
+        __OWNED_FIXTURE_MANIFEST__: "readonly",
+      },
+    },
+  },
+  {
+    files: ["extension/protection-probe/probe.js", "extension/parent-probe/background.js"],
     languageOptions: { sourceType: "script", globals: { ...globals.browser, browser: "readonly" } },
   },
   {
