@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { lstat, readFile } from "node:fs/promises";
-import { repositoryFindings } from "./repository-policy.mjs";
+import { isLocalInstructionPath, repositoryFindings } from "./repository-policy.mjs";
 
 async function main() {
   const files = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8", stdio: "pipe" })
@@ -8,6 +8,11 @@ async function main() {
     .filter(Boolean);
   let failures = 0;
   for (const [index, file] of files.entries()) {
+    if (isLocalInstructionPath(file)) {
+      console.error(`Tracked file #${index + 1}: local instruction file refused`);
+      failures += 1;
+      continue; // Never read or print local instruction contents.
+    }
     if ((await lstat(file)).isSymbolicLink()) throw new Error("Symlinks require review");
     for (const finding of repositoryFindings(await readFile(file, "utf8"))) {
       console.error(`Tracked file #${index + 1}, line ${finding.line}: ${finding.category}`);

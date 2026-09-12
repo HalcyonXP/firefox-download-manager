@@ -1,0 +1,20 @@
+{
+  "protocol_version": 2,
+  "correlation_id": "extension-start-1",
+  "kind": "response",
+  "command": "hello",
+  "ok": true,
+  "result": {
+    "selected_version": 2,
+    "helper_version": "0.1.0",
+    "capabilities": [
+      "snapshots",
+      "coalesced_progress",
+      "authenticated_requests",
+      "sha256",
+      "prepared_handoff",
+      "task_handoff_phase"
+    ],
+    "max_message_bytes": 1048576
+  }
+}

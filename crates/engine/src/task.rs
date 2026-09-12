@@ -18,13 +18,25 @@ use tokio::runtime::Handle;
 use tokio::sync::{Notify, watch};
 use tokio::time::MissedTickBehavior;
 
+#[cfg(test)]
+mod coordinator_tests;
+mod coordinators;
+use coordinators::{Admission, Coordinators, RunOwner};
+
+mod protection;
+use protection::require_live_protection;
+pub use protection::{ProtectionDecision, ProtectionGate, ProtectionReceiver, ProtectionRequest};
+
+mod handoff;
+pub use handoff::{HandoffRequest, HandoffSnapshot};
+
 use crate::auth::{ContextError, RequestContext};
 use crate::integrity::ExpectedSha256;
 use crate::network::{ProbeClient, ProbeError, RangeValidationError, ResourceProbe};
 use crate::persistence::{
-    CheckpointOutcome, CheckpointUrgency, CleanupOutcome, LoadFailure, PartialCleanup,
-    PersistenceError, ResourceIdentity, StateValidationError, TaskId, TaskMetadata, TaskState,
-    TaskStore, TimestampMillis, TransferMode,
+    CheckpointOutcome, CheckpointUrgency, CleanupOutcome, HandoffPhase, LoadFailure,
+    PartialCleanup, PersistenceError, ResourceIdentity, StateValidationError, TaskId, TaskMetadata,
+    TaskState, TaskStore, TimestampMillis, TransferMode,
 };
 use crate::progress::{
     MAX_SAFE_INTEGER, ProgressConfigError, ProgressEstimate, ProgressPolicy, SpeedEstimator,
@@ -264,6 +276,10 @@ pub enum CancelPartialPolicy {
 pub enum TaskFailureKind {
     /// Optional user checksum failed before publication.
     ChecksumMismatch,
+    /// The trusted protection owner refused publication.
+    ProtectionBlocked,
+    /// A required current protection owner/result is missing or uncertain.
+    ProtectionUnavailable,
     /// Recovery lost the memory-only session.
     AuthRequired,
     /// Server denied access or a transferred cookie expired.
@@ -402,6 +418,7 @@ impl TaskProgress {
 #[derive(Clone, PartialEq, Eq)]
 pub struct TaskSnapshot {
     task_id: TaskId,
+    handoff_phase: Option<HandoffPhase>,
     display_name: String,
     destination: PathBuf,
     source_origin: String,
@@ -419,6 +436,12 @@ pub struct TaskSnapshot {
 }
 
 impl TaskSnapshot {
+    /// Durable handoff phase, independent of the ordinary transfer lifecycle.
+    #[must_use]
+    pub const fn handoff_phase(&self) -> Option<HandoffPhase> {
+        self.handoff_phase
+    }
+
     /// Stable task ID.
     #[must_use]
     pub const fn task_id(&self) -> TaskId {
@@ -515,6 +538,7 @@ impl fmt::Debug for TaskSnapshot {
         formatter
             .debug_struct("TaskSnapshot")
             .field("task_id", &self.task_id)
+            .field("handoff_phase", &self.handoff_phase)
             .field("display_name", &"<redacted>")
             .field("destination", &"<redacted>")
             .field("source_origin", &self.source_origin)
@@ -871,6 +895,10 @@ pub struct TaskEngine {
 
 struct TaskEngineInner {
     store: Arc<TaskStore>,
+    protection: Option<ProtectionGate>,
+    coordinators: Coordinators,
+    #[cfg(test)]
+    coordinator_test: Mutex<Option<Arc<coordinator_tests::Tail>>>,
     scheduler: DownloadScheduler,
     probe_client: ProbeClient,
     options: TaskEngineOptions,
@@ -899,6 +927,7 @@ struct ManagedTask {
 
 struct ManagedState {
     metadata: TaskMetadata,
+    fresh_protection_binding: bool,
     source_origin: String,
     workers: WorkerCount,
     partial: Option<PartialFile>,
@@ -920,6 +949,7 @@ impl fmt::Debug for ManagedState {
         formatter
             .debug_struct("ManagedState")
             .field("metadata", &self.metadata)
+            .field("fresh_protection_binding", &self.fresh_protection_binding)
             .field("source_origin", &self.source_origin)
             .field("workers", &self.workers)
             .field("has_partial", &self.partial.is_some())
@@ -989,6 +1019,29 @@ impl TaskEngine {
         options: TaskEngineOptions,
         scheduler: DownloadScheduler,
     ) -> Result<Self, TaskEngineError> {
+        Self::open_inner(state_root, options, scheduler, None)
+    }
+
+    /// Opens with one opt-in trusted native protection receiver. No wire selection
+    /// or Firefox policy implementation is implied. Recovered protected tasks have
+    /// no live browser binding and cannot execute, even with a new receiver.
+    /// # Errors
+    /// Refuses unsafe stores and invalid client configuration.
+    pub fn open_with_protection(
+        state_root: &Path,
+        options: TaskEngineOptions,
+        scheduler: DownloadScheduler,
+        protection: ProtectionGate,
+    ) -> Result<Self, TaskEngineError> {
+        Self::open_inner(state_root, options, scheduler, Some(protection))
+    }
+
+    fn open_inner(
+        state_root: &Path,
+        options: TaskEngineOptions,
+        scheduler: DownloadScheduler,
+        protection: Option<ProtectionGate>,
+    ) -> Result<Self, TaskEngineError> {
         let store = TaskStore::open(state_root)?;
         let loaded = store.load_all()?;
         let probe_client = ProbeClient::with_admission(scheduler.admission())
@@ -1010,6 +1063,10 @@ impl TaskEngine {
         Ok(Self {
             inner: Arc::new(TaskEngineInner {
                 store: Arc::new(store),
+                protection,
+                coordinators: Coordinators::default(),
+                #[cfg(test)]
+                coordinator_test: Mutex::new(None),
                 scheduler,
                 probe_client,
                 options,
@@ -1163,14 +1220,19 @@ impl TaskEngine {
     ///
     /// Rejects missing, running, or non-queued tasks and persistence failures.
     pub fn start(&self, task_id: TaskId) -> Result<TaskSnapshot, TaskEngineError> {
+        let admission = self.inner.coordinators.admit()?;
         let task = self.task(task_id)?;
         let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
         let (snapshot, previous, generation, cancellation) = {
             let mut state = lock(&task.state);
             ensure_present(&state)?;
-            if state.running || state.metadata.state() != TaskState::Queued {
+            if state.running
+                || state.metadata.state() != TaskState::Queued
+                || state.metadata.handoff_phase() == Some(HandoffPhase::Prepared)
+            {
                 return Err(TaskEngineError::InvalidTaskState);
             }
+            require_live_protection(&self.inner, &state)?;
             let previous = state.metadata.state();
             let timestamp = next_timestamp(&state.metadata)?;
             let before = state.metadata.clone();
@@ -1190,7 +1252,14 @@ impl TaskEngine {
             (snapshot, previous, generation, cancellation)
         };
         self.emit_state_changed(snapshot.clone(), previous);
-        self.spawn_run(&runtime, task, generation, cancellation, RunKind::Initial);
+        self.spawn_run(
+            &runtime,
+            task,
+            generation,
+            cancellation,
+            RunKind::Initial,
+            admission,
+        );
         Ok(snapshot)
     }
 
@@ -1213,21 +1282,32 @@ impl TaskEngine {
         if is_failed {
             return self.retry(task_id);
         }
-        let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
         let mut subscription = task.updates.subscribe();
-        let (generation, cancellation) = {
-            let mut state = lock(&task.state);
-            ensure_present(&state)?;
-            if state.running || state.metadata.state() != TaskState::Paused {
-                return Err(TaskEngineError::InvalidTaskState);
-            }
-            state.failure = None;
-            state.estimator.reset();
-            let run = begin_run(&mut state)?;
-            publish(&task, &state);
-            run
-        };
-        self.spawn_run(&runtime, task, generation, cancellation, RunKind::Resume);
+        {
+            let admission = self.inner.coordinators.admit()?;
+            let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
+            let (generation, cancellation) = {
+                let mut state = lock(&task.state);
+                ensure_present(&state)?;
+                if state.running || state.metadata.state() != TaskState::Paused {
+                    return Err(TaskEngineError::InvalidTaskState);
+                }
+                require_live_protection(&self.inner, &state)?;
+                state.failure = None;
+                state.estimator.reset();
+                let run = begin_run(&mut state)?;
+                publish(&task, &state);
+                run
+            };
+            self.spawn_run(
+                &runtime,
+                task,
+                generation,
+                cancellation,
+                RunKind::Resume,
+                admission,
+            );
+        }
         wait_until(&mut subscription, |update| {
             update.snapshot.state() != TaskState::Paused || !update.running
         })
@@ -1241,6 +1321,7 @@ impl TaskEngine {
     ///
     /// Rejects missing, running, or non-failed tasks and persistence failures.
     pub fn retry(&self, task_id: TaskId) -> Result<TaskSnapshot, TaskEngineError> {
+        let admission = self.inner.coordinators.admit()?;
         let task = self.task(task_id)?;
         let runtime = Handle::try_current().map_err(|_| TaskEngineError::RuntimeUnavailable)?;
         let (queued, previous) = {
@@ -1249,6 +1330,7 @@ impl TaskEngine {
             if state.running || state.metadata.state() != TaskState::Failed {
                 return Err(TaskEngineError::InvalidTaskState);
             }
+            require_live_protection(&self.inner, &state)?;
             let previous = state.metadata.state();
             let queued_at = next_timestamp(&state.metadata)?;
             let failed = state.metadata.clone();
@@ -1269,7 +1351,10 @@ impl TaskEngine {
         let (probing, generation, cancellation) = {
             let mut state = lock(&task.state);
             ensure_present(&state)?;
-            if state.running || state.metadata.state() != TaskState::Queued {
+            if state.running
+                || state.metadata.state() != TaskState::Queued
+                || state.metadata.handoff_phase() == Some(HandoffPhase::Prepared)
+            {
                 return Err(TaskEngineError::InvalidTaskState);
             }
             let probing_at = next_timestamp(&state.metadata)?;
@@ -1289,7 +1374,14 @@ impl TaskEngine {
             (publish(&task, &state), generation, cancellation)
         };
         self.emit_state_changed(probing.clone(), TaskState::Queued);
-        self.spawn_run(&runtime, task, generation, cancellation, RunKind::Initial);
+        self.spawn_run(
+            &runtime,
+            task,
+            generation,
+            cancellation,
+            RunKind::Initial,
+            admission,
+        );
         Ok(probing)
     }
 
@@ -1348,7 +1440,9 @@ impl TaskEngine {
         let direct = {
             let mut state = lock(&task.state);
             ensure_present(&state)?;
-            if !state.metadata.state().allows(TaskState::Cancelled) || state.stop_request.is_some()
+            if state.metadata.handoff_phase() == Some(HandoffPhase::Prepared)
+                || !state.metadata.state().allows(TaskState::Cancelled)
+                || state.stop_request.is_some()
             {
                 return Err(TaskEngineError::InvalidTaskState);
             }
@@ -1401,7 +1495,10 @@ impl TaskEngine {
         {
             let mut state = lock(&task.state);
             ensure_present(&state)?;
-            if state.running || !state.metadata.state().is_terminal() {
+            if state.running
+                || !state.metadata.state().is_terminal()
+                || state.metadata.handoff_phase().is_some()
+            {
                 return Err(TaskEngineError::InvalidTaskState);
             }
             let cleanup = if delete_partial {
@@ -1433,14 +1530,19 @@ impl TaskEngine {
         Ok(task_id)
     }
 
-    /// Cooperatively stops every active run for Native Messaging EOF/shutdown.
+    /// Closes new-run admission and joins every retained coordinator, including
+    /// those already reporting inactive, for Native Messaging EOF/shutdown.
     /// Downloading work reaches `paused`; interrupted probe/validation phases
     /// fail safely; promotion is allowed to finish its synchronous publication.
     ///
     /// # Errors
     ///
-    /// Returns only if an internal task update channel disappears unexpectedly.
+    /// Reports failed coordinator joins or inconsistent active state only after
+    /// awaiting all retained coordinators. Cancelling this future retains their
+    /// handles; another shutdown call can complete retirement. This engine no
+    /// longer admits start/retry/resume or new handoff commits after shutdown.
     pub async fn shutdown(&self) -> Result<Vec<TaskSnapshot>, TaskEngineError> {
+        let (runs, mut failed) = self.inner.coordinators.close();
         let tasks: Vec<_> = lock(&self.inner.tasks).values().cloned().collect();
         for task in &tasks {
             let mut state = lock(&task.state);
@@ -1451,17 +1553,20 @@ impl TaskEngine {
                 continue;
             }
             state.stop_request = Some(StopRequest::Shutdown);
-            state
-                .cancellation
-                .as_ref()
-                .ok_or(TaskEngineError::Internal)?
-                .cancel();
+            if let Some(cancellation) = &state.cancellation {
+                cancellation.cancel();
+            } else {
+                failed = true;
+            }
+        }
+        for run in runs {
+            failed |= !run.join().await;
         }
         for task in tasks {
-            let mut receiver = task.updates.subscribe();
-            if receiver.borrow().running {
-                wait_until(&mut receiver, |update| !update.running).await?;
-            }
+            failed |= lock(&task.state).running;
+        }
+        if failed {
+            return Err(TaskEngineError::Internal);
         }
         Ok(self.snapshots())
     }
@@ -1520,7 +1625,8 @@ impl TaskEngine {
         Ok(TaskSubscription { receiver })
     }
 
-    /// Waits until the current run is no longer active.
+    /// Waits until the current run is no longer active. This is a state
+    /// observation, not a coordinator join; use shutdown for complete retirement.
     ///
     /// # Errors
     ///
@@ -1596,11 +1702,19 @@ impl TaskEngine {
         generation: u64,
         cancellation: TransferCancellation,
         kind: RunKind,
+        admission: Admission<'_>,
     ) {
         let inner = Arc::clone(&self.inner);
-        runtime.spawn(async move {
+        let handle = runtime.spawn(async move {
             run_task(inner, task, generation, cancellation, kind).await;
         });
+        let owner = Arc::new(RunOwner::new(handle));
+        #[cfg(test)]
+        if let Some(tail) = lock(&self.inner.coordinator_test).as_ref() {
+            let observed = Arc::clone(&owner);
+            tail.retain(async move { observed.join().await });
+        }
+        admission.retain(owner);
     }
 
     fn emit_state_changed(&self, snapshot: TaskSnapshot, previous_state: TaskState) {
@@ -1633,6 +1747,7 @@ impl ManagedState {
         let resource = self.metadata.resource();
         TaskSnapshot {
             task_id: self.metadata.task_id(),
+            handoff_phase: self.metadata.handoff_phase(),
             display_name: self
                 .metadata
                 .final_path()
@@ -1655,6 +1770,24 @@ impl ManagedState {
             failure: self.failure,
         }
     }
+}
+
+async fn complete_transfer_attempt(
+    inner: &TaskEngineInner,
+    task: &Arc<ManagedTask>,
+    generation: u64,
+    partial: &PartialFile,
+    cancellation: &TransferCancellation,
+) {
+    if let Err(failure) = checkpoint_boundary(inner, task, generation, partial) {
+        fail_run(inner, task, generation, failure);
+    } else if cancellation.is_cancelled() {
+        finish_stop(inner, task, generation);
+    } else {
+        complete_run(inner, task, generation, partial, cancellation).await;
+    }
+    #[cfg(test)]
+    coordinator_tests::at_tail(inner).await;
 }
 
 async fn run_task(
@@ -1685,13 +1818,7 @@ async fn run_task(
         .await;
         match transfer {
             Ok(()) => {
-                if let Err(failure) = checkpoint_boundary(&inner, &task, generation, &partial) {
-                    fail_run(&inner, &task, generation, failure);
-                } else if cancellation.is_cancelled() {
-                    finish_stop(&inner, &task, generation);
-                } else {
-                    complete_run(&inner, &task, generation, &partial, &cancellation).await;
-                }
+                complete_transfer_attempt(&inner, &task, generation, &partial, &cancellation).await;
                 return;
             }
             Err(TransferAttemptError::Checkpoint(failure)) => {
@@ -1957,7 +2084,7 @@ async fn probe_with_retries(
     cancellation: &TransferCancellation,
     budget: &mut RetryBudget,
 ) -> Result<ResourceProbe, RunError> {
-    let context = {
+    let (context, protected) = {
         let tasks = lock(&inner.tasks);
         let task = tasks
             .get(&task_id)
@@ -1970,11 +2097,37 @@ async fn probe_with_retries(
                 TaskFailureKind::AuthRequired,
             )));
         }
-        state.context.clone()
+        require_live_protection(inner, &state).map_err(|_| {
+            RunError::Failed(TaskFailure::new(TaskFailureKind::ProtectionUnavailable))
+        })?;
+        (state.context.clone(), state.metadata.requires_protection())
     };
     loop {
+        if protected
+            && !inner
+                .protection
+                .as_ref()
+                .is_some_and(ProtectionGate::is_available)
+        {
+            return Err(RunError::Failed(TaskFailure::new(
+                TaskFailureKind::ProtectionUnavailable,
+            )));
+        }
+        let probe = async {
+            if protected {
+                inner
+                    .probe_client
+                    .probe_anonymous_without_redirects(url)
+                    .await
+            } else {
+                inner
+                    .probe_client
+                    .probe_with_context(url, context.clone())
+                    .await
+            }
+        };
         let result = tokio::select! {
-            result = inner.probe_client.probe_with_context(url, context.clone()) => result,
+            result = probe => result,
             () = cancellation.cancelled() => return Err(RunError::Cancelled),
         };
         match result {
@@ -2169,11 +2322,21 @@ async fn complete_run(
         finish_stop(inner, task, generation);
         return;
     }
-    let expected = lock(&task.state).metadata.expected_sha256();
+    let (expected, protected) = {
+        let state = lock(&task.state);
+        (
+            state.metadata.expected_sha256(),
+            state.metadata.requires_protection(),
+        )
+    };
     let owned_partial = partial.clone();
     let signal = cancellation.clone();
     let validation = tokio::task::spawn_blocking(move || {
-        owned_partial.validate(expected, || signal.is_cancelled())
+        if protected {
+            owned_partial.validate_with_fingerprint(expected, || signal.is_cancelled())
+        } else {
+            owned_partial.validate(expected, || signal.is_cancelled())
+        }
     })
     .await;
     let lease = match validation {
@@ -2205,16 +2368,12 @@ async fn complete_run(
         finish_stop(inner, task, generation);
         return;
     }
-    if let Err(failure) = enter_run_state(inner, task, generation, TaskState::Promoting) {
-        drop(lease);
-        finish_or_fail_completion(inner, task, generation, failure);
-        return;
-    }
-
-    let mut promotion = match lease.promote() {
+    let publication =
+        protection::publish_validated(inner, task, generation, lease, cancellation).await;
+    let mut promotion = match publication {
         Ok(promotion) => promotion,
-        Err(error) => {
-            fail_run(inner, task, generation, failure_from_storage(&error));
+        Err(failure) => {
+            finish_or_fail_completion(inner, task, generation, failure);
             return;
         }
     };
@@ -2731,6 +2890,7 @@ fn managed_task(
     };
     let state = ManagedState {
         metadata,
+        fresh_protection_binding: false,
         source_origin,
         workers,
         partial: None,

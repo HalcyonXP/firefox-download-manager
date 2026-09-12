@@ -17,6 +17,8 @@ jobs:
     name: Windows quality gates
     runs-on: windows-latest
     timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: "1"
     steps:
       - name: Check out repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -48,6 +50,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 
       - name: Test Rust
+        id: rust_tests
         run: cargo test --workspace --all-features --locked
 
       - name: Repeat cancellation regressions
@@ -61,13 +64,56 @@ jobs:
       - name: Build Rust
         run: cargo build --workspace --all-features --locked
 
-      - name: Test package allowlist and deterministic archives
-        run: python -m unittest discover -s scripts -p "test_build_package.py"
+      - name: Test all qualification policies and builders without browser execution
+        env:
+          PYTHONUTF8: "1"
+        run: python -m unittest discover -s scripts -p "test_*.py"
 
-      - name: Test qualification fixture and reporting boundaries
-        run: python -m unittest discover -s scripts -p "test_qualification.py"
+      - name: Upload extension build
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: extension-dist
+          path: extension/dist
+          if-no-files-found: error
+
+      - name: Observe isolated script startup after failed Rust gate
+        if: ${{ failure() && steps.rust_tests.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          if (!(Test-Path artifacts -PathType Container)) { New-Item -ItemType Directory artifacts | Out-Null }
+          ./scripts/diagnose-private-startup.ps1 -Report artifacts/private-startup-diagnostics.json
+
+      - name: Upload non-qualifying startup observations
+        if: ${{ failure() && steps.rust_tests.outcome == 'failure' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: private-startup-quality-diagnostics
+          path: artifacts/private-startup-diagnostics.json
+          if-no-files-found: error
+
+  package:
+    name: Windows package qualification
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: "1"
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install JavaScript dependencies
+        run: npm ci
 
       - name: Build checksummed Windows x64 candidate
+        id: candidate
         shell: pwsh
         run: ./scripts/build-package.ps1 -TestRust -Rebuild
 
@@ -129,16 +175,24 @@ jobs:
             artifacts/native-evidence.json
           if-no-files-found: error
 
-      - name: Upload extension build
+      - name: Observe isolated script startup after failed Rust gate
+        if: ${{ failure() && steps.candidate.outcome == 'failure' }}
+        shell: pwsh
+        run: |
+          if (!(Test-Path artifacts -PathType Container)) { New-Item -ItemType Directory artifacts | Out-Null }
+          ./scripts/diagnose-private-startup.ps1 -Report artifacts/private-startup-diagnostics.json
+
+      - name: Upload non-qualifying startup observations
+        if: ${{ failure() && steps.candidate.outcome == 'failure' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: extension-dist
-          path: extension/dist
+          name: private-startup-package-diagnostics
+          path: artifacts/private-startup-diagnostics.json
           if-no-files-found: error
 
   windows11-emulation:
     name: Windows 11 x64-emulation package lifecycle
-    needs: quality
+    needs: [quality, package]
     runs-on: windows-11-arm
     timeout-minutes: 15
     steps:

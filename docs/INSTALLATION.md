@@ -1,4 +1,6 @@
-# Windows 11 / Firefox Developer Edition installation
+# v0.1.0 installation — historical manual/temporary workflow
+
+These instructions describe the immutable v0.1.0 release, not the next-release installation target. M5 uses a persistent **unsigned personal XPI**, with existing Firefox settings and protections unchanged and no signing/account workflow. See [USER_WORKFLOW.md](USER_WORKFLOW.md); that complete workflow is not yet qualified.
 
 Use a qualified release from **https://github.com/HalcyonXP/firefox-download-manager/releases**. CI candidates and development builds are not release approval. The release notes identify the tested ZIP checksum and limitations. First-party code is MIT licensed (`LICENSE.txt`); third-party notices are included separately. Retain the applicable license/notices when redistributing. A FOSS license does not authenticate a download.
 
@@ -25,7 +27,7 @@ Use a qualified release from **https://github.com/HalcyonXP/firefox-download-man
 
    `%LOCALAPPDATA%\HalcyonXP\FirefoxDownloadManager\host`
 
-   The filename is `firefox-download-manager.xpi`. Choose the **installed generation**, not a differently built extension. This temporary-add-on workflow does not require changing signing preferences. **Reload the XPI after every Firefox restart.** Setup never installs it into your profile automatically. Permanent unsigned installation/signing is not provided or implied.
+   The filename is `firefox-download-manager.xpi`. Choose the **installed generation**, not a differently built extension. This temporary-add-on workflow does not require changing signing preferences. **Reload the XPI after every Firefox restart.** Setup never installs it into your profile automatically. This v0.1.0 procedure does not qualify persistent unsigned installation for M5.
 5. Use **Download with Manager** on a direct HTTP(S) link, or the extension toolbar/manager page. Session handoff is unchecked by default and optional. Blank SHA-256 means structural validation only; a supplied digest is checked before publication.
 
 Custom root: append `--root "$env:LOCALAPPDATA\My Manager Host"` to every mutating command. It must be fully drive-qualified, ordinary/non-reparse, beneath local application data, disjoint from task state, and at most **160 UTF-16 units**. Names with spaces are supported. UNC/device paths, traversal, reserved/ambiguous Windows components and unknown collisions are refused. A second root cannot replace another root's registration.

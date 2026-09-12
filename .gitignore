@@ -36,3 +36,7 @@ Desktop.ini
 # Local Python build/test caches
 __pycache__/
 *.pyc
+
+# Local agent instructions and operational context
+AGENTS.md
+agents.md

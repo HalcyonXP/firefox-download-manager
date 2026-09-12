@@ -1,0 +1,20 @@
+[package]
+name = "download-manager-windows-io"
+description = "Audited cancellation of I/O on retained Windows handles (ADR0015)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_System_IO"] }
+
+# Sole explicit exception to workspace forbid; see ADR0015. The function-local
+# allowance must not spread to the caller or any other first-party crate.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }

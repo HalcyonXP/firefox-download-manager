@@ -372,6 +372,31 @@ impl ProbeClient {
         input: &str,
         context: Option<Arc<RequestContext>>,
     ) -> Result<ResourceProbe, ProbeError> {
+        self.probe_inner(input, context, true).await
+    }
+
+    /// Probes an anonymous already-resolved URL without following any redirect.
+    /// The initial and final-boundary requests retain the same status, coverage,
+    /// validator, encoding, admission and body-length checks as ordinary probes.
+    /// This is not a browser-context or reputation receipt, and task completion
+    /// does not select it automatically.
+    ///
+    /// # Errors
+    /// Returns the normal conservative probe failures, including
+    /// `RedirectRejected` before any redirect target is requested.
+    pub async fn probe_anonymous_without_redirects(
+        &self,
+        input: &str,
+    ) -> Result<ResourceProbe, ProbeError> {
+        self.probe_inner(input, None, false).await
+    }
+
+    async fn probe_inner(
+        &self,
+        input: &str,
+        context: Option<Arc<RequestContext>>,
+        follow_initial_redirects: bool,
+    ) -> Result<ResourceProbe, ProbeError> {
         let mut url = Url::parse(input).map_err(|_| ProbeError::InvalidUrl)?;
         if !matches!(url.scheme(), "http" | "https") {
             return Err(ProbeError::UnsupportedScheme);
@@ -382,7 +407,12 @@ impl ProbeClient {
         url.set_fragment(None);
 
         let response = self
-            .probe_request(url, "bytes=0-0", context.as_deref(), true)
+            .probe_request(
+                url,
+                "bytes=0-0",
+                context.as_deref(),
+                follow_initial_redirects,
+            )
             .await?;
 
         let status = response.status();

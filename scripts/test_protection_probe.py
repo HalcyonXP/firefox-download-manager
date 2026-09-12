@@ -1,0 +1,194 @@
+"""Build/input/ownership policies only. No Firefox, installation or live service calls."""
+import hashlib
+import importlib.util
+import sys
+import io
+import json
+from pathlib import Path
+import tempfile
+import unittest
+from unittest.mock import patch
+import zipfile
+from types import SimpleNamespace
+
+from qualification import protection_input as inputs
+from qualification import protection_run as driver
+from qualification.support import ARTIFACTS
+
+
+class ProtectionProbeTests(unittest.TestCase):
+    def setUp(self):
+        ARTIFACTS.mkdir(exist_ok=True)
+        self.temporary = tempfile.TemporaryDirectory(dir=ARTIFACTS, prefix='protection-model-')
+        self.addCleanup(self.temporary.cleanup)
+        self.directory = Path(self.temporary.name).resolve()/'probe'
+
+    def test_build_six_payloads_only_no_general_authority_or_overwrite(self):
+        identity = inputs.build(self.directory)
+        xpi, read = inputs.inspect(self.directory,clean=False)
+        self.assertEqual(read, identity)
+        self.assertFalse(read['qualification'])
+        with zipfile.ZipFile(xpi) as archive:
+            self.assertEqual(set(archive.namelist()), inputs.PAYLOADS)
+            self.assertIsNone(archive.testzip())
+            manifest = json.loads(archive.read('manifest.json'))
+        self.assertNotIn('permissions',manifest)
+        self.assertNotIn('host_permissions',manifest)
+        self.assertNotIn('background',manifest)
+        self.assertEqual(manifest['incognito'],'not_allowed')
+        self.assertEqual(list(manifest['experiment_apis']),['managerProtection'])
+        with self.assertRaises(RuntimeError): inputs.build(self.directory)
+
+    def test_dirty_wrong_version_extra_files_and_source_changes_refuse(self):
+        inputs.build(self.directory)
+        record = self.directory/'BUILD.json'; original = record.read_bytes()
+        for key,value in [('source_dirty',True),('version',True),('qualification',True),('addon_id','other@invalid')]:
+            data=json.loads(original);data[key]=value;record.write_text(json.dumps(data),encoding='utf-8')
+            with self.assertRaises(RuntimeError): inputs.inspect(self.directory)
+        record.write_bytes(original)
+        (self.directory/'extra').write_bytes(b'owned')
+        with self.assertRaises(RuntimeError): inputs.inspect(self.directory,clean=False)
+        (self.directory/'extra').unlink()
+        (self.directory/'api.js').write_bytes(b'changed')
+        with self.assertRaises(RuntimeError): inputs.inspect(self.directory,clean=False)
+
+    def test_rehashed_archive_cannot_expand_authority_or_replace_code(self):
+        inputs.build(self.directory)
+        original=(self.directory/inputs.ARCHIVE).read_bytes()
+        identity=json.loads((self.directory/'BUILD.json').read_text(encoding='utf-8'))
+        for kind in ['permission','source','duplicate']:
+            with zipfile.ZipFile(io.BytesIO(original)) as archive:
+                files={name:archive.read(name) for name in archive.namelist()}
+            if kind=='permission':
+                manifest=json.loads(files['manifest.json']);manifest['permissions']=['nativeMessaging']
+                files['manifest.json']=json.dumps(manifest).encode('utf-8')
+            if kind=='source': files['api.js']=b'changed'
+            for name,data in files.items(): (self.directory/name).write_bytes(data)
+            packed=io.BytesIO()
+            with zipfile.ZipFile(packed,'w') as archive:
+                for name,data in files.items(): archive.writestr(name,data)
+                if kind=='duplicate': archive.writestr('extra.js',b'owned')
+            raw=packed.getvalue();(self.directory/inputs.ARCHIVE).write_bytes(raw)
+            record={**identity,'xpi_sha256':hashlib.sha256(raw).hexdigest(),'files':{n:hashlib.sha256(b).hexdigest() for n,b in files.items()}}
+            (self.directory/'BUILD.json').write_text(json.dumps(record),encoding='utf-8')
+            with self.assertRaises(RuntimeError): inputs.inspect(self.directory,clean=False)
+
+    def test_receipt_is_not_boolean_or_missing_callback_acceptance(self):
+        valid={'version':2,'qualification':False,'scope':'fixed-empty-loopback-context','stage':'settled',
+               'result':'not-blocked','attempted':True,'callbacks':1,'metadata_reads':15}
+        self.assertEqual(driver.valid_receipt(valid),valid)
+        for key,value in [('version',True),('version',1),('metadata_reads',True),('metadata_reads',0),('metadata_reads',31),('qualification',True),('stage','pending'),('result','unavailable'),
+                          ('result','blocked'),('callbacks',True),('callbacks',0),('callbacks',2),('attempted',False)]:
+            with self.assertRaises(RuntimeError): driver.valid_receipt({**valid,key:value})
+        with self.assertRaises(RuntimeError): driver.valid_receipt({**valid,'path':'unowned'})
+
+    def test_failed_browser_start_retains_owner_and_failed_close_does_not_drop_it(self):
+        class Browser:
+            closed=False
+            def start(self): raise RuntimeError('owned synthetic start failure')
+            def close(self): raise RuntimeError('owned synthetic close failure')
+        browser=Browser()
+        run=driver.ProtectionRun(self.directory,Path('unused'),self.directory/'report.json')
+        with patch.object(driver,'preflight'),patch.object(driver,'Firefox',return_value=browser):
+            with self.assertRaises(RuntimeError):run.open(self.directory/'profile',{})
+        self.assertIs(run.browser,browser);self.assertFalse(run.retire());self.assertIs(run.browser,browser)
+
+    def test_joined_failure_or_absence_cannot_be_success(self):
+        class Process:
+            def __init__(self, code): self.code=code
+            def wait(self, timeout):
+                self.assertion = timeout == 0
+                return self.code
+        for browser in [None,SimpleNamespace(closed=False,process=Process(0)),
+                        SimpleNamespace(closed=True,process=None),SimpleNamespace(closed=True,process=Process(1))]:
+            with self.assertRaises(RuntimeError):driver.require_joined(browser)
+        process=Process(0);driver.require_joined(SimpleNamespace(closed=True,process=process))
+        self.assertTrue(process.assertion)
+
+    def test_initial_page_is_not_a_false_refusal_and_no_driver_preference_setters(self):
+        page=inputs.SOURCES['probe.html'].read_text(encoding='utf-8')
+        self.assertIn('id="receipt">starting',page)
+        self.assertNotIn('id="receipt">unavailable',page)
+        self.assertNotIn('setBoolPref',driver.PROTECTIONS)
+        self.assertNotIn('setCharPref',driver.PROTECTIONS)
+        self.assertIn('getPrefType',driver.PROTECTIONS)
+        for key in ['xpinstall.signatures.required','extensions.experiments.enabled','browser.safebrowsing.downloads.enabled']:
+            self.assertIn(key,driver.PROTECTIONS)
+
+
+    def test_load_result_is_closed_and_never_boolean_or_incomplete_success(self):
+        value={'version':1,'state':'loaded','phase':'identity','terms':[],'complete':True}
+        self.assertEqual(driver.load_observation(value),value)
+        for other in [True,False,{**value,'version':True},{**value,'phase':'install'},
+                      {**value,'terms':['enum']},{**value,'complete':False},
+                      {**value,'path':'unowned'},{**value,'state':'refused','terms':['raw message']},
+                      {**value,'state':'refused','terms':['enum','enum']}]:
+            with self.assertRaises(RuntimeError):driver.load_observation(other)
+        refused={**value,'state':'refused','phase':'install','terms':['experiment-apis','privilege-required']}
+        self.assertEqual(driver.load_observation(refused),refused)
+
+    def test_failure_cleanup_receipt_requires_retained_wait_not_absence(self):
+        self.assertEqual(driver.cleanup_observation(None),{'browser_created':False,'browser_started':False,'browser_joined':False,'browser_exit':None})
+        class Process:
+            def __init__(self):self.waits=0
+            def wait(self, timeout):
+                self.waits+=1;self.timeout=timeout;return 1
+        process=Process();browser=SimpleNamespace(closed=False,process=process)
+        self.assertFalse(driver.cleanup_observation(browser)['browser_joined']);self.assertEqual(process.waits,0)
+        browser.closed=True;receipt=driver.cleanup_observation(browser)
+        self.assertTrue(receipt['browser_joined']);self.assertEqual(receipt['browser_exit'],1)
+        self.assertEqual(process.waits,1);self.assertEqual(process.timeout,0)
+        with self.assertRaises(RuntimeError):driver.require_joined(browser)
+
+    def test_failed_load_records_classification_protections_and_join_after_retirement(self):
+        domain=self.directory;domain.mkdir()
+        loaded={'version':1,'state':'refused','phase':'install','terms':['experiment-apis'],'complete':True}
+        class Process:
+            def wait(self, timeout):return 0
+        class Browser:
+            closed=False
+            process=Process()
+            def chrome(self,*args):return loaded
+            def close(self):self.closed=True
+        browser=Browser();run=driver.ProtectionRun(domain,Path('unused'),domain/'report.json')
+        plan=SimpleNamespace(path=domain,created=True,create=lambda:None)
+        def opened(*args):run.browser=browser;return browser
+        with patch.object(driver,'preflight'),patch.object(driver,'inspect',return_value=(domain/'owned.xpi',{'source_commit':'fixed','addon_id':'owned'})), \
+             patch.object(driver,'ordinary'),patch.object(driver,'revision',return_value='fixed'),patch.object(driver,'file_sha256',return_value='fixture'), \
+             patch.object(driver.subprocess,'check_output',return_value=b''),patch.object(driver.DomainPlan,'record',return_value=plan), \
+             patch.object(run,'open',side_effect=opened),patch.object(driver,'protections',return_value={'fixture':True}):
+            with self.assertRaises(RuntimeError):run.execute()
+        failure=json.loads((domain/'failure.private.json').read_text(encoding='utf-8'))
+        self.assertEqual(failure['temporary_load'],loaded);self.assertEqual(failure['stage'],'temporary-load')
+        self.assertEqual(failure['profile_mode'],'default')
+        self.assertEqual(failure['cleanup'],{'browser_created':True,'browser_started':True,'browser_joined':True,'browser_exit':0})
+        self.assertTrue(failure['protections_unchanged']);self.assertTrue(browser.closed)
+        self.assertFalse((domain/'report.json').exists())
+
+
+    def test_fileless_mode_is_default_off_and_propagates_only_explicit_boolean(self):
+        for enabled in (False,True):
+            run=driver.ProtectionRun(self.directory,Path('unused'),self.directory/'report.json',fileless_experiment=enabled)
+            with patch.object(driver,'preflight'),patch.object(driver,'Firefox') as factory:
+                run.open(self.directory/'profile',{'fixture':'owned'})
+                factory.assert_called_once_with(Path('unused'),self.directory/'profile',{'fixture':'owned'},fileless_experiment=enabled)
+            self.assertEqual(run.fileless_experiment,enabled)
+        self.assertFalse(driver.ProtectionRun(self.directory,Path('unused'),self.directory/'report.json').fileless_experiment)
+        for flag in (None,1,'true'):
+            with self.assertRaises(RuntimeError):driver.ProtectionRun(self.directory,Path('unused'),self.directory/'report.json',fileless_experiment=flag)
+
+
+    def test_cli_requires_execution_flag_and_never_enables_experiments_implicitly(self):
+        spec=importlib.util.spec_from_file_location('owned_protection_cli',Path(__file__).with_name('probe-download-protection.py'))
+        module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module)
+        base=['probe-download-protection.py','--probe','unused','--firefox','unused','--report','unused']
+        for enabled in (False,True):
+            args=base+['--execute-owned-browser']+(['--enable-fileless-experiment'] if enabled else [])
+            with patch.object(sys,'argv',args),patch.object(module,'run') as run:
+                module.main();run.assert_called_once_with(Path('unused'),Path('unused'),Path('unused'),fileless_experiment=enabled)
+        with patch.object(sys,'argv',base+['--enable-fileless-experiment']),patch.object(module,'run') as run,patch('sys.stderr',new=io.StringIO()):
+            with self.assertRaises(SystemExit):module.main()
+            run.assert_not_called()
+
+
+if __name__=='__main__':unittest.main()

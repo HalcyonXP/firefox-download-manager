@@ -37,7 +37,13 @@ class BoundedServer(ThreadingHTTPServer):
 
     def process_request(self, request, address):
         with self.ownership:
-            self.handlers = [(t, s) for t, s in self.handlers if t.is_alive()]
+            retained = []
+            for thread, connection in self.handlers:
+                if thread.is_alive():
+                    retained.append((thread, connection))
+                else:
+                    thread.join(timeout=0)  # Observe the join before discarding this owned handle.
+            self.handlers = retained
             if len(self.handlers) >= 32:
                 self.shutdown_request(request)
                 return
@@ -76,7 +82,7 @@ class BoundedServer(ThreadingHTTPServer):
 
 
 class Fixture:
-    def __init__(self, large_size=2 * 1024**3, handler=None):
+    def __init__(self, large_size=2 * 1024**3, handler=None, *, owners=None):
         self.large_size = large_size
         self.lock = threading.Lock()
         self.requests = Counter()
@@ -91,31 +97,45 @@ class Fixture:
         self.retained_requests = {mode: [] for mode in RETAINED}
         self.retained_waiting = {mode: 0 for mode in RETAINED}
         self.generations = {mode: 1 for mode in RETAINED}
-        self.server = BoundedServer(("127.0.0.1", 0), handler or Handler)
-        self.server.daemon_threads = True
-        self.server.fixture = self
-        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.server = None
+        self.thread = None
+        self.closed = False
+        if owners is not None:
+            if len(owners) >= 4:
+                raise RuntimeError("owned fixture count bound")
+            owners.append(self)
         try:
+            self.server = BoundedServer(("127.0.0.1", 0), handler or Handler)
+            self.server.daemon_threads = True
+            self.server.fixture = self
+            self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
             self.thread.start()
-        except Exception:
-            self.server.server_close()
+        except BaseException:
+            self.close()
             raise
 
     def url(self, mode):
         return f"http://127.0.0.1:{self.server.server_port}/{mode}"
 
     def close(self):
+        if self.closed:
+            return
+        if self.server is None:
+            self.closed = True
+            return
         self.slow_body.set()
         self.large_body.set()
         self.retained_body.set()
-        self.server.shutdown()
-        self.thread.join(timeout=10)
+        if self.thread is not None and self.thread.ident is not None:
+            self.server.shutdown()
+            self.thread.join(timeout=10)
         try:
             self.server.join_owned_handlers()
         finally:
             self.server.server_close()
-        if self.thread.is_alive() or self.active:
+        if (self.thread is not None and self.thread.is_alive()) or self.active:
             raise RuntimeError("owned fixture did not finish its bounded shutdown")
+        self.closed = True
 
 
 class Handler(BaseHTTPRequestHandler):

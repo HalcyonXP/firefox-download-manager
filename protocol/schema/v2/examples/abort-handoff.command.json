@@ -1,0 +1,9 @@
+{
+  "protocol_version": 2,
+  "correlation_id": "handoff-1",
+  "kind": "command",
+  "command": "abort_handoff",
+  "payload": {
+    "task_id": "f3914a2c-65d1-4b41-96f2-32f49a184279"
+  }
+}

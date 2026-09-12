@@ -1,0 +1,26 @@
+[package]
+name = "download-manager-local-ipc"
+description = "Bounded local companion transport; not installed endpoint authority"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+license.workspace = true
+
+[dependencies]
+download-manager-protocol = { version = "=0.1.0", path = "../protocol" }
+getrandom.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["io-util", "net"] }
+uuid.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+download-manager-windows-io = { version = "=0.1.0", path = "../windows-io" }
+interprocess.workspace = true
+widestring.workspace = true
+winsafe.workspace = true
+
+[lints]
+workspace = true

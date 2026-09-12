@@ -18,11 +18,15 @@ import uuid
 import winreg
 
 if __package__:
+    from .browser_peer import BrowserPeer
+    from .firefox_policy import observe as observe_policy, unchanged as unchanged_policy
     from .fixture import Handler, Fixture, SMALL_SIZE, expected_sha256
     from .native import evidence_identity, file_sha256
     from .support import bounded_json, new_report, write_report
     from .installation import verified_binding
 else:
+    from browser_peer import BrowserPeer
+    from firefox_policy import observe as observe_policy, unchanged as unchanged_policy
     from fixture import Handler, Fixture, SMALL_SIZE, expected_sha256
     from native import evidence_identity, file_sha256
     from support import bounded_json, new_report, write_report
@@ -197,7 +201,13 @@ class BrowserFixture(Fixture):
 
 
 class Firefox:
-    def __init__(self, executable, profile, environment):
+    def __init__(self, executable, profile, environment, *, owned_peer=None, fileless_experiment=False):
+        if type(fileless_experiment) is not bool or (fileless_experiment and owned_peer is not None):
+            raise RuntimeError("fileless experiment mode refuses combined browser ownership")
+        self.fileless_experiment = fileless_experiment
+        if owned_peer is not None and type(owned_peer) is not BrowserPeer:
+            raise RuntimeError("browser peer requires a retained setup witness")
+        self.owned_peer = owned_peer
         self.profile = profile
         self.environment = environment
         self.executable = executable
@@ -208,30 +218,42 @@ class Firefox:
         self.closed = False
         self.manager = None
         self.signing = None
+        self.automation_policy = None
+
+    def _require_apps_closed(self):
+        if self.owned_peer is None:
+            closed_apps()
+        else:
+            self.owned_peer.require_browser_closed()
 
     def start(self):
-        closed_apps()
-        self.profile.mkdir(exist_ok=True)
+        self._require_apps_closed()
+        self.profile.mkdir(exist_ok=not self.fileless_experiment)
         with socket.socket() as reservation:
             reservation.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             reservation.bind(("127.0.0.1", 0))
             port = reservation.getsockname()[1]
         preferences = {
             "marionette.port": port, "marionette.enabled": True,
-            "marionette.prefs.recommended": False,
+            "remote.prefs.recommended": False,
             "browser.shell.checkDefaultBrowser": False,
             "browser.startup.page": 0, "browser.startup.homepage": "about:blank",
             "browser.aboutwelcome.enabled": False,
             "datareporting.policy.dataSubmissionEnabled": False,
             "toolkit.telemetry.enabled": False,
         }
+        if self.fileless_experiment:
+            # Only the explicit fileless probe variant; profile creation above is exclusive.
+            preferences["extensions.experiments.enabled"] = True
+        # Opt out of automation preference overrides before Firefox startup.
         # Only an exclusively created test profile, also on restart. No signing,
         # TLS, Safe Browsing, update, proxy or sandbox preference overrides.
+        # The fileless variant has only the explicit experiment-capability override.
         (self.profile / "user.js").write_text("\n".join(
             f"user_pref({json.dumps(k)}, {json.dumps(v)});" for k, v in preferences.items()), encoding="utf-8")
         self.process = subprocess.Popen([str(self.executable), "-no-remote", "-profile", str(self.profile),
                                          "--marionette", "--remote-allow-system-access", "about:blank"],
-                                        env=self.environment, stdin=subprocess.DEVNULL,
+                                        cwd=self.profile, env=self.environment, stdin=subprocess.DEVNULL,
                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.monotonic() + 30
         while self.connection is None:
@@ -256,6 +278,7 @@ class Firefox:
         self.signing = self.chrome("return {value:Services.prefs.getBoolPref('xpinstall.signatures.required'), user:Services.prefs.prefHasUserValue('xpinstall.signatures.required')};")
         if self.signing["user"]:
             raise RuntimeError("test profile has a signing preference override")
+        self.automation_policy = observe_policy(self, fileless_experiment=self.fileless_experiment)
         return self
 
     def exact(self, size):
@@ -411,6 +434,11 @@ button.click();return true;""", [self.manager])
                     configuration_error = current != self.signing
                 except (OSError, RuntimeError):
                     configuration_error = True
+            if self.automation_policy is not None:
+                try:
+                    unchanged_policy(self, self.automation_policy, fileless_experiment=self.fileless_experiment)
+                except (OSError, RuntimeError):
+                    configuration_error = True
             try:
                 self.command("Marionette:Quit", {"flags": ["eForceQuit"]})
             except (OSError, RuntimeError):
@@ -422,7 +450,7 @@ button.click();return true;""", [self.manager])
         deadline = time.monotonic() + 25
         while True:
             try:
-                closed_apps()
+                self._require_apps_closed()
                 break
             except RuntimeError:
                 if time.monotonic() >= deadline:
@@ -432,7 +460,7 @@ button.click();return true;""", [self.manager])
             self.process.wait(timeout=5)  # Only the retained launcher handle.
         self.closed = True
         if configuration_error:
-            raise RuntimeError("owned signing preference readback changed or failed")
+            raise RuntimeError("owned protection preference readback changed or failed")
 
 
 def qualify(package, executable, report):

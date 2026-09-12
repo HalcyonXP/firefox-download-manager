@@ -1,16 +1,29 @@
 //! Local setup boundaries. No networking, elevation or browser-profile API.
 use thiserror::Error;
 
+pub mod application_probe;
+#[cfg(all(windows, feature = "application"))]
+pub mod application_ui;
 #[cfg(windows)]
 mod files;
+#[cfg(all(windows, feature = "installed-runtime"))]
+pub mod installed_image;
 pub mod package;
 #[cfg(windows)]
 pub mod paths;
+#[cfg(all(windows, feature = "private-directory"))]
+pub mod private_directory;
+#[cfg(all(windows, feature = "private-file"))]
+pub mod private_file;
 #[cfg(windows)]
 pub mod process;
 pub mod receipt;
 #[cfg(windows)]
 pub mod registry;
+#[cfg(all(windows, feature = "installed-runtime"))]
+pub mod runtime_record;
+#[cfg(windows)]
+pub mod shortcuts;
 #[cfg(windows)]
 pub mod transaction;
 
@@ -50,6 +63,8 @@ pub enum SetupError {
     Recovery,
     #[error("generation history is full; run cleanup before upgrading")]
     HistoryFull,
+    #[error("private runtime record failed validation or publication")]
+    PrivateFile,
     #[error("setup filesystem operation failed")]
     Io,
 }

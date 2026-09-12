@@ -125,7 +125,7 @@ impl InstallationPath {
 fn same_path(a: &Path, b: &Path) -> bool {
     a.components().count() == b.components().count() && within(a, b)
 }
-fn within(candidate: &Path, parent: &Path) -> bool {
+pub(crate) fn within(candidate: &Path, parent: &Path) -> bool {
     let mut child = candidate.components();
     parent.components().all(|part| {
         child.next().is_some_and(|value| {
@@ -136,7 +136,7 @@ fn within(candidate: &Path, parent: &Path) -> bool {
         })
     })
 }
-fn validate_text(path: &Path) -> Result<(), SetupError> {
+pub(crate) fn validate_text(path: &Path) -> Result<(), SetupError> {
     let text = path.to_str().ok_or(SetupError::Path)?;
     let bytes = text.as_bytes();
     if bytes.len() < 3

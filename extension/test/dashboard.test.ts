@@ -46,3 +46,30 @@ it("does not mistake download rate/ETA for validation progress", () => {
   expect(text).not.toContain("/s");
   expect(text).not.toContain("0s remaining");
 });
+
+it("does not offer ordinary controls for an uncommitted handoff", () => {
+  expect(actionsFor("queued", "prepared").map((item) => item.action)).toEqual(["open_folder"]);
+  expect(actionsFor("cancelled", "aborted").map((item) => item.action)).toEqual(["open_folder"]);
+  expect(actionsFor("completed", "committed").map((item) => item.action)).toEqual(["open_folder"]);
+  expect(actionsFor("failed", "unknown").map((item) => item.action)).toEqual(["open_folder"]);
+});
+
+it("retains normal transfer controls after commit without promising removable history", () => {
+  expect(actionsFor("downloading", "committed").map((item) => item.action)).toEqual([
+    "pause",
+    "cancel",
+    "open_folder",
+  ]);
+  expect(actionsFor("failed", "committed").map((item) => item.action)).toEqual([
+    "resume",
+    "open_folder",
+  ]);
+  expect(actionsFor("cancelled", null).map((item) => item.action)).toContain("remove");
+});
+it("does not display transfer progress for unused or unknown reservations", () => {
+  expect(progressText({ handoff_phase: "prepared" } as NativeTask)).toContain(
+    "no Manager transfer",
+  );
+  expect(progressText({ handoff_phase: "aborted" } as NativeTask)).toContain("identity retained");
+  expect(progressText({ handoff_phase: "unknown" } as NativeTask)).toContain("older helper");
+});

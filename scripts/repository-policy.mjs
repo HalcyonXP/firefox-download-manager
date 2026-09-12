@@ -4,6 +4,10 @@ export const repositoryUrl = `https://github.com/${repository}`;
 // Assemble the retired identifier so the guard's own source contains no stale link.
 const retired = ["HalcyonXP", "download-manager"].join("/").toLowerCase();
 
+export function isLocalInstructionPath(path) {
+  return /(?:^|\/)agents\.md$/iu.test(path);
+}
+
 export function repositoryFindings(text) {
   return text
     .split(/\r?\n/u)

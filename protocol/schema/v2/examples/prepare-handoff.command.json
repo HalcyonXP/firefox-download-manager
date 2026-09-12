@@ -1,0 +1,13 @@
+{
+  "protocol_version": 2,
+  "correlation_id": "handoff-1",
+  "kind": "command",
+  "command": "prepare_handoff",
+  "payload": {
+    "task_id": "f3914a2c-65d1-4b41-96f2-32f49a184279",
+    "download": {
+      "url": "https://example.invalid/fixture.bin",
+      "suggested_filename": "fixture.bin"
+    }
+  }
+}

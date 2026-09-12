@@ -7,7 +7,7 @@ The Rust engine's `network` module determines whether a direct HTTP(S) resource 
 - Only absolute `http:` and `https:` URLs are accepted.
 - URL user-info is rejected; fragments are removed because they are not HTTP request data.
 - TLS certificate verification uses maintained Rustls platform-verifier defaults and is never disabled.
-- Redirects are followed at most ten times.
+- Ordinary initial probes follow redirects at most ten times.
 - Redirect targets must remain HTTP(S).
 - HTTPS-to-HTTP downgrade is rejected.
 - Unauthenticated cross-origin redirects are allowed in the MVP.
@@ -15,6 +15,12 @@ The Rust engine's `network` module determines whether a direct HTTP(S) resource 
 - Redirect loops, excessive depth, unsupported targets, and stopped redirects fail explicitly.
 
 Neither user-provided URLs nor redirect locations are included in ordinary error display text or the custom `Debug` representation of a probe.
+
+## Opt-in anonymous no-redirect probe
+
+`ProbeClient::probe_anonymous_without_redirects` refuses redirects from the initial request as well as the final-byte verification, before requesting the redirect target. It accepts no session argument. This shares the ordinary URL/TLS/admission/status/header/body/validator checks; ordinary probes retain their existing bounded redirect policy and transfer requests already refuse redirects.
+
+This unselected interface supports a future protection binding starting from the browser's captured final request URL: an empty native redirect chain must be enforced, not invented from a final-URL-only receipt. No task, retry/reprobe or recovery path selects this mode yet; all such paths must preserve the required policy before that inference becomes valid. It does not establish browser provenance, reputation or publication authority. Three owned loopback cases independently check no target contact at initial/final-boundary redirects, exact direct boundaries, malformed-range refusal and unchanged ordinary following; three executed/rejected mutations cover both refusal flags and ordinary compatibility. Fixture listeners are retired before final assertions.
 
 ## Probe sequence
 
