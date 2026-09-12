@@ -4,7 +4,7 @@
 
 This is a separate diagnostic for eventual Firefox SDK process/pipe/lifetime observation, **not a Manager controller, protected dispatcher or install candidate**. No browser execution is established here. The normal extension, capture candidate and paired package do not select it.
 
-Here **fileless** means no download-data file, scan or publication. The diagnostic still needs executable, manifest and build inputs; a future browser driver also needs an owned disposable profile. It is not the existing fileless reputation-service probe, whose runner deliberately has no native-process or registration operations. Sharing that adjective does not make their execution or profile modes interchangeable.
+Here **fileless** means no download-data file, scan or publication. The diagnostic still needs executable, manifest and build inputs; the SDK controller also requires an owned disposable profile. It is not the existing fileless reputation-service probe, whose runner deliberately has no native-process or registration operations. Sharing that adjective does not make their execution or profile modes interchangeable.
 
 | Component | Entry point | Contract |
 | --- | --- | --- |
@@ -16,6 +16,7 @@ Here **fileless** means no download-data file, scan or publication. The diagnost
 | Archive input | `scripts/qualification/parent_input.py` | Externally pinned compiler domain/source/image/record, exclusive five-member archive and bounded independent readback; no compiler/native/browser execution |
 | Observer | `scripts/qualification/parent_observer.js` | Separate named chrome sandbox, parent-process check, two bounded original JSON strings, exact collector removal controls |
 | Observation client | `scripts/qualification/parent_observation.py` | One retained automation owner/collector, strict monotonic receipts and sticky command uncertainty; no browser/native launch |
+| SDK disable controller | `scripts/qualification/parent_run.py`, `parent_control.js` | Separately opt-in fresh-profile exchange/disable orchestration, exact retained Firefox owner and refusal-preserving cleanup; modeled only, no CLI or compiler |
 
 The bootstrap intentionally supplies **owned fixture metadata**, not `NativeManifests.lookupManifest`. It does not inspect or change shared native registration. A fixture result therefore cannot qualify registry lookup, installed-image checks, private native IPC authentication or browser policy.
 
@@ -94,10 +95,29 @@ Eleven actual-source observer models, nine Python receipt/client models and thir
 
 Matching Firefox source review at revision `574c275bcf5b4f86198c979b7e61f4a844aba0ea` covered `remote/marionette/{driver,evaluate}.sys.mjs` and `xpcom/ds/nsObserver{Service,List}.cpp`. Scripts are function-wrapped with an appended asynchronous callback; named sandboxes are cached only while their window remains valid and unchanged. Observer notification invokes a cloned observer list synchronously. Removal during service shutdown can return without acting, whereas notification refuses during shutdown; a returned removal call alone is not evidence. This source review does not establish live realm/global/wire compatibility.
 
-The current client requires a readable owned chrome realm. Explicit add-on disable followed by observed native retirement can be tested before Firefox exits; whole-browser shutdown needs a separately reviewed way to observe late receipts and retain outer/native lifetime evidence. No such shutdown delivery path or complete SDK run/profile controller is implemented here.
+The current client requires a readable owned chrome realm. Explicit add-on disable followed by observed native retirement can be tested before Firefox exits; whole-browser shutdown needs a separately reviewed way to observe late receipts and retain outer/native lifetime evidence. No such late shutdown delivery path is implemented. The separate first-case controller below retires the native fixture before Firefox shutdown instead.
+
+## SDK exchange/disable controller
+
+`ParentRun` is a separate default-off controller library. Its exact-boolean `parent_stdio_experiment=True` mode is not selected by the service-probe CLI or any product. It requires 64-bit Windows with assertions, a retained already-created `DomainPlan`, externally established clean build/archive expectations and an independently pinned Firefox image. There is no compiler or runnable CLI here: the separately reviewed outer supervisor must retain the build/process owners and `ParentRun` **before** calling `execute()`. Metadata-only image domains must never be supplied for execution. Hashes and the build expectation class alone do not establish executable provenance.
+
+The controller exclusively claims a new run ticket before preflight; neither a consumed controller/domain nor an existing profile can be reused. Cleanup before execution also closes that controller permanently. Original closed-app/all-view registration guards run before preparation, immediately before browser ownership and after retirement. Inputs are rechecked before launch, before temporary loading and after shutdown. Isolated home/local/roaming directories and an exclusively new profile are mandatory; no registration or normal-profile operation is selected. This distinct profile mode uses the existing exact experiment preference tuple, not a new protection exception. See [FIREFOX_TEST_POLICY.md](FIREFOX_TEST_POLICY.md).
+
+The first case is ordered: retained Firefox owner and parent-process PID correlation → validated policy → independent observer installation → fixed-ID absence check → one temporary load → active fixed-ID temporary background metadata → one echoed exchange → one explicit add-on disable → successful SDK retirement receipt → checked observer removal → policy readback → exact Firefox wait/exit0 → final preflights/input checks → exclusive nonqualifying report. The fixed control script accepts only `absent`, `info` or `disable`, never arbitrary add-on IDs, enable/uninstall or native data. Disable completion and disabled metadata are not native retirement.
+
+Load/disable attempts are marked before dispatch and never replayed after uncertain delivery. Cleanup attempts the exact observer inverse and retained browser even when preceding controls fail; cancellation propagates after those attempts. A start attempt without a returned process stays unknown. Missing native receipts cannot be replaced by browser exit, pipe absence or a PID. A modeled regression first showed a replaced browser process being adopted during close; the controller now preserves its original reference and refuses to close a replacement, including one reporting the same PID. A separate regression showed that a fresh profile alone did not reject an already-present fixed add-on ID; an explicit absence check now refuses before load or disable. This check is not atomic protection against a hostile same-user actor or arbitrary concurrent add-on replacement. Failed domains and owners remain retained, and no success report is emitted on refusal. The caller must not exit/discard a controller with unresolved ownership; this library supplies no name/PID-based termination fallback.
+
+Eighteen Python controller models, eight actual-source control-script models and seventeen rejected/restored mutations cover ordering, exact modes/types, consumed domains, existing profiles, early/late faults, uncertain commands, interruption during cleanup, unknown native/outer lifetime, process replacement and nonzero exit. They execute no browser, native image or registry operation. The controller has **not** run in Firefox. Actual event-page idle, explicit-disable realm survival and SDK pipe/global compatibility remain unobserved. Whole-browser shutdown with an active native process is deliberately not this case; its late-receipt strategy remains open.
+
+Maintainer model checks:
+
+```powershell
+python -m unittest discover -s scripts -p test_parent_run.py
+node --test scripts/parent-control.test.mjs
+```
 
 ## Before live selection
 
-A separate driver still needs reviewed profile/process authority, new-domain tickets, clean source and exact image identity, original fresh closed-app/registration preflights, actual SDK launch/pipe/realm observations and independently retained process waits. Idle, explicit add-on disable and browser shutdown are distinct cases. Unknown startup or failed cleanup must preserve the domain and refuse success.
+A complete independently supervised build/run batch still needs exact compiler/image/Firefox ownership review and actual SDK launch/pipe/realm observations. The controller models are not execution authority or a completed live batch. Idle, explicit add-on disable and browser shutdown remain distinct cases. Unknown startup or failed cleanup must preserve the domain and refuse success.
 
 Archive integrity and standalone fixture evidence do not qualify persistent installation, actual event-page lifetime, private helper readiness, one-controller integration, request/handoff/context association, complete policy enforcement or real-file publication. Those remain requirements in [FIREFOX_PROTECTION_BRIDGE.md](FIREFOX_PROTECTION_BRIDGE.md) and [PROJECT_PLAN.md](PROJECT_PLAN.md).

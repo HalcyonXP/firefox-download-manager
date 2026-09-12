@@ -27,6 +27,12 @@ The policy guard does not infer an exception from observed data: only this expli
 
 This temporary capability test is not preservation of the experiment preference's default, ordinary XPI installation, native-file verdict integration or persistence qualification. Clean2b643c2 passed the fixed empty-context query; cleane1a982f additionally observed typed synthetic referrer/redirect getter consumption. Both passed the negative caller/replay cases with exactly this override and unchanged selected protection defaults. See [the exact source/receipt scope](FIREFOX_PROTECTION_BRIDGE.md#source-scoped-service-observation); no real-file or persistence result is established.
 
+## Separate parent stdio experiment controller
+
+`ParentRun` requires its own exact-boolean `parent_stdio_experiment=True` opt-in and emits `profile_mode: parent-stdio-experiment`. It is a separate controller library, not an option of the service runner. Only a newly owned disposable profile, fixed archive/native-fixture identity and original closed-app/registration guards are accepted. It delegates to the existing low-level new-profile factory and exact experiment tuple validation; all other selected protections retain their checks. No combined companion owner, arbitrary preference, normal profile, registration write or real-file decision is selected.
+
+Its first modeled case observes explicit add-on disable and native retirement **before** closing Firefox; no live SDK run or new policy/persistence acceptance has occurred. Compiler/native image authority and the outer supervisor still require independent review. The existing service-probe mode and its source-scoped observations are unchanged. See [PARENT_STDIO_FIXTURE.md](PARENT_STDIO_FIXTURE.md#sdk-exchangedisable-controller).
+
 ## Earlier evidence
 
 Earlier campaigns using this shared driver cannot establish preservation of default Firefox protections or ordinary non-automation policy behavior. Their source-specific file hashes, task receipts, observed UI/cancellation behavior and joined lifetimes are not erased, but their automated environment must be considered when interpreting them. Protection parity, ordinary persistent installation and final paired acceptance remain unqualified. The recorded unsigned-install refusal still describes that isolated automated run, not normal-profile compatibility or a new signing requirement.
