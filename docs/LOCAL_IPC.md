@@ -64,7 +64,7 @@ Only `crates/windows-io` has a function-local FFI exception for `CancelIoEx`, us
 
 ## Integration still required
 
-The installed setup/tray/stdio slice and its evidence are documented separately. Remaining work includes a fixed-host privileged parent launcher, protected dispatcher/context revocation, actual applicable Firefox policy and same-byte consumption; persistent unsigned XPI, provider/session/race/history behavior, physical/cold-start lifecycle and final paired-package/main qualification. Do not close #50 or claim install readiness from this library's tests.
+The installed setup/tray/stdio slice and its evidence are documented separately. An unselected fixed-host parent launcher is described in [FIREFOX_PROTECTION_BRIDGE.md](FIREFOX_PROTECTION_BRIDGE.md#fixed-host-launcher-unselected-parent-component). Remaining work includes its actual one-controller API/native integration, protected dispatcher/context revocation, actual applicable Firefox policy and same-byte consumption; persistent unsigned XPI, provider/session/race/history behavior, physical/cold-start lifecycle and final paired-package/main qualification. Do not close #50 or claim install readiness from this library's tests.
 
 ## Initial transport validation checkpoint (historical)
 
