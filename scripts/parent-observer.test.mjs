@@ -1,62 +1,10 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import vm from "node:vm";
 const source = readFileSync("scripts/qualification/parent_observer.js", "utf8");
-const nonce = "11111111-1111-4111-8111-111111111111";
-const collector = "22222222-2222-4222-8222-222222222222";
-const other = "33333333-3333-4333-8333-333333333333";
+import { observerFixture, nonce, collector, other } from "./parent-observer-fixture.mjs";
 const topic = "download-manager-owned-parent-fixture";
-function fixture(mode = {}) {
-  const observers = new Set();
-  const calls = [];
-  const obs = {
-    addObserver(observer, name, weak) {
-      assert.equal(name, topic);
-      assert.equal(weak, false);
-      calls.push("add");
-      observers.add(observer);
-      if (mode.addThrows) throw Error("modeled add refused");
-    },
-    removeObserver(observer, name) {
-      assert.equal(name, topic);
-      assert(observers.has(observer));
-      calls.push("remove");
-      if (mode.removeThrows) throw Error("modeled removal refused");
-      if (!mode.noRemove) observers.delete(observer);
-    },
-    notifyObservers(subject, name, data) {
-      calls.push("notify");
-      if (!mode.noNotify) for (const observer of observers) observer.observe(subject, name, data);
-    },
-  };
-  const context = vm.createContext({
-    Services: { obs, appinfo: { processType: mode.processType ?? 0 } },
-  });
-  if (mode.foreignSlot) context.__ownedParentFixtureObserverV1 = mode.foreignSlot;
-  function invoke(operation, token = collector, n = nonce) {
-    let result;
-    let delivered = 0;
-    context.arguments = [
-      operation,
-      n,
-      token,
-      (value) => {
-        result = JSON.parse(JSON.stringify(value));
-        delivered++;
-      },
-    ];
-    new vm.Script(source).runInContext(context);
-    assert.equal(delivered, 1);
-    return result;
-  }
-  return {
-    invoke,
-    calls,
-    observers,
-    send: (data, subject = null, name = topic) => obs.notifyObservers(subject, name, data),
-  };
-}
+const fixture = (mode) => observerFixture(source, topic, "__ownedParentFixtureObserverV1", mode);
 const record = (kind) =>
   JSON.stringify({ nonce, kind, value: { stage: kind === "ready" ? "echoed" : "retired" } });
 test("collector retains exact strings, not API objects, and confirms only its removal", () => {

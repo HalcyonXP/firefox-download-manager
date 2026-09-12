@@ -109,12 +109,16 @@ class ObserverClient:
     is retained, not retried against a replacement realm or mistaken for joining
     Firefox. The separately retained browser must still be retired by its caller.
     """
+    source = SOURCE
+    evidence_type = Observation
+    sandbox_prefix = 'owned-parent-observer-'
+
     def __init__(self, browser, nonce):
         collector = str(uuid.uuid4())
-        self.evidence = Observation(nonce, collector)
+        self.evidence = self.evidence_type(nonce, collector)
         self.browser, self.process = browser, browser.process
         self.collector, self.nonce = collector, nonce
-        self.sandbox = 'owned-parent-observer-' + collector
+        self.sandbox = self.sandbox_prefix + collector
         self.attempted = self.removal_attempted = False
         self.removal_returned = False
 
@@ -124,7 +128,7 @@ class ObserverClient:
                 or browser.process is not self.process): raise RuntimeError(ERROR)
         try:
             browser.command('Marionette:SetContext', {'value':'chrome'})
-            value = browser.command('WebDriver:ExecuteAsyncScript', {'script':SOURCE,
+            value = browser.command('WebDriver:ExecuteAsyncScript', {'script':self.source,
                 'args':[operation, self.nonce, self.collector], 'newSandbox':False, 'sandbox':self.sandbox})
         finally:
             if browser.process is not self.process or browser.closed is not False: raise RuntimeError(ERROR)

@@ -161,6 +161,7 @@ class InstalledRun:
         self.package, self.report, self.fault = package, report, fault
         self.stage = "preflight"
         self.plan = self.process = self.owner = self.ui = self.binding = None
+        self.setup_start_attempted = False
         self.hosts, self.fixtures, self.checks, self.browsers = [], [], [], []
         self.install_requested = self.uninstall_requested = self.uninstalled = False
         self.manager_window = None
@@ -233,8 +234,11 @@ class InstalledRun:
                 "package_source_commit": self.descriptor["commit"], "qualification": False}, stream)
 
     def start_setup(self, log):
+        if self.setup_start_attempted:
+            raise RuntimeError("owned setup controller already consumed")
         self.stage = "setup-launch"
         self.ui = Controls()  # Configure SDK calls before any process starts.
+        self.setup_start_attempted = True
         self.process = subprocess.Popen([str(self.package / SETUP)], env=self.environment,
             stdin=subprocess.DEVNULL, stdout=log, stderr=log)
         self.owner = SetupOwner(self.process, self.observation, lambda: self.button(305), self.quit_manager)
@@ -487,15 +491,33 @@ class InstalledRun:
                 "harness_worktree_dirty": bool(subprocess.check_output(["git", "status", "--porcelain"], cwd=ROOT, timeout=15)),
                 "owned_domain_preserved": True})
         except BaseException as error:
-            try:
-                self.failure_record(error)  # Before any UI destruction; never raw exceptions/URLs.
-            finally:
-                self.failure_cleanup()
+            interruption = error if not isinstance(error, Exception) else None
+            cleanup_failure = None
+            def attempt(label, action):
+                nonlocal interruption, cleanup_failure
+                try:
+                    action()
+                except BaseException as failure:
+                    self.cleanup_errors.append(label)
+                    if cleanup_failure is None:
+                        cleanup_failure = failure
+                    if interruption is None and not isinstance(failure, Exception):
+                        interruption = failure
+            # Record before UI destruction, but a failed sink cannot skip cleanup
+            # or turn cancellation into an ordinary diagnostic error.
+            attempt("failure-record", lambda: self.failure_record(error))
+            attempt("failure-cleanup", self.failure_cleanup)
+            def cleanup_record():
                 if self.plan is not None and self.plan.created:
                     with (self.plan.path / "cleanup.private.json").open("x", encoding="utf-8") as stream:
                         json.dump({"success": False, "errors": self.cleanup_errors,
                             "setup_joined": self.owner is not None and self.owner.joined,
                             "uninstall_observed": self.uninstalled, "domain_preserved": True}, stream)
+            attempt("cleanup-record", cleanup_record)
+            if interruption is not None:
+                raise interruption
+            if cleanup_failure is not None:
+                raise cleanup_failure
             raise RuntimeError("installed slice failed; preserve owned domain; no success authorized") from None
 
 

@@ -36,6 +36,18 @@ export default tseslint.config(
     },
   },
   {
+    files: ["extension/parent-bridge/api.js"],
+    languageOptions: {
+      globals: {
+        ExtensionAPI: "readonly",
+        Services: "readonly",
+        Cu: "readonly",
+        ChromeUtils: "readonly",
+        PathUtils: "readonly",
+      },
+    },
+  },
+  {
     files: ["extension/parent-probe/api.js"],
     languageOptions: {
       globals: {
@@ -58,6 +70,7 @@ export default tseslint.config(
     files: [
       "scripts/qualification/protection_loader.js",
       "scripts/qualification/parent_control.js",
+      "scripts/qualification/parent_transport_control.js",
     ],
     languageOptions: {
       sourceType: "script",
@@ -65,7 +78,10 @@ export default tseslint.config(
     },
   },
   {
-    files: ["scripts/qualification/parent_observer.js"],
+    files: [
+      "scripts/qualification/parent_observer.js",
+      "scripts/qualification/parent_transport_observer.js",
+    ],
     languageOptions: {
       sourceType: "script",
       globals: { Services: "readonly", arguments: "readonly" },

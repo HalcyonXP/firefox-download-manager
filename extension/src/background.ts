@@ -1,7 +1,7 @@
 import { CaptureAccess, capturePermissions } from "./capture-access";
 import { CaptureControl, CAPTURE_SETTING_KEY } from "./capture-control";
 import { collectSession, SessionError, type SessionInput } from "./session";
-import { NativeConnection } from "./native-connection";
+import { createNativeConnection } from "./native-provider";
 import { connectionMessage, creationPayload, directUrl, type CreationInput } from "./creation";
 
 import { BrowserHandoff } from "./browser-handoff";
@@ -20,7 +20,7 @@ export const captureAccess = new CaptureAccess({
   onAdded: (listener) => browser.permissions.onAdded.addListener(listener),
   onRemoved: (listener) => browser.permissions.onRemoved.addListener(listener),
 });
-export const nativeConnection = new NativeConnection();
+export const nativeConnection = createNativeConnection();
 export const browserHandoff = new BrowserHandoff(
   new HandoffJournal({
     read: async () =>

@@ -31,7 +31,13 @@ This temporary capability test is not preservation of the experiment preference'
 
 `ParentRun` requires its own exact-boolean `parent_stdio_experiment=True` opt-in and emits `profile_mode: parent-stdio-experiment`. It is a separate controller library, not an option of the service runner. Only a newly owned disposable profile, fixed archive/native-fixture identity and original closed-app/registration guards are accepted. It delegates to the existing low-level new-profile factory and exact experiment tuple validation; all other selected protections retain their checks. No combined companion owner, arbitrary preference, normal profile, registration write or real-file decision is selected.
 
-Its first modeled case observes explicit add-on disable and native retirement **before** closing Firefox; no live SDK run or new policy/persistence acceptance has occurred. Compiler/native image authority and the outer supervisor still require independent review. The existing service-probe mode and its source-scoped observations are unchanged. See [PARENT_STDIO_FIXTURE.md](PARENT_STDIO_FIXTURE.md#sdk-exchangedisable-controller).
+Its clean3c1ecfb fixture observed SDK exchange, explicit add-on disable and native retirement **before** closing Firefox, with separately retained compiler/browser-parent/launcher/outer-owner evidence. This does not qualify changed candidate bytes, persistent installation or production protection policy. The existing service-probe mode and its source-scoped observations are unchanged. See [PARENT_STDIO_FIXTURE.md](PARENT_STDIO_FIXTURE.md#sdk-exchangedisable-controller).
+
+## Separate installed-parent transport experiment
+
+`ParentInstalledRun(..., parent_transport_experiment=True)` requires an exact boolean, assertions and64-bit Windows. Unlike the fileless controller, it requires the actual retained `BrowserPeer` from its owned setup/companion. The low-level factory exclusively creates a new profile and accepts only the same exact experiment-preference tuple; signing and the other selected protections remain checked. Fileless mode still refuses any combined owner, and the modes cannot be combined or inferred from preferences. Setup/Firefox launch attempts are recorded before process creation and consumed owners cannot relaunch.
+
+The driver uses two distinct temporary-XPI lifetimes, fixed-ID checks, independent bounded retirement observations and separate browser-parent/launcher waits. Its reports retain the selected policy snapshot and label `profile_mode: parent-transport-experiment`, `qualification:false`, and `capture_ready:false`. It has model/component checks, not live installed or persistent-XPI acceptance. See [the selected parent candidate and driver](FIREFOX_PROTECTION_BRIDGE.md#selected-parent-candidate-and-installed-driver).
 
 ## Earlier evidence
 

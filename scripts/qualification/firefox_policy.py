@@ -17,32 +17,38 @@ preferences:Object.fromEntries(names.map(name=>[name,{value:bool(Services.prefs,
 default:bool(defaults,name),user:Services.prefs.prefHasUserValue(name)}]))};"""
 
 
-def validate(value, *, fileless_experiment=False):
+def validate(value, *, fileless_experiment=False, parent_transport_experiment=False):
     if type(fileless_experiment) is not bool:
         raise RuntimeError('explicit fileless experiment mode required')
+    if type(parent_transport_experiment) is not bool or (fileless_experiment and parent_transport_experiment):
+        raise RuntimeError('explicit distinct parent transport experiment mode required')
+    experiment = fileless_experiment or parent_transport_experiment
     if (not isinstance(value,dict) or set(value)!={'recommended','applied','preferences'}
             or value['recommended'] is not False or (value['applied'] is not None and value['applied'] is not False)
             or not isinstance(value['preferences'],dict) or set(value['preferences'])!=set(NAMES)):
         raise RuntimeError('owned Firefox automation policy refused')
     for name, entry in value['preferences'].items():
-        if fileless_experiment and name=='extensions.experiments.enabled':
+        if experiment and name=='extensions.experiments.enabled':
             if (not isinstance(entry,dict) or set(entry)!={'value','default','user'}
                     or entry['value'] is not True or entry['default'] is not False or entry['user'] is not True):
-                raise RuntimeError('exact fileless experiment override required')
+                raise RuntimeError('exact parent transport experiment override required' if parent_transport_experiment
+                                   else 'exact fileless experiment override required')
             continue
         if (not isinstance(entry,dict) or set(entry)!={'value','default','user'} or entry['user'] is not False
                 or any(v is not None and type(v) is not bool for v in (entry['value'],entry['default']))
                 or entry['value'] is not entry['default'] or (name in REQUIRED_ON and entry['value'] is not True)
                 or (name=='app.update.disabledForTesting' and entry['value'] is True)
-                or (fileless_experiment and name=='xpinstall.signatures.required' and entry['value'] is not True)):
+                or (experiment and name=='xpinstall.signatures.required' and entry['value'] is not True)):
             raise RuntimeError('owned Firefox protection baseline refused')
     return value
 
 
-def observe(browser, *, fileless_experiment=False):
-    return validate(browser.chrome(SNAPSHOT,[list(NAMES)]),fileless_experiment=fileless_experiment)
+def observe(browser, *, fileless_experiment=False, parent_transport_experiment=False):
+    return validate(browser.chrome(SNAPSHOT,[list(NAMES)]),fileless_experiment=fileless_experiment,
+                    parent_transport_experiment=parent_transport_experiment)
 
 
-def unchanged(browser, before, *, fileless_experiment=False):
-    if observe(browser,fileless_experiment=fileless_experiment)!=validate(before,fileless_experiment=fileless_experiment):
+def unchanged(browser, before, *, fileless_experiment=False, parent_transport_experiment=False):
+    mode=dict(fileless_experiment=fileless_experiment,parent_transport_experiment=parent_transport_experiment)
+    if observe(browser,**mode)!=validate(before,**mode):
         raise RuntimeError('owned Firefox protection baseline changed')

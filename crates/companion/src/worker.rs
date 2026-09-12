@@ -18,6 +18,13 @@ pub enum WorkerError {
     Join,
 }
 
+#[cfg(windows)]
+#[derive(Clone, Copy)]
+enum ControllerMode {
+    Ordinary,
+    ParentTransport,
+}
+
 /// One owned runtime thread; no detach, PID lookup or process termination.
 pub struct Worker {
     handle: Option<JoinHandle<Result<(), WorkerError>>>,
@@ -61,13 +68,37 @@ impl Worker {
         endpoint: download_manager_local_ipc::Endpoint,
         key: std::sync::Arc<download_manager_local_ipc::Capability>,
     ) -> Result<Self, WorkerError> {
+        Self::start_local_mode(config, endpoint, key, ControllerMode::Ordinary)
+    }
+
+    /// Explicit parent-transport composition for an owned visible-shell domain.
+    /// It admits ordinary and parent peers, but parent capture remains disabled.
+    /// This does not discover or publish installed authority.
+    /// # Errors
+    /// Refuses failed retained worker creation.
+    #[cfg(windows)]
+    pub fn start_local_parent_transport(
+        config: HostConfig,
+        endpoint: download_manager_local_ipc::Endpoint,
+        key: std::sync::Arc<download_manager_local_ipc::Capability>,
+    ) -> Result<Self, WorkerError> {
+        Self::start_local_mode(config, endpoint, key, ControllerMode::ParentTransport)
+    }
+
+    #[cfg(windows)]
+    fn start_local_mode(
+        config: HostConfig,
+        endpoint: download_manager_local_ipc::Endpoint,
+        key: std::sync::Arc<download_manager_local_ipc::Capability>,
+        mode: ControllerMode,
+    ) -> Result<Self, WorkerError> {
         Self::spawn(move |mut stopped, ready| async move {
             let mut owner = EngineOwner::open(&config).map_err(|_| WorkerError::Startup)?;
             let session = async {
                 let server = download_manager_local_ipc::Server::bind(endpoint, key)
                     .map_err(|_| WorkerError::Bridge)?;
                 let _ = ready.try_send(());
-                serve_controller(&mut owner, &server, &mut stopped).await
+                serve_controller(&mut owner, &server, &mut stopped, mode).await
             }
             .await;
             let shutdown = owner.shutdown().await.map_err(|_| WorkerError::Engine);
@@ -104,7 +135,16 @@ impl Worker {
                 }
             };
             let _ = ready.try_send(());
-            let session = serve_controller(&mut owner, publication.server(), &mut stopped).await;
+            // The development paired application explicitly selects the parent
+            // transport. Its separate native dispatcher keeps capture disabled;
+            // ordinary clients retain their existing protocol and task controls.
+            let session = serve_controller(
+                &mut owner,
+                publication.server(),
+                &mut stopped,
+                ControllerMode::ParentTransport,
+            )
+            .await;
             let shutdown = owner.shutdown().await.map_err(|_| WorkerError::Engine);
             shutdown.and(session)?;
             publication.remove().map_err(|_| WorkerError::Bridge)
@@ -180,6 +220,7 @@ async fn serve_controller(
     owner: &mut EngineOwner,
     server: &download_manager_local_ipc::Server,
     stopped: &mut oneshot::Receiver<()>,
+    mode: ControllerMode,
 ) -> Result<(), WorkerError> {
     use download_manager_native_host::{HostError, LocalSessionEnd};
     let result = loop {
@@ -193,7 +234,12 @@ async fn serve_controller(
             event = owner.engine().next_event() => {
                 if event.is_err() { break Err(WorkerError::Engine); }
             }
-            connection = server.accept() => {
+            connection = async {
+                match mode {
+                    ControllerMode::Ordinary => server.accept().await,
+                    ControllerMode::ParentTransport => server.accept_with_browser_parent().await,
+                }
+            } => {
                 let Ok(channel) = connection else {
                     // Bound retries on a failed listener/unauthenticated peer;
                     // do not turn a peer refusal into a hot loop or engine stop.
@@ -203,7 +249,15 @@ async fn serve_controller(
                 // Deliberately one controller. Awaiting this session leaves
                 // additional connections at bounded handshake timeout; no
                 // second engine/settings writer or command dispatch exists.
-                match owner.serve_local(channel, stopped).await {
+                let session = match channel.peer_class() {
+                    download_manager_local_ipc::PeerClass::NativeBridge => {
+                        owner.serve_local(channel, stopped).await
+                    }
+                    download_manager_local_ipc::PeerClass::BrowserParent => {
+                        owner.serve_parent_transport(channel, stopped).await
+                    }
+                };
+                match session {
                     Ok(LocalSessionEnd::StopRequested) => break Ok(()),
                     Err(HostError::LocalRetirement) => break Err(WorkerError::Bridge),
                     Err(HostError::Engine(_)) => break Err(WorkerError::Engine),

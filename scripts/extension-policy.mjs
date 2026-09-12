@@ -6,6 +6,11 @@ export const extensionCsp =
 /** Reviewed authority: native I/O, own pending-handoff storage, optional selected-site session access. */
 export function validateExtensionPolicy(source) {
   assert.equal(source.manifest_version, 3);
+  assert.equal(
+    source.experiment_apis,
+    undefined,
+    "ordinary artifacts must not select privileged APIs",
+  );
   assert.equal(source.browser_specific_settings?.gecko?.id, "download-manager@halcyonxp.local");
   assert.equal(
     source.browser_specific_settings?.gecko?.strict_min_version,

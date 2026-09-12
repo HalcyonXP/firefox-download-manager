@@ -154,4 +154,56 @@ class FirefoxPolicyTests(unittest.TestCase):
             self.assertTrue(browser.closed);process.wait.assert_called_once_with(timeout=5)
 
 
+    def test_parent_variant_is_explicit_distinct_and_preserves_all_protections(self):
+        value=baseline();value['preferences']['extensions.experiments.enabled'].update(value=True,user=True)
+        self.assertEqual(policy.validate(value,parent_transport_experiment=True),value)
+        for flag in (None,1,'true'):
+            with self.assertRaises(RuntimeError): policy.validate(value,parent_transport_experiment=flag)
+        with self.assertRaises(RuntimeError): policy.validate(value,fileless_experiment=True,parent_transport_experiment=True)
+        for name in set(policy.NAMES)-{'extensions.experiments.enabled'}:
+            changed=copy.deepcopy(value);changed['preferences'][name]['user']=True
+            with self.assertRaises(RuntimeError): policy.validate(changed,parent_transport_experiment=True)
+        changed=copy.deepcopy(value);changed['preferences']['xpinstall.signatures.required'].update(value=False,default=False)
+        with self.assertRaises(RuntimeError): policy.validate(changed,parent_transport_experiment=True)
+        browser=Mock();browser.chrome.return_value=copy.deepcopy(value)
+        policy.unchanged(browser,value,parent_transport_experiment=True)
+        browser.chrome.return_value=baseline()
+        with self.assertRaises(RuntimeError): policy.unchanged(browser,value,parent_transport_experiment=True)
+
+    def test_parent_variant_requires_exact_witness_and_never_adopts_a_profile(self):
+        for peer in (None,object()):
+            with self.assertRaises(RuntimeError): firefox.Firefox(Path('unused'),Path('unused'),{},owned_peer=peer,parent_transport_experiment=True)
+        peer=object.__new__(firefox.BrowserPeer)  # Type-only model; no installed-authority claim.
+        with self.assertRaises(RuntimeError): firefox.Firefox(Path('unused'),Path('unused'),{},owned_peer=peer,fileless_experiment=True,parent_transport_experiment=True)
+        with tempfile.TemporaryDirectory(dir=ARTIFACTS,prefix='parent-policy-model-') as directory:
+            profile=Path(directory).resolve()/'profile';profile.mkdir()
+            marker=profile/'user.js';marker.write_bytes(b'owned existing fixture')
+            browser=firefox.Firefox(Path('unused'),profile,{},owned_peer=peer,parent_transport_experiment=True)
+            browser._require_apps_closed=Mock()
+            with patch.object(firefox.subprocess,'Popen',side_effect=AssertionError('no launch')) as launch:
+                with self.assertRaises(FileExistsError): browser.start()
+            launch.assert_not_called();self.assertFalse(browser.launch_attempted)
+            self.assertEqual(marker.read_bytes(),b'owned existing fixture')
+
+    def test_parent_launch_marks_unknown_creation_before_effect_and_never_replays(self):
+        peer=object.__new__(firefox.BrowserPeer)
+        with tempfile.TemporaryDirectory(dir=ARTIFACTS,prefix='parent-policy-model-') as directory:
+            profile=Path(directory).resolve()/'profile'
+            browser=firefox.Firefox(Path('unused'),profile,{},owned_peer=peer,parent_transport_experiment=True)
+            browser._require_apps_closed=Mock()
+            def launch(*args,**kwargs):
+                self.assertTrue(browser.launch_attempted)
+                values={json.loads('['+line[len('user_pref('):-2]+']')[0]:json.loads('['+line[len('user_pref('):-2]+']')[1]
+                        for line in (profile/'user.js').read_text(encoding='utf-8').splitlines()}
+                self.assertEqual(set(values)&set(policy.NAMES),{'extensions.experiments.enabled'})
+                self.assertIs(values['extensions.experiments.enabled'],True);self.assertIs(values['remote.prefs.recommended'],False)
+                self.assertEqual(kwargs['cwd'],profile)
+                raise RuntimeError('synthetic unknown creation')
+            with patch.object(firefox.socket,'socket') as reservation,patch.object(firefox.subprocess,'Popen',side_effect=launch) as spawn:
+                reservation.return_value.__enter__.return_value.getsockname.return_value=('127.0.0.1',32100)
+                with self.assertRaises(RuntimeError): browser.start()
+                with self.assertRaises(RuntimeError): browser.start()
+            self.assertEqual(spawn.call_count,1);self.assertTrue(browser.launch_attempted);self.assertIsNone(browser.process)
+
+
 if __name__=='__main__':unittest.main()

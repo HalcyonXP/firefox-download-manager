@@ -1,0 +1,37 @@
+[
+  {
+    "namespace": "managerParentTransport",
+    "description": "Fixed Manager parent transport; API-local connection tokens are not native admission IDs or capture authority.",
+    "types": [{ "id": "Connection", "type": "integer", "minimum": 1, "maximum": 9007199254740991 }],
+    "functions": [
+      { "name": "open", "type": "function", "async": true, "parameters": [] },
+      {
+        "name": "ready",
+        "type": "function",
+        "async": true,
+        "parameters": [{ "name": "connection", "$ref": "Connection" }]
+      },
+      {
+        "name": "read",
+        "type": "function",
+        "async": true,
+        "parameters": [{ "name": "connection", "$ref": "Connection" }]
+      },
+      {
+        "name": "postMessage",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "connection", "$ref": "Connection" },
+          { "name": "message", "type": "object", "additionalProperties": { "type": "any" } }
+        ]
+      },
+      {
+        "name": "close",
+        "type": "function",
+        "async": true,
+        "parameters": [{ "name": "connection", "$ref": "Connection" }]
+      }
+    ]
+  }
+]

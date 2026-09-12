@@ -28,6 +28,7 @@ for (const [name, entry] of Object.entries({
 })) {
   const result = buildSync({
     bundle: true,
+    define: { __DM_PARENT_TRANSPORT__: "false" },
     entryPoints: [entry],
     format: "iife",
     write: false,

@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { extensionLicenses } from "./extension-licenses.mjs";
-import { candidatePayloads, validateCaptureCandidate } from "./capture-candidate-policy.mjs";
+import { parentPayloads, validateParentCandidate } from "./parent-candidate-policy.mjs";
 
 const output = path.resolve(process.argv[2] ?? ".");
 const relative = path.relative(path.resolve("artifacts"), output);
@@ -26,8 +26,9 @@ const git = (...args) =>
 const revision = git("rev-parse", "HEAD").trim();
 if (!/^[a-f0-9]{40}$/u.test(revision)) throw new Error("Candidate revision unavailable");
 const initiallyDirty = git("status", "--porcelain").length !== 0;
-const manifest = JSON.parse(await readFile("extension/candidate/manifest.json", "utf8"));
-validateCaptureCandidate(manifest);
+const manifest = JSON.parse(await readFile("extension/parent-bridge/manifest.json", "utf8"));
+const schema = JSON.parse(await readFile("extension/parent-bridge/schema.json", "utf8"));
+validateParentCandidate(manifest, schema);
 await mkdir(output); // Exclusive; failed builds are preserved, never adopted.
 process.env.ESBUILD_WORKER_THREADS = "0";
 process.env.ESBUILD_MAX_BUFFER = "16777216";
@@ -35,13 +36,13 @@ delete process.env.ESBUILD_BINARY_PATH;
 const { buildSync } = await import("esbuild");
 const payloads = {};
 for (const [name, entry] of Object.entries({
-  "background.js": "extension/src/automatic-background.ts",
-  "click.js": "extension/src/capture-click.ts",
+  "background.js": "extension/src/background.ts",
+  "parent-api.js": "extension/parent-bridge/api.js",
   "manager.js": "extension/src/manager.ts",
 })) {
   const result = buildSync({
     bundle: true,
-    define: { __DM_PARENT_TRANSPORT__: "false" },
+    define: { __DM_PARENT_TRANSPORT__: "true" },
     entryPoints: [entry],
     format: "iife",
     write: false,
@@ -54,11 +55,12 @@ for (const [name, entry] of Object.entries({
   payloads[name] = result.outputFiles[0].contents;
 }
 payloads["manifest.json"] = Buffer.from(JSON.stringify(manifest));
+payloads["parent-schema.json"] = Buffer.from(JSON.stringify(schema));
 for (const name of ["manager.html", "manager.css"])
   payloads[name] = await readFile(`extension/src/${name}`);
 for (const [name, text] of Object.entries(await extensionLicenses()))
   payloads[name] = Buffer.from(text);
-if (Object.keys(payloads).sort().join() !== candidatePayloads.slice().sort().join())
+if (Object.keys(payloads).sort().join() !== parentPayloads.slice().sort().join())
   throw new Error("Candidate inventory refused");
 const hashes = {};
 for (const [name, data] of Object.entries(payloads)) {
@@ -74,6 +76,8 @@ await writeFile(
   JSON.stringify({
     version: 1,
     candidate: true,
+    mode: "parent-transport",
+    capture_ready: false,
     qualification: false,
     source_commit: revision,
     source_dirty: initiallyDirty || git("status", "--porcelain").length !== 0,

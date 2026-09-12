@@ -419,3 +419,154 @@ async fn parent_admission_reconnect_on_same_engine_rejects_previous_acceptance()
         assert!(ids.insert(observed.id));
     }
 }
+
+#[tokio::test]
+async fn ordinary_worker_refuses_parent_without_losing_ordinary_service() {
+    let domain = Domain::new();
+    let endpoint = Endpoint::generate().unwrap();
+    let key = Arc::new(Capability::generate().unwrap());
+    let mut worker =
+        super::Worker::start_local(domain.config(), endpoint, Arc::clone(&key)).unwrap();
+    super::until("ordinary worker ready", || worker.take_ready()).await;
+    let refused = connect_browser_parent(endpoint, &key).await.is_err();
+    let observed = async {
+        let mut peer = super::Peer::new(
+            connect(endpoint, &key)
+                .await
+                .map_err(|_| "ordinary connect")?,
+        );
+        Ok::<_, &'static str>(peer.hello().await)
+    }
+    .await;
+    super::joined(&mut worker).await;
+    assert!(refused, "ordinary worker opted in to parent proofs");
+    assert!(observed.unwrap().is_empty());
+    drop(Server::bind(endpoint, key).unwrap());
+}
+
+#[tokio::test]
+async fn selected_worker_routes_parent_and_ordinary_to_one_retained_engine() {
+    use super::{ByteRange, Fixture, RequestSelector, ServerConfig, TestServer};
+    use download_manager_engine::persistence::TaskState;
+    let domain = Domain::new();
+    let fixture = Fixture {
+        len: 64 * 1024,
+        seed: 97,
+    };
+    let http = TestServer::start(ServerConfig {
+        fixture: fixture.clone(),
+        rules: Vec::new(),
+    })
+    .unwrap();
+    let gate = http
+        .pause_responses(RequestSelector {
+            range: Some(ByteRange { start: 0, end: 0 }),
+            ..Default::default()
+        })
+        .unwrap();
+    let endpoint = Endpoint::generate().unwrap();
+    let key = Arc::new(Capability::generate().unwrap());
+    let mut worker =
+        super::Worker::start_local_parent_transport(domain.config(), endpoint, Arc::clone(&key))
+            .unwrap();
+    super::until("parent worker ready", || worker.take_ready()).await;
+    let observed = worker_peers(endpoint, &key, http.url("/fixture"), gate).await;
+    super::joined(&mut worker).await;
+    drop(http);
+    let (first, old, manual, task) =
+        observed.expect("selected worker observation after joined cleanup");
+    assert_ne!(first, old);
+    assert_ne!(first, manual.id);
+    assert_ne!(old, manual.id);
+    assert_eq!(
+        task["result"]["task_id"].as_str(),
+        manual.task_id.as_deref()
+    );
+    assert_eq!(
+        std::fs::read(domain.0.join("downloads/parent-manual.bin")).unwrap(),
+        fixture.bytes(0, 64 * 1024, 0)
+    );
+    assert_eq!(
+        std::fs::read_dir(domain.0.join("downloads"))
+            .unwrap()
+            .count(),
+        1
+    );
+    let reopened = EngineOwner::open(&domain.config()).unwrap();
+    let tasks = reopened.engine().snapshots();
+    let shutdown = reopened.shutdown().await;
+    drop(reopened);
+    drop(Server::bind(endpoint, key).unwrap());
+    assert!(shutdown.is_ok());
+    assert_eq!(tasks.len(), 1);
+    assert_eq!(tasks[0].state(), TaskState::Completed);
+    assert_eq!(Some(tasks[0].task_id().to_string()), manual.task_id);
+}
+
+async fn worker_peers(
+    endpoint: Endpoint,
+    key: &Capability,
+    url: String,
+    gate: download_manager_test_server::ResponsePause,
+) -> Result<(String, String, Observed, Value), &'static str> {
+    let mut no_stop = None;
+    let first = peer(
+        connect_browser_parent(endpoint, key)
+            .await
+            .map_err(|_| "first connect")?,
+        Case::Nominal,
+        &mut no_stop,
+    )
+    .await?;
+    let old = peer(
+        connect_browser_parent(endpoint, key)
+            .await
+            .map_err(|_| "stale connect")?,
+        Case::Old(first.id.clone()),
+        &mut no_stop,
+    )
+    .await?;
+    if !old.refused {
+        return Err("stale admission accepted");
+    }
+    let manual = peer(
+        connect_browser_parent(endpoint, key)
+            .await
+            .map_err(|_| "manual connect")?,
+        Case::Manual(url),
+        &mut no_stop,
+    )
+    .await?;
+    let mut ordinary = super::Peer::new(
+        connect(endpoint, key)
+            .await
+            .map_err(|_| "ordinary reconnect")?,
+    );
+    let before = ordinary.hello().await; // Includes ordinary prepared_handoff compatibility.
+    // Parent reader/session has retired before the worker serves this peer.
+    if before.len() != 1
+        || before[0]["task_id"].as_str() != manual.task_id.as_deref()
+        || before[0]["state"] == "completed"
+    {
+        return Err("same active task required before gate release");
+    }
+    drop(gate);
+    let task = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            ordinary
+                .send("get", json!({"task_id":manual.task_id}), "get")
+                .await;
+            let result = ordinary.response("get").await;
+            if result["ok"] != true {
+                return Err("get refused");
+            }
+            if result["result"]["state"] == "completed" {
+                return Ok(result);
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .map_err(|_| "completion deadline")??;
+    Ok::<_, &'static str>((first.id, old.id, manual, task))
+}

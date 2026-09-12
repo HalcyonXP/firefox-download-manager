@@ -101,10 +101,22 @@ export class ParentConnection {
     });
   }
 
-  #guard(context) {
-    if (context !== this.#context || context === null || this.#stage === "closed") refused();
+  // Internal API owners validate before retaining a caller's slot or starting
+  // anything. This permits the first caller only while the broker is new.
+  assertCaller(context) {
+    if (
+      context === null ||
+      this.#stage === "closed" ||
+      (this.#context !== null && context !== this.#context)
+    )
+      refused();
     this.#launcher.assertCaller(context);
     if (this.#stage === "closed") refused();
+  }
+
+  #guard(context) {
+    if (context !== this.#context || context === null) refused();
+    this.assertCaller(context);
   }
 
   connect(context) {
