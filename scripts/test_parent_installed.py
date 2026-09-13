@@ -18,6 +18,8 @@ class ParentInstalledTests(unittest.TestCase):
         b.automation_policy=baseline();b.automation_policy['preferences']['extensions.experiments.enabled'].update(value=True,user=True)
         b.failed=False;b.stage='model';b.first_failure=None;b.command_failure=None;b.launch_attempted=True;b.closed=False;b.load_attempted=True;b.disable_attempted=b.disabled_observed=b.browser_close_attempted=False
         b.control_handle='control';b.manager_handle='manager';b.control_switch_attempted=False;b.tab_attempted=True
+        b.tab_failure_attempted=False;b.tab_failure=None
+        b.read_tab_state=Mock(return_value={'version':1,**{key:None for key in p.TAB_FIELDS}})
         def command(name,args=None):
             if name=='WebDriver:SwitchToWindow': calls.append('control-select');return None
             if name=='WebDriver:GetWindowHandle': return {'value':'control'}
@@ -95,7 +97,7 @@ class ParentInstalledTests(unittest.TestCase):
             self.assertEqual(calls.count('disable'),1);self.assertEqual(calls.count('browser-close'),1)
             if phase=='remove': self.assertFalse(b.observer.removal_returned)
             with self.assertRaises(RuntimeError): b.evidence()
-            observation=b.diagnostic();self.assertEqual(observation['version'],3)
+            observation=b.diagnostic();self.assertEqual(observation['version'],4)
             self.assertTrue(observation['observer']['cleanup']['removed'])
             self.assertTrue(observation['observer']['failed'])
 
@@ -326,6 +328,58 @@ class ParentInstalledTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):b.load(Path('metadata-only.xpi'))
                 b.command.assert_called_once_with('WebDriver:NewWindow',{'type':'tab'})
                 load.assert_not_called()
+
+    def test_tab_failure_snapshot_is_bounded_copied_and_never_retried(self):
+        b,_=self.browser();b.load_attempted=False;b.tab_attempted=False;b.manager_handle=None
+        b.command.side_effect=None;b.command.return_value={'handle':'control','type':'tab'}
+        state={'version':1,**{key:False for key in p.TAB_FIELDS}}
+        state['window_modal']=True;state['selected_control']=None;b.read_tab_state.return_value=state
+        with self.assertRaises(RuntimeError):b.load(Path('unused'))
+        self.assertEqual(b.first_failure['stage'],'manager-tab-response-distinct')
+        self.assertEqual(b.tab_failure,{'state':'observed',**state})
+        state['window_modal']=False
+        observed=b.diagnostic();observed['tab_failure']['window_modal']=False
+        self.assertTrue(b.tab_failure['window_modal']);self.assertTrue(b.failed)
+        b.observe_tab_failure();b.read_tab_state.assert_called_once()
+        self.assertFalse(b.load_attempted);self.assertIsNone(b.manager_handle)
+
+    def test_bad_tab_snapshot_cannot_replace_original_refusal_or_leak_values(self):
+        import json
+        valid={'version':1,**{key:False for key in p.TAB_FIELDS}}
+        for result in (None,{**valid,'version':True},{**valid,'window_modal':1},
+                       {**valid,'selected_blank':'secret-value'},{**valid,'extra':'secret-value'}):
+            b,_=self.browser();b.load_attempted=False;b.tab_attempted=False
+            primary=RuntimeError('original tab failure');b.command.side_effect=primary;b.read_tab_state.return_value=result
+            with self.subTest(result=result),self.assertRaises(RuntimeError) as caught:b.load(Path('unused'))
+            self.assertIs(caught.exception,primary)
+            self.assertEqual(b.first_failure['stage'],'manager-tab-creation')
+            self.assertEqual(b.tab_failure,{'state':'unavailable'})
+            self.assertNotIn('secret-value',json.dumps(b.diagnostic()))
+            b.observe_tab_failure();b.read_tab_state.assert_called_once()
+
+    def test_tab_snapshot_preserves_interruptions_without_new_commands_after_original_interrupt(self):
+        for primary in (KeyboardInterrupt(),RuntimeError('first')):
+            b,_=self.browser();b.load_attempted=False;b.tab_attempted=False
+            b.command.side_effect=primary;secondary=KeyboardInterrupt();b.read_tab_state.side_effect=secondary
+            with self.assertRaises(KeyboardInterrupt) as caught:b.load(Path('unused'))
+            self.assertIs(caught.exception,primary if isinstance(primary,KeyboardInterrupt) else secondary)
+            self.assertEqual(b.first_failure['stage'],'manager-tab-creation');self.assertTrue(b.failed)
+            if isinstance(primary,KeyboardInterrupt):
+                b.observe_tab_failure();b.read_tab_state.assert_not_called()
+                self.assertEqual(b.tab_failure,{'state':'skipped-interruption'})
+            else:b.read_tab_state.assert_called_once();self.assertEqual(b.tab_failure,{'state':'unavailable'})
+
+    def test_original_tab_snapshot_commands_restore_once_and_preserve_script_interruption(self):
+        for interrupted in (False,True):
+            b,_=self.browser();del b.read_tab_state;b.verified=True
+            failure=KeyboardInterrupt();b.script=Mock(side_effect=failure if interrupted else None,return_value={'observed':True})
+            b.command.side_effect=[None,RuntimeError('restore')] if interrupted else [None,None]
+            if interrupted:
+                with self.assertRaises(BaseException) as caught:b.read_tab_state()
+                self.assertIs(caught.exception,failure)
+            else:self.assertEqual(b.read_tab_state(),{'observed':True})
+            b.script.assert_called_once_with(p.TAB_STATE,['control'])
+            self.assertEqual([c.args for c in b.command.call_args_list],[('Marionette:SetContext',{'value':'chrome'}),('Marionette:SetContext',{'value':'content'})])
 
     def test_plain_tab_reply_through_original_command_correlation_before_load(self):
         import json

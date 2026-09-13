@@ -15,7 +15,7 @@ This is failure cleanup for the owned, temporary-XPI installed-parent diagnostic
 
 The selected `CleanupObserverClient` retains both trackers before collector installation. The normal snapshot interface stays refused after its qualification evidence fails. Cleanup readback requires an already-failed browser owner and uses the same retained process object, named sandbox, nonce/collector and closed envelopes. Context restoration is independent; a later restore error cannot replace an earlier interruption. Pure envelope/history validation runs before restoration, so known corruption remains quarantined even when restoration also fails or is interrupted. Validation alone does not accept records or issue receipts.
 
-Native process wait, exit-code observation, pipe closure and I/O settlement remain required before browser shutdown. Collector removal alone is not SDK retirement. Failed-but-joined native observations can support only the existing failure-cleanup contract. Browser diagnostic version3 records original and cleanup facts separately; it is not native wire2 or a successful lifecycle receipt. The enclosing private failure/cleanup file uses version2.
+Native process wait, exit-code observation, pipe closure and I/O settlement remain required before browser shutdown. Collector removal alone is not SDK retirement. Failed-but-joined native observations can support only the existing failure-cleanup contract. Browser diagnostic version4 records original and cleanup facts separately; it is not native wire2 or a successful lifecycle receipt. The enclosing private failure/cleanup file uses version2.
 
 ## Keep the original setup authority
 
@@ -33,6 +33,25 @@ validation and one-shot creation rules are unchanged. A refusal at the former
 compound guard does not identify which predicate failed. Diagnostics retain no
 returned handles or unknown response fields; flat Marionette and single
 `value`-wrapped replies remain supported.
+
+After an ordinary tab-creation/validation/selection failure, one optional
+`parent_tab_state.js` sample records only five boolean-or-null fields from the
+original Marionette chrome window: its window-modal marker, navigation-toolbox
+collapse, selected-tab/browser consistency, and whether the selected browser
+matches the retained control identity and `about:blank`. No tab enumeration,
+selection, prompt dismissal, preference write or returned URL/handle is added.
+The sample is later than the failure; it cannot reconstruct transient state or
+establish that all kinds of warnings are absent. A modal marker is not a cause
+diagnosis. Existing WebDriver creation and prompt handling remain unchanged.
+
+The first failure is retained before this sample. Observation intent is consumed
+before commands; malformed or unavailable observations remain `unavailable` and
+cannot be retried by cleanup. Original interruptions skip and consume the sample
+without issuing new diagnostic commands. Script/context-restoration interruptions
+retain priority over ordinary failures. Version4 adds `tab_failure` to the existing
+pre-hold record: null (not applicable), `skipped-interruption`, `unavailable`, or an
+`observed` closed version1 flag set. These states never authorize recovery or a
+successful qualification. The enclosing private-file version2 is unchanged.
 
 `qualification.failure_location.failure_location` copies only allowlisted source tags and line numbers from an exception traceback: at most eight recognized locations within a 32-frame observation. Unknown frames consume the budget without exposing filenames or line numbers; `trace_truncated` reports a remaining tail. No exception text, arguments, frame locals, source text, or raw paths are serialized. Interpret locations against the run's separately pinned source revision. They identify propagation sites, not a proven cause or recovery authority.
 

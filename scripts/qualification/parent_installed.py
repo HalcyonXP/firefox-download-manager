@@ -26,6 +26,10 @@ from .process_lease import ProcessLease
 from .support import new_report
 
 CONTROL=Path(__file__).with_name('parent_transport_control.js').read_text(encoding='utf-8')
+TAB_STATE=Path(__file__).with_name('parent_tab_state.js').read_text(encoding='utf-8')
+TAB_FIELDS={'window_modal','navigation_collapsed','selection_consistent','selected_control','selected_blank'}
+TAB_FAILURE_STAGES={'manager-tab-creation','manager-tab-response-shape','manager-tab-response-type',
+                    'manager-tab-response-handle','manager-tab-response-distinct','manager-tab-selection'}
 ERROR='owned installed parent transport refused; retain owner and domain'
 
 
@@ -42,7 +46,10 @@ def retained_failure(method):
         try: return method(self,*args,**kwargs)
         except BaseException as error:
             self.failed=True
-            try: self.note_failure(error)
+            try:
+                self.note_failure(error)
+                # Do not start optional diagnostic commands after interruption.
+                self.observe_tab_failure(interrupted=not isinstance(error,Exception))
             except BaseException as observation_error:
                 if isinstance(error,Exception) and not isinstance(observation_error,Exception):
                     raise observation_error
@@ -71,6 +78,33 @@ class ParentBrowser(Firefox):
         self.command_failure=None
         self.control_handle=self.manager_handle=None
         self.tab_attempted=self.control_switch_attempted=False
+        self.tab_failure_attempted=False
+        self.tab_failure=None
+
+    def observe_tab_failure(self, *, interrupted=False):
+        # A single post-failure sample, never authority to retry or select a tab.
+        if (self.tab_failure_attempted or self.first_failure is None
+                or self.first_failure['stage'] not in TAB_FAILURE_STAGES): return
+        self.tab_failure_attempted=True  # Reserve before any uncertain command.
+        if interrupted:
+            self.tab_failure={'state':'skipped-interruption'}
+            return
+        self.tab_failure={'state':'unavailable'}
+        self.stage='manager-tab-failure-observation'
+        result=self.read_tab_state()
+        if (type(result) is not dict or set(result)!=TAB_FIELDS|{'version'}
+                or type(result['version']) is not int or result['version']!=1
+                or any(result[key] is not None and type(result[key]) is not bool for key in TAB_FIELDS)):
+            raise RuntimeError(ERROR)
+        self.tab_failure={'state':'observed',**result}
+
+    def read_tab_state(self):
+        self.command('Marionette:SetContext',{'value':'chrome'})
+        result=[]
+        # Preserve a script interruption even if context restoration also fails.
+        independent((lambda:result.append(self.script(TAB_STATE,[self.control_handle])),
+                     lambda:self.command('Marionette:SetContext',{'value':'content'})))
+        return result[0]
 
     def note_failure(self, error):
         if self.first_failure is None:
@@ -161,7 +195,8 @@ class ParentBrowser(Firefox):
                                                      'failed':self.parent_lease.failed,'retained_handles':len(self.parent_lease.handles)}
         launcher_exit=None if self.original is None else self.original.poll()
         if launcher_exit is not None and type(launcher_exit) is not int: raise RuntimeError(ERROR)
-        return {'version':3,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
+        return {'version':4,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
+                'tab_failure':copy.deepcopy(self.tab_failure),
                 'observer':observer,'parent_lease':lease,'launcher_exit_observed':launcher_exit,
                 'failed':self.failed,'load_attempted':self.load_attempted,'disable_attempted':self.disable_attempted,
                 'disabled_observed':self.disabled_observed,'browser_close_attempted':self.browser_close_attempted,
