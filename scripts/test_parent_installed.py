@@ -305,6 +305,52 @@ class ParentInstalledTests(unittest.TestCase):
             with self.assertRaises(RuntimeError): b.load(Path('metadata-only.xpi'))
         self.assertEqual(sum(c.args[0]=='WebDriver:NewWindow' for c in b.command.call_args_list),1)
 
+    def test_tab_response_refusals_have_fixed_stages_without_retaining_values(self):
+        import json
+        sentinel='private-response-value'
+        cases=[
+            (None,'shape'),
+            ({'handle':sentinel,'type':'tab','extra':sentinel},'shape'),
+            ({'handle':sentinel,'type':'window'},'type'),
+            ({'handle':'bad handle','type':'tab'},'handle'),
+            ({'handle':'control','type':'tab'},'distinct'),
+        ]
+        for response,step in cases:
+            b,_=self.browser();b.load_attempted=False;b.tab_attempted=False;b.manager_handle=None
+            b.command.return_value=response;b.command.side_effect=None
+            with self.subTest(step=step),patch.object(p.Firefox,'load') as load:
+                with self.assertRaises(RuntimeError):b.load(Path('metadata-only.xpi'))
+                self.assertEqual(b.first_failure['stage'],'manager-tab-response-'+step)
+                self.assertNotIn(sentinel,json.dumps(b.diagnostic()))
+                self.assertIsNone(b.manager_handle);self.assertFalse(b.load_attempted)
+                with self.assertRaises(RuntimeError):b.load(Path('metadata-only.xpi'))
+                b.command.assert_called_once_with('WebDriver:NewWindow',{'type':'tab'})
+                load.assert_not_called()
+
+    def test_plain_tab_reply_through_original_command_correlation_before_load(self):
+        import json
+        b,_=self.browser();b.load_attempted=False;b.tab_attempted=False;b.manager_handle=None
+        del b.command
+        b.verified=True;b.serial=0;b.connection=Mock()
+        b.receive=Mock(side_effect=[[1,1,None,{'handle':'new-manager','type':'tab'}],[1,2,None,{'value':None}]])
+        def load(browser,_):
+            self.assertEqual(browser.manager_handle,'new-manager');self.assertTrue(browser.load_attempted)
+        with patch.object(p.Firefox,'load',load),patch.object(p,'control'):
+            b.load(Path('metadata-only.xpi'))
+        packets=[json.loads(call.args[0].split(b':',1)[1]) for call in b.connection.sendall.call_args_list]
+        self.assertEqual(packets,[[0,1,'WebDriver:NewWindow',{'type':'tab'}],[0,2,'WebDriver:SwitchToWindow',{'handle':'new-manager'}]])
+        self.assertFalse(b.failed)
+
+    def test_flat_marionette_tab_reply_and_selection_failure_retain_one_original_handle(self):
+        b,_=self.browser();b.load_attempted=False;b.tab_attempted=False;b.manager_handle=None
+        b.command.side_effect=[{'handle':'new-manager','type':'tab'},RuntimeError('modeled selection refusal')]
+        with patch.object(p.Firefox,'load') as load:
+            with self.assertRaises(RuntimeError):b.load(Path('metadata-only.xpi'))
+            self.assertEqual(b.first_failure['stage'],'manager-tab-selection')
+            self.assertEqual(b.manager_handle,'new-manager');self.assertFalse(b.load_attempted)
+            with self.assertRaises(RuntimeError):b.load(Path('metadata-only.xpi'))
+            self.assertEqual(b.command.call_count,2);load.assert_not_called()
+
     def test_failed_tab_creation_does_not_claim_or_dispatch_addon_load(self):
         b,_=self.browser();b.load_attempted=False;b.tab_attempted=False;b.parent_lease.acquired=True
         b.command.side_effect=RuntimeError('unknown tab creation')

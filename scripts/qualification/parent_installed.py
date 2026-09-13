@@ -113,9 +113,17 @@ class ParentBrowser(Firefox):
         self.stage='manager-tab-creation'
         self.tab_attempted=True
         tab=value(self.command('WebDriver:NewWindow',{'type':'tab'}))
-        if (type(tab) is not dict or set(tab)!={'handle','type'} or tab['type']!='tab'
-                or not self.valid_handle(tab['handle']) or tab['handle']==self.control_handle): raise RuntimeError(ERROR)
+        # Keep each refusal identifiable without recording returned handles or fields.
+        self.stage='manager-tab-response-shape'
+        if type(tab) is not dict or set(tab)!={'handle','type'}: raise RuntimeError(ERROR)
+        self.stage='manager-tab-response-type'
+        if tab['type']!='tab': raise RuntimeError(ERROR)
+        self.stage='manager-tab-response-handle'
+        if not self.valid_handle(tab['handle']): raise RuntimeError(ERROR)
+        self.stage='manager-tab-response-distinct'
+        if tab['handle']==self.control_handle: raise RuntimeError(ERROR)
         self.manager_handle=tab['handle']
+        self.stage='manager-tab-selection'
         self.command('WebDriver:SwitchToWindow',{'handle':self.manager_handle})
         self.stage='candidate-load'
         self.load_attempted=True

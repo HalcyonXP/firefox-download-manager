@@ -27,6 +27,13 @@ Cleanup attempts independent resource/Manager/record stages and preserves interr
 
 ## Refusal evidence before a held state
 
+Manager-tab creation uses separate fixed stages for response shape, tab type,
+handle validity, distinction from the retained control tab, and selection. The
+validation and one-shot creation rules are unchanged. A refusal at the former
+compound guard does not identify which predicate failed. Diagnostics retain no
+returned handles or unknown response fields; flat Marionette and single
+`value`-wrapped replies remain supported.
+
 `qualification.failure_location.failure_location` copies only allowlisted source tags and line numbers from an exception traceback: at most eight recognized locations within a 32-frame observation. Unknown frames consume the budget without exposing filenames or line numbers; `trace_truncated` reports a remaining tail. No exception text, arguments, frame locals, source text, or raw paths are serialized. Interpret locations against the run's separately pinned source revision. They identify propagation sites, not a proven cause or recovery authority.
 
 The first browser failure includes these locations. The first cleanup refusal records its fixed cleanup-step label and locations. Existing exclusive `parent-failure.private.json` and `parent-cleanup.private.json` writes occur before the controller returns a failed-held status; they do not wait for final GUI shutdown. Failed diagnostic observation preserves the original failure and cannot skip independent cleanup stages or replace an earlier interruption. A partial observation may retain only the failure stage/step. File creation/closure is not a sudden-power-loss durability guarantee.
