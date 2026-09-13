@@ -97,7 +97,7 @@ class RetirementControl:
         value=request(raw)
         if value['sequence']!=self.sequence+1: raise RuntimeError(ERROR)
         command=value['command']
-        if self.sequence==0 and command!='start': raise RuntimeError(ERROR)
+        if self.sequence==0 and command not in ('start','finish'): raise RuntimeError(ERROR)
         self.sequence=value['sequence'];self.operation=command;self.phases=0;self.busy=True
         try:
             if command=='start':
@@ -110,6 +110,11 @@ class RetirementControl:
                 except BaseException as error:
                     self.supervisor._failure(error) # Cancel stays retained until finish.
             elif command=='finish':
+                if not self.supervisor.started:
+                    # Cancel an initialized but undispatched owner. Never start
+                    # a browser test merely to make its cleanup channel usable.
+                    self.supervisor._failure(RuntimeError(ERROR))
+                    self.supervisor.cleanup()
                 if self.supervisor.exit_code() is None: raise RuntimeError(ERROR)
                 self.finishing=True # Intent before the terminal output operation.
             self.guard()

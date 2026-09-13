@@ -60,6 +60,23 @@ class RetirementControlTests(unittest.TestCase):
         c,o,_=control();c.handle(command(1,'start'));c.handle(command(2,'continue'))
         self.assertEqual(o.continuations,1);self.assertIsNone(c.exit_code())
 
+    def test_finish_before_dispatch_cleans_up_without_starting(self):
+        c,o,out=control(Owner(False))
+        try: c.handle(command(1,'finish'))
+        except BaseException as error: self.fail('initial Finish did not retire its owner: '+type(error).__name__)
+        self.assertEqual((o.executions,o.cleanups,o.continuations),(0,1,0))
+        self.assertFalse(out[-1]['status']['started']);self.assertTrue(out[-1]['status']['failed'])
+        self.assertTrue(out[-1]['status']['cleanup_attempted']);self.assertFalse(out[-1]['status']['held'])
+        self.assertEqual(c.finish(),1)
+        with self.assertRaises(RuntimeError):c.handle(command(2,'start'))
+        self.assertEqual(o.executions,0)
+
+    def test_undispatched_finish_cannot_discard_a_held_owner(self):
+        c,o,out=control()
+        with self.assertRaises(RuntimeError):c.handle(command(1,'finish'))
+        self.assertEqual((o.executions,o.cleanups),(0,1));self.assertIsNone(c.exit_code())
+        self.assertFalse(out)
+
     def test_finish_requires_retirement_and_is_not_replayed(self):
         c,o,_=control();c.handle(command(1,'start'))
         with self.assertRaises(RuntimeError):c.handle(command(2,'finish'))
