@@ -10,6 +10,7 @@ use crate::integrity::ExpectedSha256;
 /// Validated immutable anonymous-GET preparation. Exact URLs/paths have no Debug output.
 pub struct HandoffRequest {
     metadata: TaskMetadata,
+    protection: Option<super::ProtectionBinding>,
 }
 
 impl HandoffRequest {
@@ -32,7 +33,10 @@ impl HandoffRequest {
         if let Some(expected) = expected {
             metadata.require_checksum(expected);
         }
-        Ok(Self { metadata })
+        Ok(Self {
+            metadata,
+            protection: None,
+        })
     }
 
     /// Requires a fresh live native protection owner before execution and publication.
@@ -41,6 +45,16 @@ impl HandoffRequest {
     #[must_use]
     pub fn require_protection(mut self) -> Self {
         self.metadata.require_protection();
+        self
+    }
+
+    /// Pins this new handoff to the exact native browser-adapter context. Closure
+    /// cannot be repaired by repeating preparation with a replacement context.
+    /// No context identity or authority is persisted; recovered work stays refused.
+    #[must_use]
+    pub fn require_protection_in(mut self, context: &super::ProtectionContext) -> Self {
+        self.metadata.require_protection();
+        self.protection = Some(context.binding());
         self
     }
 }
@@ -98,6 +112,12 @@ impl TaskEngine {
                 || known.workers() != metadata.workers()
                 || known.expected_sha256() != metadata.expected_sha256()
                 || known.requires_protection() != metadata.requires_protection()
+                || match (&request.protection, &state.protection_binding) {
+                    (Some(requested), Some(bound)) => !requested.matches(bound),
+                    (Some(_), None) => true,
+                    (None, Some(bound)) => bound.context_id().is_some(),
+                    (None, None) => false,
+                }
             {
                 return Err(TaskEngineError::InvalidTaskState);
             }
@@ -109,7 +129,23 @@ impl TaskEngine {
         let task = managed_task(metadata, self.inner.options.progress, None)?;
         let snapshot = {
             let mut state = lock(&task.state);
-            state.fresh_protection_binding = state.metadata.requires_protection();
+            if state.metadata.requires_protection() {
+                state.protection_binding = request.protection.or_else(|| {
+                    self.inner
+                        .protection
+                        .as_ref()
+                        .map(super::ProtectionGate::binding)
+                });
+                // Explicit contexts must belong to this gate and remain live
+                // BEFORE exclusive persistence; no foreign/retired adoption.
+                if state
+                    .protection_binding
+                    .as_ref()
+                    .is_some_and(|binding| binding.context_id().is_some())
+                {
+                    super::require_live_protection(&self.inner, &state)?;
+                }
+            }
             self.inner.store.create(&state.metadata)?;
             HandoffSnapshot::from_state(&state)?
         };

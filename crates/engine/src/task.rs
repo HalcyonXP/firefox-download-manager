@@ -24,8 +24,10 @@ mod coordinators;
 use coordinators::{Admission, Coordinators, RunOwner};
 
 mod protection;
-use protection::require_live_protection;
-pub use protection::{ProtectionDecision, ProtectionGate, ProtectionReceiver, ProtectionRequest};
+use protection::{ProtectionBinding, require_live_protection};
+pub use protection::{
+    ProtectionContext, ProtectionDecision, ProtectionGate, ProtectionReceiver, ProtectionRequest,
+};
 
 mod handoff;
 pub use handoff::{HandoffRequest, HandoffSnapshot};
@@ -927,7 +929,7 @@ struct ManagedTask {
 
 struct ManagedState {
     metadata: TaskMetadata,
-    fresh_protection_binding: bool,
+    protection_binding: Option<ProtectionBinding>,
     source_origin: String,
     workers: WorkerCount,
     partial: Option<PartialFile>,
@@ -949,7 +951,7 @@ impl fmt::Debug for ManagedState {
         formatter
             .debug_struct("ManagedState")
             .field("metadata", &self.metadata)
-            .field("fresh_protection_binding", &self.fresh_protection_binding)
+            .field("has_protection_binding", &self.protection_binding.is_some())
             .field("source_origin", &self.source_origin)
             .field("workers", &self.workers)
             .field("has_partial", &self.partial.is_some())
@@ -2084,7 +2086,7 @@ async fn probe_with_retries(
     cancellation: &TransferCancellation,
     budget: &mut RetryBudget,
 ) -> Result<ResourceProbe, RunError> {
-    let (context, protected) = {
+    let (context, protected, binding) = {
         let tasks = lock(&inner.tasks);
         let task = tasks
             .get(&task_id)
@@ -2100,14 +2102,20 @@ async fn probe_with_retries(
         require_live_protection(inner, &state).map_err(|_| {
             RunError::Failed(TaskFailure::new(TaskFailureKind::ProtectionUnavailable))
         })?;
-        (state.context.clone(), state.metadata.requires_protection())
+        (
+            state.context.clone(),
+            state.metadata.requires_protection(),
+            state.protection_binding.clone(),
+        )
     };
     loop {
         if protected
-            && !inner
-                .protection
-                .as_ref()
-                .is_some_and(ProtectionGate::is_available)
+            && !binding.as_ref().is_some_and(|binding| {
+                inner
+                    .protection
+                    .as_ref()
+                    .is_some_and(|gate| gate.accepts(binding))
+            })
         {
             return Err(RunError::Failed(TaskFailure::new(
                 TaskFailureKind::ProtectionUnavailable,
@@ -2890,7 +2898,7 @@ fn managed_task(
     };
     let state = ManagedState {
         metadata,
-        fresh_protection_binding: false,
+        protection_binding: None,
         source_origin,
         workers,
         partial: None,

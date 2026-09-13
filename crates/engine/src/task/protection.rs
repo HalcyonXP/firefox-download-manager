@@ -1,7 +1,7 @@
 //! Opt-in native publication ownership. This is not a Firefox policy implementation.
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot, watch};
 
@@ -32,9 +32,10 @@ struct Lifetime {
     slots: Arc<Semaphore>,
 }
 
-/// Engine-side endpoint consumed by one engine, for one trusted native adapter
-/// lifetime. Never reconnects or accepts caller-supplied fingerprints. Default
-/// engines do not select it.
+/// Engine-side endpoint consumed by one engine for one retained receiver lifetime.
+/// Child browser-adapter contexts can be replaced without reviving old bindings
+/// or replacing this gate. No caller-supplied fingerprints; default engines do
+/// not select it.
 ///
 /// ```compile_fail
 /// use download_manager_engine::task::ProtectionGate;
@@ -54,6 +55,95 @@ pub struct ProtectionReceiver {
     lifetime: Arc<Lifetime>,
     requests: mpsc::Receiver<ProtectionRequest>,
     closed: watch::Sender<bool>,
+    active_context: Weak<ContextLifetime>,
+}
+
+struct ContextLifetime {
+    id: TaskId,
+    live: AtomicBool,
+    closed: watch::Sender<bool>,
+}
+
+/// One noncloneable browser-adapter context within the retained engine receiver.
+/// Closing revokes only this context, including already-approved publication.
+/// A later context cannot revive its tasks or decisions. This is not a browser
+/// identity/policy proof or a process owner.
+///
+/// ```compile_fail
+/// use download_manager_engine::task::ProtectionReceiver;
+/// fn duplicate(receiver: &mut ProtectionReceiver) {
+///     let context = receiver.open_context().unwrap();
+///     let _duplicate = context.clone();
+/// }
+/// ```
+pub struct ProtectionContext {
+    lifetime: Arc<Lifetime>,
+    context: Arc<ContextLifetime>,
+}
+
+#[derive(Clone)]
+pub(super) struct ProtectionBinding {
+    lifetime: Arc<Lifetime>,
+    context: Option<Arc<ContextLifetime>>,
+}
+
+impl ProtectionBinding {
+    fn is_available(&self) -> bool {
+        self.lifetime.live.load(Ordering::Acquire)
+            && !self.lifetime.publication.is_poisoned()
+            && self
+                .context
+                .as_ref()
+                .is_none_or(|context| context.live.load(Ordering::Acquire))
+    }
+
+    pub(super) fn context_id(&self) -> Option<TaskId> {
+        self.context.as_ref().map(|context| context.id)
+    }
+
+    pub(super) fn matches(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.lifetime, &other.lifetime)
+            && match (&self.context, &other.context) {
+                (None, None) => true,
+                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+                _ => false,
+            }
+    }
+}
+
+impl ProtectionContext {
+    /// Native-generated context identity; separate from transport admission,
+    /// engine receiver lifetime, handoff ID and browser-local metadata epochs.
+    #[must_use]
+    pub fn id(&self) -> TaskId {
+        self.context.id
+    }
+
+    #[must_use]
+    pub fn is_available(&self) -> bool {
+        self.binding().is_available()
+    }
+
+    /// Permanently revokes this context under the receiver's publication lock.
+    /// Does not cancel network owners, close the receiver, or join processes.
+    pub fn close(&mut self) {
+        let _publication = lock(&self.lifetime.publication);
+        self.context.live.store(false, Ordering::Release);
+        self.context.closed.send_replace(true);
+    }
+
+    pub(super) fn binding(&self) -> ProtectionBinding {
+        ProtectionBinding {
+            lifetime: self.lifetime.clone(),
+            context: Some(self.context.clone()),
+        }
+    }
+}
+
+impl Drop for ProtectionContext {
+    fn drop(&mut self) {
+        self.close();
+    }
 }
 
 /// Native-origin challenge with one consuming response route. Not serializable,
@@ -69,7 +159,7 @@ pub struct ProtectionReceiver {
 /// }
 /// ```
 pub struct ProtectionRequest {
-    lifetime: Arc<Lifetime>,
+    binding: ProtectionBinding,
     id: TaskId,
     task_id: TaskId,
     generation: u64,
@@ -104,10 +194,19 @@ impl ProtectionRequest {
         self.generation
     }
 
-    /// Fresh native receiver lifetime identity, never reused on reconnection.
+    /// Native engine receiver lifetime, unchanged across child-context replacement.
+    /// This legacy accessor name does not identify a browser connection; a scoped
+    /// dispatcher must also require the exact nonempty `context_id()`.
     #[must_use]
     pub fn connection_id(&self) -> TaskId {
-        self.lifetime.id
+        self.binding.lifetime.id
+    }
+
+    /// Native browser-adapter context, absent only for the original unscoped
+    /// component API. A protected wire dispatcher must require its exact context.
+    #[must_use]
+    pub fn context_id(&self) -> Option<TaskId> {
+        self.binding.context_id()
     }
 
     /// Actual initial native URL. Protected probing and transfer refuse redirects.
@@ -132,7 +231,7 @@ impl ProtectionRequest {
     /// A past metadata read is not liveness. This check grants no authority.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
-        !self.lifetime.live.load(Ordering::Acquire) || self.response.is_closed()
+        !self.binding.is_available() || self.response.is_closed()
     }
 
     /// Consumes exactly one result route. Successful queuing is not publication,
@@ -172,8 +271,22 @@ impl ProtectionGate {
                 lifetime,
                 requests: receiver,
                 closed,
+                active_context: Weak::new(),
             },
         )
+    }
+
+    pub(super) fn binding(&self) -> ProtectionBinding {
+        ProtectionBinding {
+            lifetime: self.lifetime.clone(),
+            context: None,
+        }
+    }
+
+    pub(super) fn accepts(&self, binding: &ProtectionBinding) -> bool {
+        self.is_available()
+            && Arc::ptr_eq(&self.lifetime, &binding.lifetime)
+            && binding.is_available()
     }
 
     pub(super) fn is_available(&self) -> bool {
@@ -188,9 +301,10 @@ impl ProtectionGate {
         named: NamedValidatedPartial,
         cancellation: &TransferCancellation,
     ) -> Result<AuthorizedPartial, TaskFailure> {
-        if !self.is_available() {
+        if !self.accepts(&subject.binding) {
             return Err(unavailable());
         }
+        let binding = subject.binding;
         let slot = self
             .lifetime
             .slots
@@ -199,7 +313,7 @@ impl ProtectionGate {
             .map_err(|_| unavailable())?;
         let (response, result) = oneshot::channel();
         let request = ProtectionRequest {
-            lifetime: self.lifetime.clone(),
+            binding: binding.clone(),
             id: TaskId::new(),
             task_id: subject.task_id,
             generation: subject.generation,
@@ -210,21 +324,36 @@ impl ProtectionGate {
         };
         self.requests.try_send(request).map_err(|_| unavailable())?;
         let mut closed = self.closed.clone();
+        let mut context_closed = binding
+            .context
+            .as_ref()
+            .map(|context| context.closed.subscribe());
+        let context_retired = async {
+            if let Some(closed) = &mut context_closed {
+                if *closed.borrow() {
+                    return;
+                }
+                let _ = closed.changed().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        };
         let decision = tokio::select! {
             biased;
             () = cancellation.cancelled() => return Err(cancelled()),
             _ = closed.changed() => return Err(unavailable()),
+            () = context_retired => return Err(unavailable()),
             result = result => result.map_err(|_| unavailable())?,
         };
         if cancellation.is_cancelled() {
             return Err(cancelled());
         }
-        if !self.is_available() {
+        if !self.accepts(&binding) {
             return Err(unavailable());
         }
         match decision {
             ProtectionDecision::PermitPublication => Ok(AuthorizedPartial {
-                lifetime: self.lifetime.clone(),
+                binding,
                 named,
                 _slot: slot,
             }),
@@ -237,6 +366,39 @@ impl ProtectionGate {
 }
 
 impl ProtectionReceiver {
+    /// Creates one live native context without replacing this receiver or engine.
+    /// The prior context must be closed/dropped; old task bindings stay revoked.
+    /// No browser identity, native connection or policy readiness is inferred.
+    /// # Errors
+    /// Refuses a closed/poisoned receiver or an already-live context.
+    pub fn open_context(&mut self) -> Result<ProtectionContext, TaskFailureKind> {
+        let _publication = self
+            .lifetime
+            .publication
+            .lock()
+            .map_err(|_| TaskFailureKind::ProtectionUnavailable)?;
+        if !self.lifetime.live.load(Ordering::Acquire)
+            || self.requests.is_closed()
+            || self
+                .active_context
+                .upgrade()
+                .is_some_and(|context| context.live.load(Ordering::Acquire))
+        {
+            return Err(TaskFailureKind::ProtectionUnavailable);
+        }
+        let (closed, _) = watch::channel(false);
+        let context = Arc::new(ContextLifetime {
+            id: TaskId::new(),
+            live: AtomicBool::new(true),
+            closed,
+        });
+        self.active_context = Arc::downgrade(&context);
+        Ok(ProtectionContext {
+            lifetime: self.lifetime.clone(),
+            context,
+        })
+    }
+
     /// Receives the next live challenge; discards already-cancelled queued records.
     /// Dropping a received challenge refuses that attempt, not a retry/replay.
     pub async fn recv(&mut self) -> Option<ProtectionRequest> {
@@ -267,12 +429,13 @@ impl Drop for ProtectionReceiver {
 }
 
 struct Subject {
+    binding: ProtectionBinding,
     task_id: TaskId,
     generation: u64,
     source_url: String,
 }
 struct AuthorizedPartial {
-    lifetime: Arc<Lifetime>,
+    binding: ProtectionBinding,
     named: NamedValidatedPartial,
     _slot: OwnedSemaphorePermit,
 }
@@ -283,11 +446,12 @@ impl AuthorizedPartial {
         enter: impl FnOnce() -> Result<(), TaskFailure>,
     ) -> Result<Promotion, TaskFailure> {
         let _publication = self
+            .binding
             .lifetime
             .publication
             .lock()
             .map_err(|_| unavailable())?;
-        if !self.lifetime.live.load(Ordering::Acquire) {
+        if !self.binding.is_available() {
             return Err(unavailable());
         }
         if cancellation.is_cancelled() {
@@ -312,12 +476,13 @@ pub(super) fn require_live_protection(
     state: &ManagedState,
 ) -> Result<(), TaskEngineError> {
     if state.metadata.requires_protection()
-        && (!state.fresh_protection_binding
-            || state.context.is_some()
-            || !inner
-                .protection
-                .as_ref()
-                .is_some_and(ProtectionGate::is_available))
+        && (state.context.is_some()
+            || !state.protection_binding.as_ref().is_some_and(|binding| {
+                inner
+                    .protection
+                    .as_ref()
+                    .is_some_and(|gate| gate.accepts(binding))
+            }))
     {
         return Err(TaskEngineError::ControlFailed(
             TaskFailureKind::ProtectionUnavailable,
@@ -336,11 +501,16 @@ pub(super) async fn publish_validated(
     let subject = {
         let state = lock(&task.state);
         require_live_protection(inner, &state).map_err(|_| unavailable())?;
-        state.metadata.requires_protection().then(|| Subject {
-            task_id: state.metadata.task_id(),
-            generation,
-            source_url: state.metadata.original_url().to_owned(),
-        })
+        if state.metadata.requires_protection() {
+            Some(Subject {
+                binding: state.protection_binding.clone().ok_or_else(unavailable)?,
+                task_id: state.metadata.task_id(),
+                generation,
+                source_url: state.metadata.original_url().to_owned(),
+            })
+        } else {
+            None
+        }
     };
     let enter = || enter_run_state(inner, task, generation, TaskState::Promoting);
     if let Some(subject) = subject {

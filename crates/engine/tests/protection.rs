@@ -718,3 +718,6 @@ async fn recovered_committed_queued_metadata_refuses_generic_start_before_mutati
     assert!(requests.is_empty());
     assert!(!domain.output().exists());
 }
+
+#[path = "protection/contexts.rs"]
+mod contexts;

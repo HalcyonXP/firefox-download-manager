@@ -31,8 +31,9 @@ impl Drop for Domain {
         }
     }
 }
-fn subject() -> Subject {
+fn subject(gate: &ProtectionGate) -> Subject {
     Subject {
+        binding: gate.binding(),
         task_id: TaskId::new(),
         generation: 1,
         source_url: "http://127.0.0.1/fixture".to_owned(),
@@ -46,7 +47,7 @@ async fn protection_result_does_not_survive_close_between_receipt_and_publicatio
     let (gate, mut receiver) = ProtectionGate::channel();
     let signal = TransferCancellation::default();
     let (authorization, response) = tokio::time::timeout(Duration::from_secs(5), async {
-        tokio::join!(gate.authorize(subject(), named, &signal), async {
+        tokio::join!(gate.authorize(subject(&gate), named, &signal), async {
             let request = receiver.recv().await.unwrap();
             request.decide(ProtectionDecision::PermitPublication)
         })
@@ -76,7 +77,7 @@ async fn protection_result_does_not_survive_cancellation_between_receipt_and_pub
     let (gate, mut receiver) = ProtectionGate::channel();
     let signal = TransferCancellation::default();
     let (authorization, response) = tokio::time::timeout(Duration::from_secs(5), async {
-        tokio::join!(gate.authorize(subject(), named, &signal), async {
+        tokio::join!(gate.authorize(subject(&gate), named, &signal), async {
             let request = receiver.recv().await.unwrap();
             request.decide(ProtectionDecision::PermitPublication)
         })
@@ -106,7 +107,7 @@ async fn protection_poisoned_publication_owner_stays_unavailable() {
     let (gate, mut receiver) = ProtectionGate::channel();
     let signal = TransferCancellation::default();
     let (authorization, response) = tokio::time::timeout(Duration::from_secs(5), async {
-        tokio::join!(gate.authorize(subject(), named, &signal), async {
+        tokio::join!(gate.authorize(subject(&gate), named, &signal), async {
             let request = receiver.recv().await.unwrap();
             request.decide(ProtectionDecision::PermitPublication)
         })
@@ -151,7 +152,7 @@ async fn protection_capacity_includes_taken_requests_and_close_retires_them_with
     for named in fixtures {
         let gate = gate.clone();
         tasks.spawn(async move {
-            gate.authorize(subject(), named, &TransferCancellation::default())
+            gate.authorize(subject(&gate), named, &TransferCancellation::default())
                 .await
         });
         if let Ok(Some(request)) =
@@ -163,7 +164,7 @@ async fn protection_capacity_includes_taken_requests_and_close_retires_them_with
         }
     }
     let signal = TransferCancellation::default();
-    let overflow = gate.authorize(subject(), extra, &signal);
+    let overflow = gate.authorize(subject(&gate), extra, &signal);
     let overflow = tokio::time::timeout(Duration::from_secs(5), overflow).await;
     receiver.close(); // Taken request senders remain held; receiver loss must independently wake owners.
     let mut results = vec![];
@@ -195,7 +196,7 @@ fn protection_authorized_owner_consumes_one_slot_until_publication_or_drop() {
     let domain = Domain::new();
     let (gate, receiver) = ProtectionGate::channel();
     let authorized = AuthorizedPartial {
-        lifetime: gate.lifetime.clone(),
+        binding: gate.binding(),
         named: domain.named("held.txt"),
         _slot: gate.lifetime.slots.clone().try_acquire_owned().unwrap(),
     };
@@ -208,3 +209,6 @@ fn protection_authorized_owner_consumes_one_slot_until_publication_or_drop() {
     assert_eq!(released, CAPACITY);
     assert!(!domain.0.join("held.txt").exists());
 }
+
+#[path = "protection_context_tests.rs"]
+mod contexts;
