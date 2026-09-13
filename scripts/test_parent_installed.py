@@ -18,7 +18,7 @@ class ParentInstalledTests(unittest.TestCase):
         b.automation_policy=baseline();b.automation_policy['preferences']['extensions.experiments.enabled'].update(value=True,user=True)
         b.failed=False;b.stage='model';b.first_failure=None;b.command_failure=None;b.launch_attempted=True;b.closed=False;b.load_attempted=True;b.disable_attempted=b.disabled_observed=b.browser_close_attempted=False
         b.control_handle='control';b.manager_handle='manager';b.control_switch_attempted=False;b.tab_attempted=True
-        b.tab_failure_attempted=False;b.tab_failure=None
+        b.tab_failure_attempted=False;b.tab_failure=None;b.modal_failure=None
         b.read_tab_state=Mock(return_value={'version':1,**{key:None for key in p.TAB_FIELDS}})
         def command(name,args=None):
             if name=='WebDriver:SwitchToWindow': calls.append('control-select');return None
@@ -97,7 +97,7 @@ class ParentInstalledTests(unittest.TestCase):
             self.assertEqual(calls.count('disable'),1);self.assertEqual(calls.count('browser-close'),1)
             if phase=='remove': self.assertFalse(b.observer.removal_returned)
             with self.assertRaises(RuntimeError): b.evidence()
-            observation=b.diagnostic();self.assertEqual(observation['version'],4)
+            observation=b.diagnostic();self.assertEqual(observation['version'],5)
             self.assertTrue(observation['observer']['cleanup']['removed'])
             self.assertTrue(observation['observer']['failed'])
 
@@ -378,7 +378,7 @@ class ParentInstalledTests(unittest.TestCase):
                 with self.assertRaises(BaseException) as caught:b.read_tab_state()
                 self.assertIs(caught.exception,failure)
             else:self.assertEqual(b.read_tab_state(),{'observed':True})
-            b.script.assert_called_once_with(p.TAB_STATE,['control'])
+            b.script.assert_called_once_with(p.TAB_STATE,['control'],False)
             self.assertEqual([c.args for c in b.command.call_args_list],[('Marionette:SetContext',{'value':'chrome'}),('Marionette:SetContext',{'value':'content'})])
 
     def test_plain_tab_reply_through_original_command_correlation_before_load(self):

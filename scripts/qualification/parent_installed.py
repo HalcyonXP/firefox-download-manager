@@ -24,9 +24,11 @@ from .parent_candidate import candidate_input
 from .parent_cleanup_observation import CleanupObserverClient as ObserverClient
 from .process_lease import ProcessLease
 from .support import new_report
+from .parent_modal_image import record as record_modal_image
 
 CONTROL=Path(__file__).with_name('parent_transport_control.js').read_text(encoding='utf-8')
 TAB_STATE=Path(__file__).with_name('parent_tab_state.js').read_text(encoding='utf-8')
+MODAL_IMAGE=Path(__file__).with_name('parent_modal_image.js').read_text(encoding='utf-8')
 TAB_FIELDS={'window_modal','navigation_collapsed','selection_consistent','selected_control','selected_blank'}
 TAB_FAILURE_STAGES={'manager-tab-creation','manager-tab-response-shape','manager-tab-response-type',
                     'manager-tab-response-handle','manager-tab-response-distinct','manager-tab-selection'}
@@ -80,6 +82,7 @@ class ParentBrowser(Firefox):
         self.tab_attempted=self.control_switch_attempted=False
         self.tab_failure_attempted=False
         self.tab_failure=None
+        self.modal_failure=None
 
     def observe_tab_failure(self, *, interrupted=False):
         # A single post-failure sample, never authority to retry or select a tab.
@@ -97,12 +100,24 @@ class ParentBrowser(Firefox):
                 or any(result[key] is not None and type(result[key]) is not bool for key in TAB_FIELDS)):
             raise RuntimeError(ERROR)
         self.tab_failure={'state':'observed',**result}
+        if all(result[key] is True for key in ('window_modal','selection_consistent','selected_control','selected_blank')):
+            self.modal_failure={'state':'unavailable'}
+            if (self.verified is not True or self.parent_transport_experiment is not True
+                    or self.original is None or self.process is not self.original
+                    or self.parent_lease is None or self.parent_lease.acquired is not True): raise RuntimeError(ERROR)
+            self.modal_failure=record_modal_image(self.profile,self.read_modal_state())
 
     def read_tab_state(self):
+        return self.read_original_chrome(TAB_STATE,False)
+
+    def read_modal_state(self):
+        return self.read_original_chrome(MODAL_IMAGE,True)
+
+    def read_original_chrome(self, source, asynchronous):
         self.command('Marionette:SetContext',{'value':'chrome'})
         result=[]
         # Preserve a script interruption even if context restoration also fails.
-        independent((lambda:result.append(self.script(TAB_STATE,[self.control_handle])),
+        independent((lambda:result.append(self.script(source,[self.control_handle],asynchronous)),
                      lambda:self.command('Marionette:SetContext',{'value':'content'})))
         return result[0]
 
@@ -195,8 +210,8 @@ class ParentBrowser(Firefox):
                                                      'failed':self.parent_lease.failed,'retained_handles':len(self.parent_lease.handles)}
         launcher_exit=None if self.original is None else self.original.poll()
         if launcher_exit is not None and type(launcher_exit) is not int: raise RuntimeError(ERROR)
-        return {'version':4,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
-                'tab_failure':copy.deepcopy(self.tab_failure),
+        return {'version':5,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
+                'tab_failure':copy.deepcopy(self.tab_failure),'modal_failure':copy.deepcopy(self.modal_failure),
                 'observer':observer,'parent_lease':lease,'launcher_exit_observed':launcher_exit,
                 'failed':self.failed,'load_attempted':self.load_attempted,'disable_attempted':self.disable_attempted,
                 'disabled_observed':self.disabled_observed,'browser_close_attempted':self.browser_close_attempted,

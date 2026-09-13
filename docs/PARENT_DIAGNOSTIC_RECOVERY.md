@@ -15,7 +15,7 @@ This is failure cleanup for the owned, temporary-XPI installed-parent diagnostic
 
 The selected `CleanupObserverClient` retains both trackers before collector installation. The normal snapshot interface stays refused after its qualification evidence fails. Cleanup readback requires an already-failed browser owner and uses the same retained process object, named sandbox, nonce/collector and closed envelopes. Context restoration is independent; a later restore error cannot replace an earlier interruption. Pure envelope/history validation runs before restoration, so known corruption remains quarantined even when restoration also fails or is interrupted. Validation alone does not accept records or issue receipts.
 
-Native process wait, exit-code observation, pipe closure and I/O settlement remain required before browser shutdown. Collector removal alone is not SDK retirement. Failed-but-joined native observations can support only the existing failure-cleanup contract. Browser diagnostic version4 records original and cleanup facts separately; it is not native wire2 or a successful lifecycle receipt. The enclosing private failure/cleanup file uses version2.
+Native process wait, exit-code observation, pipe closure and I/O settlement remain required before browser shutdown. Collector removal alone is not SDK retirement. Failed-but-joined native observations can support only the existing failure-cleanup contract. Browser diagnostic version5 records original and cleanup facts separately; it is not native wire2 or a successful lifecycle receipt. The enclosing private failure/cleanup file uses version2.
 
 ## Keep the original setup authority
 
@@ -52,6 +52,30 @@ retain priority over ordinary failures. Version4 adds `tab_failure` to the exist
 pre-hold record: null (not applicable), `skipped-interruption`, `unavailable`, or an
 `observed` closed version1 flag set. These states never authorize recovery or a
 successful qualification. The enclosing private-file version2 is unchanged.
+
+Version5 additionally permits one **private modal image**, only after the modal,
+control-identity, blank-page and selection-consistency flags are all true. The
+original verified process/experiment binding must still match. The fixed chrome
+observer classifies only the current dialog. Pixels require the exact built-in
+`commonDialog.xhtml`, a known non-input alert/confirmation type and hidden login
+and password containers. Authentication, input, unknown and other dialogs return
+only fixed class labels; no input values are read.
+
+The image is a bounded DOM snapshot of that dialog iframe rectangle, never a
+desktop/compositor screenshot. The original window/dialog/document/type/geometry
+are rechecked after the asynchronous snapshot. The bitmap closes and detached
+canvas clears before the result is accepted. Capture never clicks, dismisses,
+selects, changes preferences or supplies consent. If a required warning appears,
+its required interaction remains a separate action, not automation authority.
+
+Only a bounded, CRC-checked PNG with bounded dimensions/decompression and no text
+chunks can be written exclusively to `owned-modal.private.png` in the original
+exclusively created test profile. This deliberately private visual artifact can
+contain dialog text and **must not be published, uploaded to CI or placed in a
+release**. It is not an ordinary diagnostic log. Ordinary records contain only
+fixed class/type/write-state metadata, not image data or dialog text. An uncertain
+capture or file write cannot retry through cleanup or repair the original failure.
+A private image is UI observation, not an SDK retirement or policy receipt.
 
 `qualification.failure_location.failure_location` copies only allowlisted source tags and line numbers from an exception traceback: at most eight recognized locations within a 32-frame observation. Unknown frames consume the budget without exposing filenames or line numbers; `trace_truncated` reports a remaining tail. No exception text, arguments, frame locals, source text, or raw paths are serialized. Interpret locations against the run's separately pinned source revision. They identify propagation sites, not a proven cause or recovery authority.
 

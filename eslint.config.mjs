@@ -88,10 +88,18 @@ export default tseslint.config(
     },
   },
   {
-    files: ["scripts/qualification/parent_tab_state.js"],
+    files: [
+      "scripts/qualification/parent_tab_state.js",
+      "scripts/qualification/parent_modal_image.js",
+    ],
     languageOptions: {
       sourceType: "script",
-      globals: { ChromeUtils: "readonly", arguments: "readonly", window: "readonly" },
+      globals: {
+        ChromeUtils: "readonly",
+        arguments: "readonly",
+        window: "readonly",
+        DOMRect: "readonly",
+      },
     },
   },
   {
