@@ -95,7 +95,7 @@ class ParentInstalledTests(unittest.TestCase):
             self.assertEqual(calls.count('disable'),1);self.assertEqual(calls.count('browser-close'),1)
             if phase=='remove': self.assertFalse(b.observer.removal_returned)
             with self.assertRaises(RuntimeError): b.evidence()
-            observation=b.diagnostic();self.assertEqual(observation['version'],2)
+            observation=b.diagnostic();self.assertEqual(observation['version'],3)
             self.assertTrue(observation['observer']['cleanup']['removed'])
             self.assertTrue(observation['observer']['failed'])
 
@@ -276,7 +276,10 @@ class ParentInstalledTests(unittest.TestCase):
     def test_uncertain_control_selection_is_observed_not_replayed_or_adopted(self):
         b,calls=self.browser();b.command.side_effect=AutomationError('WebDriver:SwitchToWindow',{'error':'no such window'})
         with self.assertRaises(AutomationError):b.close()
-        self.assertEqual(b.first_failure,{'stage':'control-tab-selection','kind':'no such window'})
+        self.assertEqual(b.first_failure['stage'],'control-tab-selection')
+        self.assertEqual(b.first_failure['kind'],'no such window')
+        self.assertTrue(b.first_failure['locations'])
+        self.assertFalse(b.first_failure['trace_truncated'])
         self.assertFalse(b.disable_attempted)
         b.command.side_effect=lambda name,args=None:{'value':'wrong'}
         with self.assertRaises(RuntimeError):b.close()

@@ -16,6 +16,7 @@ from .firefox import Firefox, AutomationError
 from .browser_cases import value
 from .firefox_policy import validate as validate_policy
 from .fixture import Fixture, SMALL_SIZE, expected_sha256
+from .failure_location import failure_location
 from .installed import InstalledRun, FAULTS, REMOVED, absent, closed_apps, ordinary, wait
 from .setup_owner import SetupOwner
 from .native import file_sha256
@@ -41,7 +42,11 @@ def retained_failure(method):
         try: return method(self,*args,**kwargs)
         except BaseException as error:
             self.failed=True
-            self.note_failure(error)
+            try: self.note_failure(error)
+            except BaseException as observation_error:
+                if isinstance(error,Exception) and not isinstance(observation_error,Exception):
+                    raise observation_error
+                raise error
             raise
     return invoke
 
@@ -70,6 +75,7 @@ class ParentBrowser(Firefox):
     def note_failure(self, error):
         if self.first_failure is None:
             self.first_failure={'stage':self.stage,'kind':error.kind if isinstance(error,AutomationError) else 'other'}
+            self.first_failure.update(failure_location(error))
 
     def command(self, name, arguments=None):
         try: return super().command(name, arguments)
@@ -147,7 +153,7 @@ class ParentBrowser(Firefox):
                                                      'failed':self.parent_lease.failed,'retained_handles':len(self.parent_lease.handles)}
         launcher_exit=None if self.original is None else self.original.poll()
         if launcher_exit is not None and type(launcher_exit) is not int: raise RuntimeError(ERROR)
-        return {'version':2,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
+        return {'version':3,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
                 'observer':observer,'parent_lease':lease,'launcher_exit_observed':launcher_exit,
                 'failed':self.failed,'load_attempted':self.load_attempted,'disable_attempted':self.disable_attempted,
                 'disabled_observed':self.disabled_observed,'browser_close_attempted':self.browser_close_attempted,
@@ -256,6 +262,7 @@ class ParentInstalledRun(InstalledRun):
         self.sdk_checks=[]
         self.input_identity=None
         self.run_attempted=self.final_cleanup_attempted=self.failure_cleanup_attempted=False
+        self.cleanup_failure=None
 
     def execute(self):
         if self.run_attempted or self.final_cleanup_attempted: raise RuntimeError(ERROR)
@@ -303,6 +310,10 @@ class ParentInstalledRun(InstalledRun):
             except BaseException as error:
                 errors.append(error)
                 if label not in self.cleanup_errors: self.cleanup_errors.append(label)
+                if self.cleanup_failure is None:
+                    self.cleanup_failure={'step':label}
+                    try: self.cleanup_failure.update(failure_location(error))
+                    except BaseException as observation_error: errors.append(observation_error)
                 return False
         resources_clean=attempt('resources',self.close_resources)
         if self.owner is None and self.process is not None:
@@ -373,7 +384,8 @@ class ParentInstalledRun(InstalledRun):
         if self.plan is not None and self.plan.created:
             if len(self.browsers)>2: raise RuntimeError(ERROR)
             with (self.plan.path/name).open('x',encoding='utf-8') as out:
-                json.dump({'version':1,'qualification':False,'browsers':[b.diagnostic() for b in self.browsers]},out)
+                json.dump({'version':2,'qualification':False,'browsers':[b.diagnostic() for b in self.browsers],
+                           'cleanup_failure':copy.deepcopy(self.cleanup_failure)},out)
 
     def failure_record(self, error):
         # Neither diagnostic sink may prevent the other or mask cancellation.
