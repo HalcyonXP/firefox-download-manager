@@ -15,7 +15,7 @@ This is failure cleanup for the owned, temporary-XPI installed-parent diagnostic
 
 The selected `CleanupObserverClient` retains both trackers before collector installation. The normal snapshot interface stays refused after its qualification evidence fails. Cleanup readback requires an already-failed browser owner and uses the same retained process object, named sandbox, nonce/collector and closed envelopes. Context restoration is independent; a later restore error cannot replace an earlier interruption. Pure envelope/history validation runs before restoration, so known corruption remains quarantined even when restoration also fails or is interrupted. Validation alone does not accept records or issue receipts.
 
-Native process wait, exit-code observation, pipe closure and I/O settlement remain required before browser shutdown. Collector removal alone is not SDK retirement. Failed-but-joined native observations can support only the existing failure-cleanup contract. Browser diagnostic version5 records original and cleanup facts separately; it is not native wire2 or a successful lifecycle receipt. The enclosing private failure/cleanup file uses version2.
+Native process wait, exit-code observation, pipe closure and I/O settlement remain required before browser shutdown. Collector removal alone is not SDK retirement. Failed-but-joined native observations can support only the existing failure-cleanup contract. Browser diagnostic version6 records original and cleanup facts separately; it is not native wire2 or a successful lifecycle receipt. The enclosing private failure/cleanup file uses version2.
 
 ## Keep the original setup authority
 
@@ -53,13 +53,29 @@ pre-hold record: null (not applicable), `skipped-interruption`, `unavailable`, o
 `observed` closed version1 flag set. These states never authorize recovery or a
 successful qualification. The enclosing private-file version2 is unchanged.
 
-Version5 additionally permits one **private modal image**, only after the modal,
+Version6 additionally permits one **private modal image**, only after the modal,
 control-identity, blank-page and selection-consistency flags are all true. The
 original verified process/experiment binding must still match. The fixed chrome
 observer classifies only the current dialog. Pixels require the exact built-in
 `commonDialog.xhtml`, a known non-input alert/confirmation type and hidden login
 and password containers. Authentication, input, unknown and other dialogs return
 only fixed class labels; no input values are read.
+
+The modal response uses closed version2 metadata. `SubDialog.open` can still be
+awaiting frame creation when its URL has not been assigned. An unset URL is not
+proof of a different dialog. For an opening or recognized dialog the observer
+awaits that **original dialog's readiness promise**, within the existing script
+deadline, then rechecks the retained window/dialog/frame and exact document URI.
+Rejection or replacement is unavailable, not authority to adopt another dialog.
+
+The exact built-in Spotlight document receives **no pixels**, even when its
+configuration is recognized. Only an own data-property configuration ID is
+compared against six fixed built-in IDs and reduced to `new-user-terms`,
+`startup-splash`, `ai-window-terms`, `login-advisory`, `backup-optin`, `upgrade`
+or `unknown`. No arbitrary ID is returned. Dialog text, input values, preferences
+and telemetry are not read. A configuration classification is not proof of the currently
+rendered screen, user consent or authority to dismiss the dialog. No ready-promise
+wait changes the NewWindow guard, retries a command or increases a deadline.
 
 The image is a bounded DOM snapshot of that dialog iframe rectangle, never a
 desktop/compositor screenshot. The original window/dialog/document/type/geometry

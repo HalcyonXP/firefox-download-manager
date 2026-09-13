@@ -75,7 +75,7 @@ class FailureLocationTests(unittest.TestCase):
             self.assertEqual(observed['version'], 2)
             self.assertIsNone(observed['cleanup_failure'])
             record = observed['browsers'][0]
-            self.assertEqual(record['version'], 5)
+            self.assertEqual(record['version'], 6)
             self.assertIn('locations', record['first_failure'])
             self.assertTrue(any(v['source'] == 'browser-peer' for v in record['first_failure']['locations']))
             self.assertFalse(run.failure_cleanup_attempted)

@@ -97,7 +97,7 @@ class ParentInstalledTests(unittest.TestCase):
             self.assertEqual(calls.count('disable'),1);self.assertEqual(calls.count('browser-close'),1)
             if phase=='remove': self.assertFalse(b.observer.removal_returned)
             with self.assertRaises(RuntimeError): b.evidence()
-            observation=b.diagnostic();self.assertEqual(observation['version'],5)
+            observation=b.diagnostic();self.assertEqual(observation['version'],6)
             self.assertTrue(observation['observer']['cleanup']['removed'])
             self.assertTrue(observation['observer']['failed'])
 

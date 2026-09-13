@@ -210,7 +210,7 @@ class ParentBrowser(Firefox):
                                                      'failed':self.parent_lease.failed,'retained_handles':len(self.parent_lease.handles)}
         launcher_exit=None if self.original is None else self.original.poll()
         if launcher_exit is not None and type(launcher_exit) is not int: raise RuntimeError(ERROR)
-        return {'version':5,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
+        return {'version':6,'qualification':False,'stage':self.stage,'first_failure':copy.deepcopy(self.first_failure),'command_failure':copy.deepcopy(self.command_failure),
                 'tab_failure':copy.deepcopy(self.tab_failure),'modal_failure':copy.deepcopy(self.modal_failure),
                 'observer':observer,'parent_lease':lease,'launcher_exit_observed':launcher_exit,
                 'failed':self.failed,'load_attempted':self.load_attempted,'disable_attempted':self.disable_attempted,

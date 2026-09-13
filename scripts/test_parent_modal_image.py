@@ -20,14 +20,14 @@ def image(width=1,height=1,raw=b'\0\xff\xff\xff\xff'):
 
 
 def response(data=None,**changes):
-    return {'version':1,'kind':'common','prompt':'alert','png':None if data is None else base64.b64encode(data).decode('ascii'),**changes}
+    return {'version':2,'kind':'common','prompt':'alert','message':'unknown','png':None if data is None else base64.b64encode(data).decode('ascii'),**changes}
 
 
 class ModalImageTests(unittest.TestCase):
     def test_private_png_is_bounded_validated_and_exclusive(self):
         with tempfile.TemporaryDirectory() as directory:
             profile=Path(directory).resolve();summary=m.record(profile,response(image()))
-            self.assertEqual(summary,{'state':'observed','kind':'common','prompt':'alert','image_written':True})
+            self.assertEqual(summary,{'state':'observed','kind':'common','prompt':'alert','message':'unknown','image_written':True})
             out=profile/'owned-modal.private.png';self.assertEqual(out.read_bytes(),image())
             with self.assertRaises(FileExistsError):m.record(profile,response(image()))
             self.assertEqual(out.read_bytes(),image())
@@ -88,3 +88,15 @@ class ModalImageTests(unittest.TestCase):
             b=self.browser(Path(directory).resolve());b.process=Mock(pid=b.original.pid)
             with self.assertRaises(RuntimeError):b.load(Path('unused'))
             b.read_modal_state.assert_not_called();self.assertEqual(b.modal_failure,{'state':'unavailable'})
+
+    def test_spotlight_classes_never_authorize_private_pixels(self):
+        with tempfile.TemporaryDirectory() as directory:
+            profile=Path(directory).resolve()
+            for message in m.MESSAGES:
+                value=response(kind='spotlight',prompt='unknown',message=message)
+                summary=m.record(profile,value)
+                self.assertEqual(summary['message'],message);self.assertFalse(summary['image_written'])
+                with self.assertRaises(RuntimeError):m.record(profile,{**value,'png':base64.b64encode(image()).decode('ascii')})
+            for value in (response(message='new-user-terms'),response(kind='spotlight'),response(message=[]),response(kind='spotlight',prompt='unknown',message='opaque-id'),response(version=1)):
+                with self.assertRaises(RuntimeError):m.record(profile,value)
+            self.assertEqual(list(profile.iterdir()),[])

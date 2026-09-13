@@ -3,7 +3,13 @@
 const done = arguments[arguments.length - 1];
 const expected = arguments[0];
 (async () => {
-  const unavailable = { version: 1, kind: "unavailable", prompt: "unknown", png: null };
+  const unavailable = {
+    version: 2,
+    kind: "unavailable",
+    prompt: "unknown",
+    message: "unknown",
+    png: null,
+  };
   if (typeof expected !== "string" || !/^[\x21-\x7e]{1,128}$/u.test(expected)) return unavailable;
   const w = window;
   const { NavigableManager } = ChromeUtils.importESModule(
@@ -20,10 +26,52 @@ const expected = arguments[0];
   const dialog = w.gDialogBox?.dialog;
   if (!dialog) return { ...unavailable, kind: "none" };
   const uri = "chrome://global/content/commonDialog.xhtml";
-  if (dialog._openedURL !== uri) return { ...unavailable, kind: "other" };
+  const spotlight = "chrome://browser/content/spotlight.html";
+  const initial = dialog._openedURL;
+  if (initial != null && initial !== uri && initial !== spotlight)
+    return { ...unavailable, kind: "other" };
   const frame = dialog._frame;
-  const doc = frame?.contentDocument;
-  if (!doc || doc.documentURI !== uri) return unavailable;
+  const retained = () =>
+    validWindow() &&
+    w.gDialogBox.dialog === dialog &&
+    dialog._frame === frame &&
+    frame?.ownerDocument === w.document;
+  if (!retained()) return unavailable;
+  // SubDialog sets its URL only AFTER awaiting frame creation. Await the exact
+  // original readiness promise, within the existing Marionette script deadline.
+  const ready = dialog._dialogReady;
+  if (!ready || typeof ready.then !== "function") return unavailable;
+  await ready;
+  if (!retained()) return unavailable;
+  const opened = dialog._openedURL;
+  if (initial != null && opened !== initial) return unavailable;
+  if (opened !== uri && opened !== spotlight) return { ...unavailable, kind: "other" };
+  const doc = frame.contentDocument;
+  if (!doc || doc.documentURI !== opened) return unavailable;
+  if (opened === spotlight) {
+    // These are fixed built-in configuration identities, not dialog text, form
+    // values, telemetry, arbitrary message IDs or an action/consent interface.
+    const config = frame.contentWindow?.arguments?.[0];
+    const id = config && Object.getOwnPropertyDescriptor(config, "id");
+    const messages = new Map([
+      ["NEW_USER_TOU_ONBOARDING", "new-user-terms"],
+      ["PRE_ONBOARDING_SPLASH", "startup-splash"],
+      ["AI_WINDOW_TOU_EXISTING_USERS_MODAL", "ai-window-terms"],
+      ["LOGIN_STATUS_ADVISORY", "login-advisory"],
+      ["BROWSER_BACKUP_OPTIN_SPOTLIGHT", "backup-optin"],
+      ["FX_MR_106_UPGRADE", "upgrade"],
+    ]);
+    const message =
+      id && Object.hasOwn(id, "value") ? (messages.get(id.value) ?? "unknown") : "unknown";
+    if (
+      !retained() ||
+      frame.contentDocument !== doc ||
+      doc.documentURI !== spotlight ||
+      dialog._openedURL !== spotlight
+    )
+      return unavailable;
+    return { ...unavailable, kind: "spotlight", message };
+  }
   const type = doc.getElementById("commonDialog")?.getAttribute("windowtype");
   const types = new Map([
     ["prompt:alert", "alert"],
@@ -36,7 +84,7 @@ const expected = arguments[0];
     ["prompt:promptPassword", "promptPassword"],
   ]);
   const prompt = types.get(type) ?? "unknown";
-  const result = { version: 1, kind: "common", prompt, png: null };
+  const result = { ...unavailable, kind: "common", prompt };
   // Authentication/input/unknown dialogs get a fixed class only, never pixels.
   if (!["alert", "alertCheck", "confirm", "confirmCheck", "confirmEx"].includes(prompt)) {
     return result;
@@ -97,4 +145,6 @@ const expected = arguments[0];
       }
     }
   }
-})().then(done, () => done({ version: 1, kind: "unavailable", prompt: "unknown", png: null }));
+})().then(done, () =>
+  done({ version: 2, kind: "unavailable", prompt: "unknown", message: "unknown", png: null }),
+);

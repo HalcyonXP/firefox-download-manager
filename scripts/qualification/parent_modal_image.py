@@ -8,6 +8,7 @@ ERROR='owned modal image refused'
 LIMIT=1024*1024
 PROMPTS={'unknown','alert','alertCheck','confirm','confirmCheck','confirmEx','prompt','promptUserAndPass','promptPassword'}
 NO_INPUT={'alert','alertCheck','confirm','confirmCheck','confirmEx'}
+MESSAGES={'unknown','new-user-terms','startup-splash','ai-window-terms','login-advisory','backup-optin','upgrade'}
 
 
 def png_bytes(encoded):
@@ -45,12 +46,14 @@ def png_bytes(encoded):
 
 
 def record(profile, response):
-    if (type(response) is not dict or set(response)!={'version','kind','prompt','png'}
-            or type(response['version']) is not int or response['version']!=1
-            or type(response['kind']) is not str or response['kind'] not in {'unavailable','none','other','common'}
+    if (type(response) is not dict or set(response)!={'version','kind','prompt','message','png'}
+            or type(response['version']) is not int or response['version']!=2
+            or type(response['kind']) is not str or response['kind'] not in {'unavailable','none','other','common','spotlight'}
             or type(response['prompt']) is not str or response['prompt'] not in PROMPTS
-            or (response['kind']!='common' and response['prompt']!='unknown')): raise RuntimeError(ERROR)
-    summary={'state':'observed','kind':response['kind'],'prompt':response['prompt'],'image_written':False}
+            or (response['kind']!='common' and response['prompt']!='unknown')
+            or type(response['message']) is not str or response['message'] not in MESSAGES
+            or (response['kind']!='spotlight' and response['message']!='unknown')): raise RuntimeError(ERROR)
+    summary={'state':'observed','kind':response['kind'],'prompt':response['prompt'],'message':response['message'],'image_written':False}
     if response['png'] is None: return summary
     if response['kind']!='common' or response['prompt'] not in NO_INPUT: raise RuntimeError(ERROR)
     data=png_bytes(response['png'])
