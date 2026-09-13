@@ -162,6 +162,7 @@ test("closed private frame types, IDs, order and capture refusal remain sticky",
     [offer, offer],
     [{ ...offer, parent_transport: true }],
     [{ ...offer, parent_transport: 2 }],
+    [{ ...offer, parent_transport: 2, receiver_id: ID, context_id: ID }],
     [{ ...offer, capture_ready: true }],
     [{ ...offer, admission_id: ID.toUpperCase().replace("4111", "A111") }],
     [{ ...offer, extra: null }],
@@ -187,6 +188,11 @@ test("private messages and unprotected captured handoffs cannot enter public sen
   const before = f.writes.length;
   for (const value of [
     offer,
+    {
+      protection_bridge: 1,
+      context_id: ID,
+      body: { kind: "resolution", decision: "permit_publication" },
+    },
     { ...hello, parent_transport: 1 },
     { ...hello, command: "prepare_handoff" },
     { ...hello, command: "commit_handoff" },
@@ -207,6 +213,11 @@ test("private messages and unprotected captured handoffs cannot enter public sen
 test("private frames and mixed ordinary envelopes never escape after admission", async () => {
   for (const value of [
     offer,
+    {
+      protection_bridge: 1,
+      context_id: ID,
+      body: { kind: "resolution", decision: "permit_publication" },
+    },
     ready,
     { ...response, parent_transport: 1 },
     { ...response, ok: 1 },

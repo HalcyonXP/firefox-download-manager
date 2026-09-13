@@ -9,6 +9,8 @@ mod local_session;
 #[cfg(all(windows, feature = "local-bridge"))]
 mod parent_transport;
 #[cfg(all(windows, feature = "local-bridge"))]
+mod protected_parent;
+#[cfg(all(windows, feature = "local-bridge"))]
 pub use local_session::LocalSessionEnd;
 mod handoff;
 mod settings;
@@ -162,6 +164,34 @@ impl EngineOwner {
         engine.reconfigure(options, scheduler)?;
         settings.log(Diagnostic::Started);
         Ok(Self { engine, settings })
+    }
+
+    /// Explicit private-dispatch engine construction. Default startup remains
+    /// ordinary; the caller must retain the sole receiver across peer lifetimes.
+    /// This selects no listener and establishes no Firefox policy readiness.
+    /// # Errors
+    /// Refuses invalid/locked state or settings without starting transfer work.
+    #[cfg(all(windows, feature = "local-bridge"))]
+    pub fn open_with_protection(
+        config: &HostConfig,
+    ) -> Result<(Self, download_manager_engine::task::ProtectionReceiver), HostError> {
+        let (gate, receiver) = download_manager_engine::task::ProtectionGate::channel();
+        let scheduler = download_manager_engine::scheduler::DownloadScheduler::new()
+            .map_err(TaskEngineError::SchedulerSetup)?;
+        let mut engine = TaskEngine::open_with_protection(
+            &config.state_root,
+            TaskEngineOptions::default(),
+            scheduler,
+            gate,
+        )?;
+        // Preserve ordinary startup ordering: acquire the store lock BEFORE
+        // inspecting settings, then reconfigure this same inactive owner.
+        let settings =
+            SettingsStore::load(&config.state_root, config.default_destination.as_deref())?;
+        let (options, scheduler) = engine_configuration(&settings.current)?;
+        engine.reconfigure(options, scheduler)?;
+        settings.log(Diagnostic::Started);
+        Ok((Self { engine, settings }, receiver))
     }
 
     /// Borrows the single engine; no clone or second state owner is created.

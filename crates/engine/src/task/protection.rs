@@ -112,6 +112,12 @@ impl ProtectionBinding {
 }
 
 impl ProtectionContext {
+    /// Retained engine receiver identity, NOT a browser connection or policy proof.
+    #[must_use]
+    pub fn receiver_id(&self) -> TaskId {
+        self.lifetime.id
+    }
+
     /// Native-generated context identity; separate from transport admission,
     /// engine receiver lifetime, handoff ID and browser-local metadata epochs.
     #[must_use]

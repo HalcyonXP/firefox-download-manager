@@ -37,7 +37,7 @@ impl EngineOwner {
             drop(channel);
             return Err(HostError::LocalSession);
         }
-        self.serve_channel(channel, stop).await
+        self.serve_channel(channel, stop, None).await
     }
 
     /// Explicit parent-class transport admission followed by ordinary wire2.
@@ -58,14 +58,39 @@ impl EngineOwner {
             drop(channel);
             return Err(HostError::LocalSession);
         }
-        self.serve_channel(channel, stop).await
+        self.serve_channel(channel, stop, None).await
+    }
+
+    /// Explicit parent2 private challenge route. Not selected by ordinary or
+    /// parent1 workers, and not complete Firefox policy/capture readiness.
+    /// Keep the original engine/receiver through reconnect; stop and await this
+    /// future for reader retirement. No uncertain command or reply is replayed.
+    /// # Errors
+    /// Refuses ordinary peers before I/O, malformed/foreign/stale private frames,
+    /// unavailable scopes, and any failed original reader retirement.
+    pub async fn serve_protected_parent(
+        &mut self,
+        channel: Channel<LocalPipe>,
+        stop: &mut oneshot::Receiver<()>,
+        receiver: &mut download_manager_engine::task::ProtectionReceiver,
+    ) -> Result<LocalSessionEnd, HostError> {
+        if channel.peer_class() != PeerClass::BrowserParent {
+            drop(channel);
+            return Err(HostError::LocalSession);
+        }
+        self.serve_channel(channel, stop, Some(receiver)).await
     }
 
     async fn serve_channel(
         &mut self,
         channel: Channel<LocalPipe>,
         stop: &mut oneshot::Receiver<()>,
+        mut protection: Option<&mut download_manager_engine::task::ProtectionReceiver>,
     ) -> Result<LocalSessionEnd, HostError> {
+        let mut scope = protection
+            .as_deref_mut()
+            .map(super::protected_parent::Scope::open)
+            .transpose()?;
         let parent = channel.peer_class() == PeerClass::BrowserParent;
         let cancellation = channel.cancellation();
         let (mut reader, writer) = channel.split();
@@ -106,14 +131,23 @@ impl EngineOwner {
             biased;
             _ = stop => Ok(LocalSessionEnd::StopRequested),
             outcome = async {
-                if parent {
+                if let Some(scope) = &scope {
+                    scope.admit(&session, &mut received).await?;
+                } else if parent {
                     super::parent_transport::admit(&session, &mut received).await?;
                 }
                 if negotiate(&mut received, &mut session, &self.engine).await? {
-                    run_active_session(&mut received, &mut session, &mut self.engine).await.map(|()| LocalSessionEnd::Disconnected)
+                    if let (Some(scope), Some(receiver)) = (&mut scope, &mut protection) {
+                        scope.run(receiver, &mut session, &mut self.engine, &mut received).await.map(|()| LocalSessionEnd::Disconnected)
+                    } else {
+                        run_active_session(&mut received, &mut session, &mut self.engine).await.map(|()| LocalSessionEnd::Disconnected)
+                    }
                 } else { Ok(LocalSessionEnd::Disconnected) }
             } => outcome,
         };
+        if let Some(scope) = &mut scope {
+            scope.close();
+        }
         let _ = retire.send(());
         drop(received);
         drop(session);
