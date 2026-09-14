@@ -17,6 +17,39 @@ The selected `CleanupObserverClient` retains both trackers before collector inst
 
 Native process wait, exit-code observation, pipe closure and I/O settlement remain required before browser shutdown. Collector removal alone is not SDK retirement. Failed-but-joined native observations can support only the existing failure-cleanup contract. Browser diagnostic version6 records original and cleanup facts separately; it is not native wire2 or a successful lifecycle receipt. The enclosing private failure/cleanup file uses version2.
 
+## Optional human startup review
+
+An explicitly selected local adapter can use `before_browser_load` after the
+original browser/parent lease/observer are retained, but **before** any Manager
+tab creation or XPI loading. The default driver hook performs no action. The
+review observer accepts only structural clearance of the original blank control
+window or the exact built-in Spotlight `NEW_USER_TOU_ONBOARDING` configuration.
+Unknown dialogs, changed owners/documents, malformed responses and uncertain
+commands refuse; no other tab/window is discovered or adopted.
+
+For the known flow a separate owned review window requests interaction **in
+Firefox**. `Check and continue` only rechecks structural window state; it does
+not click Firefox controls, accept terms, change preferences, read form values
+or assert consent. A fresh read after review-window destruction is required
+before proceeding. `Stop test` or closing the review window cancels the attempt
+and uses original owned cleanup. Closing Firefox itself is not that cleanup
+command: the original observer must be removed before owned browser retirement.
+
+The review window uses the original worker thread and retained Tk root, isolated
+Python/runtime checks, one attention lift and one root-destruction attempt. It
+has no focus/keyboard/modal grab, custom Tk timer or extra browser-command thread.
+An uncertain destroy remains unresolved; independent browser/setup cleanup still
+runs and cannot manufacture review-window retirement or repair qualification.
+
+The selected adapter uses one conservative **240-second horizon from run
+dispatch, shared across both browser lifetimes**. The existing 300-second channel
+observation budget is neither paused nor reset; SDK/browser/network deadlines
+remain unchanged. Expiry stops without answering Firefox or beginning new work.
+There are at most ten original-window reads, including final revalidation. Review
+records contain bounded structural/UI-retirement facts with
+`consent_observed:false`; neither a button press nor modal clearance is a legal
+consent receipt, protection-policy verdict or persistent-XPI qualification.
+
 ## Keep the original setup authority
 
 On a browser cleanup failure, the installed-parent driver independently requests owned Manager quiescence but keeps the **original setup owner/window** alive. The unchanged `BrowserPeer` permits that parent's explicit Manager-joined observation, but still needs the live original setup witness and unchanged installation binding. Closing setup prematurely would also discard the ability to verify removal through that owner.

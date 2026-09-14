@@ -452,6 +452,11 @@ class ParentInstalledRun(InstalledRun):
 
     def scope(self): return 'owned installed parent transport and manual Firefox UI'
 
+    def before_browser_load(self, browser):
+        # Default diagnostics are unchanged. An explicitly selected local
+        # human-review adapter may wait here, never after tab/Add admission.
+        pass
+
     def transfer(self, identity):
         xpi,metadata=self.inputs()
         self.candidate_metadata=metadata
@@ -465,6 +470,8 @@ class ParentInstalledRun(InstalledRun):
             self.browsers.append(browser)  # Before profile/process/handle/observer effects.
             self.inputs()
             browser.start()
+            self.stage='parent-startup-review'
+            self.before_browser_load(browser)
             self.stage='parent-candidate-load'
             browser.load(xpi)
             self.checkpoint('bridge-started')

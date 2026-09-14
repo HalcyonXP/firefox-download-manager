@@ -14,6 +14,7 @@ _SOURCES = {
         ('scripts/qualification/firefox.py', 'browser'),
         ('scripts/qualification/installed.py', 'installed'),
         ('scripts/qualification/parent_installed.py', 'parent-installed'),
+        ('scripts/qualification/startup_review.py', 'startup-review'),
         ('scripts/qualification/setup_owner.py', 'setup-owner'),
         ('scripts/qualification/installed_ui.py', 'setup-ui'),
         ('scripts/test-package-install.py', 'package-preflight'),

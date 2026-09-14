@@ -91,6 +91,7 @@ export default tseslint.config(
     files: [
       "scripts/qualification/parent_tab_state.js",
       "scripts/qualification/parent_modal_image.js",
+      "scripts/qualification/startup_review.js",
     ],
     languageOptions: {
       sourceType: "script",

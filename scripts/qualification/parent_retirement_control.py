@@ -10,7 +10,8 @@ import time
 from .parent_supervisor import ParentSupervisor
 
 ERROR='Retained diagnostic control refused; keep original owners'
-PHASES=('preflight','setup','manual-download','addon-retirement','browser-retirement','uninstall','controller-retirement')
+PHASES=('preflight','setup','manual-download','addon-retirement','browser-retirement','uninstall','controller-retirement',
+        'startup-review','startup-ready')
 
 
 def _unique(pairs):
