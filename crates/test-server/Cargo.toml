@@ -1,11 +1,20 @@
 [package]
 name = "download-manager-test-server"
-description = "Deterministic adversarial HTTP fixtures for download-engine tests"
+description = "Deterministic HTTP and native-stdio fixtures for isolated component tests"
+autobins = false
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
+
+[features]
+parent-stdio-fixture = []
+
+[[bin]]
+name = "download-manager-parent-fixture"
+path = "src/bin/parent_stdio_fixture.rs"
+required-features = ["parent-stdio-fixture"]
 
 [lints]
 workspace = true

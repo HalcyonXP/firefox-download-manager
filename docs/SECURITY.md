@@ -135,3 +135,11 @@ The manager does not claim to hide network activity from the operating system, V
 ## Optional checksum boundary (#25)
 
 Supplied SHA-256 expectations are immutable task inputs, validated before networking and required in v4 recovery shape. Streaming validation reads the owned complete partial, then retains a non-cloneable lease through no-overwrite promotion; mismatch cannot publish output or success. The failure-retention setting applies explicitly. Cancellation joins hashing before acknowledgement. Windows file locks resist ordinary competing I/O, not malicious same-user or memory-mapped mutation/all namespace races. Published files are not continuously rehashed. These limits and test boundaries are explicit in [INTEGRITY.md](INTEGRITY.md); the review and remaining gates are in [SECURITY_REVIEW.md](SECURITY_REVIEW.md).
+
+## Windows download provenance
+
+New Windows final-file publication establishes the fixed `Zone.Identifier` Internet-zone marker (`ZoneId=3`) on the owned partial before creating the final hard link. A canonical existing Restricted-zone marker (`ZoneId=4`) remains stronger and is preserved. Unknown, weaker, oversized or inaccessible metadata refuses publication; it is never overwritten or silently ignored. Volumes that cannot provide the required stream/handle semantics fail closed.
+
+The marker contains no URL, referrer, cookie, Authorization value or opaque validator. Read leases pin ordinary ancestors and the independently matched base file; a retained stream handle denies competing stream writes/deletion through final-link identity/readback. Main-stream coverage, size/checksum validation and no-overwrite publication remain separate mandatory checks. An existing final-name collision is never marked or changed. Existing completed files are not retroactively edited or requalified.
+
+This is Windows provenance metadata supporting applicable launch-time protections, **not an antivirus scan, SmartScreen verdict, Firefox reputation query or proof that a file is safe**. The Firefox completion-pipeline gap in [CAPTURE_CANDIDATE.md](CAPTURE_CANDIDATE.md) remains open. Incomplete or conflicting metadata left by an interrupted marker write causes refusal, not automatic repair. Ordinary handle/namespace checks are not hostile same-user tamper or sudden power-loss guarantees.

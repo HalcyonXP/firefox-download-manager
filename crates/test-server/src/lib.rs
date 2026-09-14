@@ -3,6 +3,8 @@
 //! The server intentionally implements only the bounded HTTP/1.1 surface needed
 //! by this project. It must never be included in production packages.
 
+mod ownership;
+use ownership::{Connections, Stop};
 mod observation;
 use observation::ObservationGate;
 pub use observation::ObservationPause;
@@ -14,7 +16,6 @@ use std::collections::HashMap;
 use std::fmt::Write as _;
 use std::io::{self, Read, Write};
 use std::net::{IpAddr, Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -236,15 +237,18 @@ struct SharedState {
     requests: Vec<ObservedRequest>,
     active_requests: usize,
     max_active_requests: usize,
+    connections_started: usize,
+    connections_joined: usize,
 }
 
 /// A running server bound exclusively to an ephemeral IPv4 loopback port.
 #[derive(Debug)]
 pub struct TestServer {
     address: SocketAddr,
-    stop: Arc<AtomicBool>,
+    stop: Arc<Stop>,
     state: Arc<Mutex<SharedState>>,
-    listener_thread: Option<JoinHandle<()>>,
+    listener_thread: Option<JoinHandle<io::Result<usize>>>,
+    retirement: Option<Result<usize, io::ErrorKind>>,
     observation: Arc<ObservationGate>,
     response: Arc<ResponseGate>,
 }
@@ -267,7 +271,7 @@ impl TestServer {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
         listener.set_nonblocking(true)?;
         let address = listener.local_addr()?;
-        let stop = Arc::new(AtomicBool::new(false));
+        let stop = Arc::new(Stop::default());
         let state = Arc::new(Mutex::new(SharedState::default()));
         let thread_stop = Arc::clone(&stop);
         let thread_state = Arc::clone(&state);
@@ -286,7 +290,7 @@ impl TestServer {
                     &thread_state,
                     &thread_observation,
                     &thread_response,
-                );
+                )
             })?;
 
         Ok(Self {
@@ -294,6 +298,7 @@ impl TestServer {
             stop,
             state,
             listener_thread: Some(listener_thread),
+            retirement: None,
             observation,
             response,
         })
@@ -340,6 +345,43 @@ impl TestServer {
         self.response.pause(selector)
     }
 
+    /// Counts retained thread starts and completed joins, not request delivery.
+    #[must_use]
+    pub fn connection_counts(&self) -> (usize, usize) {
+        let state = lock_state(&self.state);
+        (state.connections_started, state.connections_joined)
+    }
+
+    /// Stops acceptance, interrupts owned fixture I/O/stalls and joins the
+    /// listener and every connection handler. Returns the number of joined
+    /// handlers. Repeated calls preserve the original success/failure result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if listener/thread creation failed or an owned thread
+    /// panicked. Ordinary client disconnects are not handler panics.
+    pub fn retire(&mut self) -> io::Result<usize> {
+        if self.retirement.is_none() {
+            self.stop.request();
+            self.observation.release();
+            self.response.release();
+            let result = self
+                .listener_thread
+                .take()
+                .ok_or_else(|| io::Error::other("retained fixture listener missing"))
+                .and_then(|handle| {
+                    handle
+                        .join()
+                        .map_err(|_| io::Error::other("owned fixture listener panicked"))
+                })
+                .and_then(|result| result);
+            self.retirement = Some(result.map_err(|error| error.kind()));
+        }
+        self.retirement
+            .unwrap_or(Err(io::ErrorKind::Other))
+            .map_err(|kind| io::Error::new(kind, "owned fixture retirement failed"))
+    }
+
     /// Highest number of response handlers active at the same time.
     #[must_use]
     pub fn max_concurrent_requests(&self) -> usize {
@@ -349,12 +391,12 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
-        self.observation.release();
-        self.response.release();
-        let _ = TcpStream::connect_timeout(&self.address, Duration::from_millis(100));
-        if let Some(handle) = self.listener_thread.take() {
-            let _ = handle.join();
+        if self.retirement.is_none() {
+            let result = self.retire();
+            assert!(
+                result.is_ok() || thread::panicking(),
+                "owned HTTP fixture retirement failed"
+            );
         }
     }
 }
@@ -379,12 +421,19 @@ fn lock_state(state: &Mutex<SharedState>) -> std::sync::MutexGuard<'_, SharedSta
 fn accept_loop(
     listener: &TcpListener,
     config: &ServerConfig,
-    stop: &AtomicBool,
+    stop: &Arc<Stop>,
     state: &Arc<Mutex<SharedState>>,
     observation: &Arc<ObservationGate>,
     response: &Arc<ResponseGate>,
-) {
-    while !stop.load(Ordering::Acquire) {
+) -> io::Result<usize> {
+    let mut connections = Connections::new(
+        Arc::clone(state),
+        Arc::clone(stop),
+        Arc::clone(observation),
+        Arc::clone(response),
+    );
+    while !stop.requested() {
+        connections.reap()?;
         match listener.accept() {
             Ok((stream, peer)) => {
                 if peer.ip() != IpAddr::V4(Ipv4Addr::LOCALHOST) {
@@ -394,24 +443,25 @@ fn accept_loop(
                 let connection_state = Arc::clone(state);
                 let connection_observation = Arc::clone(observation);
                 let connection_response = Arc::clone(response);
-                let _ = thread::Builder::new()
-                    .name("adversarial-http-connection".to_owned())
-                    .spawn(move || {
-                        let _ = handle_connection(
-                            stream,
-                            &connection_config,
-                            &connection_state,
-                            &connection_observation,
-                            &connection_response,
-                        );
-                    });
+                let connection_stop = Arc::clone(stop);
+                connections.spawn(stream, move |stream| {
+                    let _ = handle_connection(
+                        stream,
+                        &connection_config,
+                        &connection_state,
+                        &connection_observation,
+                        &connection_response,
+                        &connection_stop,
+                    );
+                })?;
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(Duration::from_millis(2));
+                stop.wait(Duration::from_millis(2));
             }
-            Err(_) => break,
+            Err(error) => return Err(error),
         }
     }
+    connections.finish()
 }
 
 #[derive(Debug)]
@@ -430,6 +480,7 @@ fn handle_connection(
     state: &Mutex<SharedState>,
     observation: &ObservationGate,
     response: &ResponseGate,
+    stop: &Stop,
 ) -> io::Result<()> {
     // Windows can inherit nonblocking mode from the listener. Connection
     // handlers need ordinary blocking semantics so transient WouldBlock errors
@@ -503,6 +554,7 @@ fn handle_connection(
         &request,
         config,
         custom_fault.or(built_in.as_ref()),
+        stop,
     )
 }
 
@@ -655,6 +707,7 @@ fn serve_fixture(
     request: &Request,
     config: &ServerConfig,
     fault: Option<&Fault>,
+    stop: &Stop,
 ) -> io::Result<()> {
     if matches!(fault, Some(Fault::EmptyResource)) {
         if request.range.is_some() {
@@ -768,8 +821,10 @@ fn serve_fixture(
     if request.method == "HEAD" {
         return finish_response(stream);
     }
-    if let Some(Fault::Stall(duration) | Fault::StallFirst(duration)) = fault {
-        thread::sleep(*duration);
+    if let Some(Fault::Stall(duration) | Fault::StallFirst(duration)) = fault
+        && stop.wait(*duration)
+    {
+        return Ok(());
     }
 
     let maximum = match fault {
@@ -782,6 +837,7 @@ fn serve_fixture(
         body_range,
         body_generation,
         maximum,
+        stop,
     )
 }
 
@@ -791,12 +847,16 @@ fn write_generated_body(
     range: ByteRange,
     generation: u64,
     maximum: Option<usize>,
+    stop: &Stop,
 ) -> io::Result<()> {
     let allowed = maximum.map_or(range.len(), |limit| {
         range.len().min(u64::try_from(limit).unwrap_or(u64::MAX))
     });
     let mut written = 0_u64;
     while written < allowed {
+        if stop.requested() {
+            return Ok(());
+        }
         let remaining = allowed - written;
         let count_u64 = remaining.min(BODY_CHUNK_BYTES as u64);
         let count = usize::try_from(count_u64)
@@ -857,3 +917,6 @@ const fn reason(status: u16) -> &'static str {
         _ => "Fixture Status",
     }
 }
+
+#[cfg(test)]
+mod ownership_tests;

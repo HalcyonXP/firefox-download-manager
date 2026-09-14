@@ -1,3 +1,4 @@
+import { handoffAllows } from "./task-controls";
 import { MAX_MESSAGE_BYTES, PROTOCOL_VERSION, isValidCorrelationId } from "./protocol";
 
 export const NATIVE_HOST_NAME = "com.halcyonxp.firefox_download_manager" as const;
@@ -91,7 +92,11 @@ export interface NativeTaskError {
   readonly context?: Readonly<Record<string, unknown>>;
 }
 
+export type TaskHandoffPhase = "prepared" | "committed" | "aborted" | "unknown" | null;
+type TaskMetadataMode = "phase" | "unknown" | "legacy";
+
 export interface NativeTask {
+  readonly handoff_phase: TaskHandoffPhase;
   readonly task_id: string;
   readonly display_name: string;
   readonly destination: string;
@@ -107,6 +112,18 @@ export interface NativeTask {
   readonly updated_at: string;
   readonly error: NativeTaskError | null;
 }
+
+export type HandoffCommand = "prepare_handoff" | "commit_handoff" | "abort_handoff" | "get_handoff";
+export interface NativeHandoff {
+  readonly phase: "prepared" | "committed" | "aborted";
+  readonly task: NativeTask;
+}
+const HANDOFF_COMMANDS = new Set<string>([
+  "prepare_handoff",
+  "commit_handoff",
+  "abort_handoff",
+  "get_handoff",
+]);
 
 export interface NativeSettings {
   readonly destination: string;
@@ -238,11 +255,21 @@ export class NativeConnection {
     return pending.promise;
   }
 
+  #taskMetadataMode(): TaskMetadataMode {
+    // Snapshot decoding precedes connected=true; use the already validated Hello.
+    return this.#capabilities.includes("task_handoff_phase")
+      ? "phase"
+      : this.#capabilities.includes("prepared_handoff")
+        ? "unknown"
+        : "legacy";
+  }
+
   /** Commands are never replayed automatically after an uncertain disconnect. */
   command(
     command: "add" | "pause" | "resume" | "cancel" | "get",
     payload: unknown,
   ): Promise<NativeTask>;
+  command(command: HandoffCommand, payload: unknown): Promise<NativeHandoff>;
   command(command: "remove" | "open_folder", payload: unknown): Promise<unknown>;
   command(command: "get_settings" | "update_settings", payload: unknown): Promise<NativeSettings>;
   async command(
@@ -255,10 +282,29 @@ export class NativeConnection {
       | "remove"
       | "open_folder"
       | "get_settings"
-      | "update_settings",
+      | "update_settings"
+      | HandoffCommand,
     payload: unknown,
   ): Promise<unknown> {
     await this.connect();
+    if (["pause", "resume", "cancel", "remove"].includes(command)) {
+      const task =
+        isRecord(payload) && typeof payload.task_id === "string"
+          ? this.#tasks.get(payload.task_id)
+          : undefined;
+      if (task && !handoffAllows(task.handoff_phase, command))
+        throw new NativeConnectionError("helper_error", "INVALID_TASK_STATE");
+    }
+    if (
+      HANDOFF_COMMANDS.has(command) &&
+      (!this.supports("prepared_handoff") ||
+        !isRecord(payload) ||
+        typeof payload.task_id !== "string" ||
+        !isUuid(payload.task_id) ||
+        (command === "prepare_handoff" &&
+          (!isRecord(payload.download) || "request_context" in payload.download)))
+    )
+      throw new NativeConnectionError("protocol_error");
     if (
       command === "add" &&
       isRecord(payload) &&
@@ -383,7 +429,24 @@ export class NativeConnection {
         this.#notify();
         return;
       }
-      const task = nativeTask(message.result);
+      if (HANDOFF_COMMANDS.has(pending.command)) {
+        const receipt = nativeHandoff(message.result, this.#taskMetadataMode());
+        if (
+          !receipt ||
+          receipt.task.task_id !== pending.taskId ||
+          (pending.command === "commit_handoff" && receipt.phase !== "committed") ||
+          (pending.command === "abort_handoff" && receipt.phase !== "aborted")
+        ) {
+          pending.reject(new NativeConnectionError("protocol_error"));
+          this.#reject(new NativeConnectionError("protocol_error"));
+          return;
+        }
+        this.#tasks.set(receipt.task.task_id, receipt.task);
+        pending.resolve(receipt);
+        this.#notify();
+        return;
+      }
+      const task = nativeTask(message.result, this.#taskMetadataMode());
       if (task === undefined || (pending.taskId !== undefined && task.task_id !== pending.taskId)) {
         pending.reject(new NativeConnectionError("protocol_error"));
         this.#reject(new NativeConnectionError("protocol_error"));
@@ -442,7 +505,7 @@ export class NativeConnection {
         this.#reject(new NativeConnectionError("protocol_error"));
         return;
       }
-      const task = nativeTask(data.task);
+      const task = nativeTask(data.task, this.#taskMetadataMode());
       if (task === undefined) {
         this.#reject(new NativeConnectionError("protocol_error"));
         return;
@@ -452,7 +515,7 @@ export class NativeConnection {
       return;
     }
     if (message.event === "completed") {
-      const task = nativeTask(message.data);
+      const task = nativeTask(message.data, this.#taskMetadataMode());
       if (task === undefined) {
         this.#reject(new NativeConnectionError("protocol_error"));
         return;
@@ -467,7 +530,7 @@ export class NativeConnection {
         this.#reject(new NativeConnectionError("protocol_error"));
         return;
       }
-      const task = nativeTask(data.task);
+      const task = nativeTask(data.task, this.#taskMetadataMode());
       if (
         !hasExactKeys(data, ["task", "error"]) ||
         task === undefined ||
@@ -487,6 +550,10 @@ export class NativeConnection {
         return;
       }
       const task = this.#tasks.get(progress.taskId);
+      if (task?.handoff_phase === "prepared" || task?.handoff_phase === "aborted") {
+        this.#reject(new NativeConnectionError("protocol_error"));
+        return;
+      }
       if (task !== undefined) {
         this.#tasks.set(
           progress.taskId,
@@ -509,7 +576,7 @@ export class NativeConnection {
   }
 
   #receiveSnapshot(value: unknown): void {
-    const page = snapshotPage(value);
+    const page = snapshotPage(value, this.#taskMetadataMode());
     if (page === undefined) {
       this.#reject(new NativeConnectionError("protocol_error"));
       return;
@@ -721,7 +788,9 @@ function isHelloResult(value: unknown): boolean {
         capability === "snapshots" ||
         capability === "coalesced_progress" ||
         capability === "authenticated_requests" ||
-        capability === "sha256",
+        capability === "sha256" ||
+        capability === "prepared_handoff" ||
+        capability === "task_handoff_phase",
     )
   );
 }
@@ -733,7 +802,7 @@ interface SnapshotPage {
   readonly complete: boolean;
 }
 
-function snapshotPage(value: unknown): SnapshotPage | undefined {
+function snapshotPage(value: unknown, mode: TaskMetadataMode): SnapshotPage | undefined {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, ["snapshot_id", "page_index", "tasks", "next_cursor", "complete"]) ||
@@ -753,7 +822,7 @@ function snapshotPage(value: unknown): SnapshotPage | undefined {
   }
   const tasks: NativeTask[] = [];
   for (const valueTask of value.tasks) {
-    const task = nativeTask(valueTask);
+    const task = nativeTask(valueTask, mode);
     if (task === undefined) {
       return undefined;
     }
@@ -817,7 +886,33 @@ function isWarning(value: unknown): boolean {
   );
 }
 
-function nativeTask(value: unknown): NativeTask | undefined {
+function nativeHandoff(value: unknown, mode: TaskMetadataMode): NativeHandoff | undefined {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["phase", "task"]) ||
+    !["prepared", "committed", "aborted"].includes(String(value.phase))
+  )
+    return undefined;
+  const task = nativeTask(value.task, mode);
+  if (
+    !task ||
+    (mode === "phase" && task.handoff_phase !== value.phase) ||
+    (value.phase === "prepared" && task.state !== "queued") ||
+    (value.phase === "aborted" && task.state !== "cancelled")
+  )
+    return undefined;
+  if (
+    value.phase !== "committed" &&
+    (task.bytes_completed !== 0 || task.expected_size !== null || task.transfer_mode !== "pending")
+  )
+    return undefined;
+  return Object.freeze({
+    phase: value.phase as NativeHandoff["phase"],
+    task: Object.freeze({ ...task, handoff_phase: value.phase as NativeHandoff["phase"] }),
+  });
+}
+
+function nativeTask(value: unknown, mode: TaskMetadataMode): NativeTask | undefined {
   if (
     !isRecord(value) ||
     !hasExactKeys(value, [
@@ -835,7 +930,9 @@ function nativeTask(value: unknown): NativeTask | undefined {
       "created_at",
       "updated_at",
       "error",
+      ...(mode === "phase" ? ["handoff_phase"] : []),
     ]) ||
+    (mode === "phase" && !validTaskPhase(value)) ||
     typeof value.task_id !== "string" ||
     !isUuid(value.task_id) ||
     typeof value.display_name !== "string" ||
@@ -863,7 +960,10 @@ function nativeTask(value: unknown): NativeTask | undefined {
   ) {
     return undefined;
   }
-  return Object.freeze(value) as unknown as NativeTask;
+  return Object.freeze({
+    ...value,
+    handoff_phase: mode === "phase" ? value.handoff_phase : mode === "unknown" ? "unknown" : null,
+  }) as unknown as NativeTask;
 }
 
 function isTaskError(value: unknown): value is NativeTaskError {
@@ -981,4 +1081,16 @@ export function nativeSettings(value: unknown): NativeSettings | undefined {
   )
     return undefined;
   return Object.freeze(value) as unknown as NativeSettings;
+}
+
+function validTaskPhase(task: Record<string, unknown>): boolean {
+  const phase = task.handoff_phase;
+  if (phase === null || phase === "committed") return true;
+  if (phase !== "prepared" && phase !== "aborted") return false;
+  return (
+    task.state === (phase === "prepared" ? "queued" : "cancelled") &&
+    task.bytes_completed === 0 &&
+    task.expected_size === null &&
+    task.transfer_mode === "pending"
+  );
 }

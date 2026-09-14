@@ -4,7 +4,9 @@ A local download manager for Firefox Developer Edition on Windows 11. It is inte
 
 ## Current workflow limitation
 
-**v0.1.0 does not automatically capture ordinary download clicks, provide a tray companion, or support the requested install-once/restart workflow.** The owner has requested **setup.exe → tray icon → install XPI → restart Firefox → click to download in Manager**. That replacement is being developed in [M5](https://github.com/HalcyonXP/firefox-download-manager/milestone/6); see the [short target workflow](docs/USER_WORKFLOW.md). It is not delivered by changing a setting or following the old temporary-addon instructions.
+**v0.1.0 does not automatically capture ordinary download clicks, provide a tray companion, or support the requested install-once/restart workflow.** The M5 target is **setup.exe → tray icon → install XPI → restart Firefox → click to download in Manager**. That replacement is being developed in [M5](https://github.com/HalcyonXP/firefox-download-manager/milestone/6); see the [short target workflow](docs/USER_WORKFLOW.md). It is not delivered by changing a setting or following the old temporary-addon instructions.
+
+M5 targets a **persistent unsigned personal XPI**, with existing Firefox settings and protections unchanged. Signed XPIs, Mozilla submission and signing accounts/credentials are not requirements. Exact-artifact install/restart/click qualification is still pending.
 
 ## Repository and privacy status
 
@@ -22,7 +24,7 @@ Planning is complete and implementation proceeds through the lowest-numbered **R
 4. [M3 — Reliability and authenticated downloads](https://github.com/HalcyonXP/firefox-download-manager/milestone/4)
 5. [M4 — Local release](https://github.com/HalcyonXP/firefox-download-manager/milestone/5)
 
-See [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) for scope, execution order, and release criteria; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component boundaries and accepted decisions; [docs/SECURITY.md](docs/SECURITY.md) for the threat model and sensitive-data policy; [docs/PROTOCOL.md](docs/PROTOCOL.md) for the versioned extension/helper contract; [docs/HTTP.md](docs/HTTP.md), [docs/STORAGE.md](docs/STORAGE.md), [docs/STATE.md](docs/STATE.md), and [docs/TEST_SERVER.md](docs/TEST_SERVER.md) for strict HTTP, partial-file, recovery, and fixture behavior; and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Windows bootstrap and quality commands. See [AGENTS.md](AGENTS.md) for the implementation workflow and non-negotiable constraints used across development sessions.
+See [docs/PROJECT_PLAN.md](docs/PROJECT_PLAN.md) for scope, execution order, and release criteria; [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component boundaries and accepted decisions; [docs/SECURITY.md](docs/SECURITY.md) for the threat model and sensitive-data policy; [docs/PROTOCOL.md](docs/PROTOCOL.md) for the versioned extension/helper contract; [docs/HTTP.md](docs/HTTP.md), [docs/STORAGE.md](docs/STORAGE.md), [docs/STATE.md](docs/STATE.md), and [docs/TEST_SERVER.md](docs/TEST_SERVER.md) for strict HTTP, partial-file, recovery, and fixture behavior; and [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for Windows bootstrap and quality commands.
 
 ## Intended architecture
 

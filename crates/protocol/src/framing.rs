@@ -103,6 +103,20 @@ pub fn write_frame(
     writer: &mut impl Write,
     message: &impl Serialize,
 ) -> Result<(), FrameWriteError> {
+    let body = encode_frame_body(message)?;
+    let length = u32::try_from(body.len()).map_err(|_| FrameWriteError::MessageTooLarge)?;
+    writer
+        .write_all(&length.to_le_bytes())
+        .and_then(|()| writer.write_all(&body))
+        .and_then(|()| writer.flush())
+        .map_err(|error| FrameWriteError::Io { kind: error.kind() })
+}
+
+/// Encodes the same bounded object body for native stdio and local transport.
+/// No transport flush, delivery or command-acceptance semantics are implied.
+/// # Errors
+/// Returns only fixed serialization, non-object or oversized-body failures.
+pub fn encode_frame_body(message: &impl Serialize) -> Result<Vec<u8>, FrameWriteError> {
     let body = serde_json::to_vec(message).map_err(|_| FrameWriteError::Serialization)?;
     if body.first() != Some(&b'{') {
         return Err(FrameWriteError::NonObject);
@@ -110,12 +124,7 @@ pub fn write_frame(
     if body.len() > MAX_MESSAGE_BYTES {
         return Err(FrameWriteError::MessageTooLarge);
     }
-    let length = u32::try_from(body.len()).map_err(|_| FrameWriteError::MessageTooLarge)?;
-    writer
-        .write_all(&length.to_le_bytes())
-        .and_then(|()| writer.write_all(&body))
-        .and_then(|()| writer.flush())
-        .map_err(|error| FrameWriteError::Io { kind: error.kind() })
+    Ok(body)
 }
 
 fn read_until_full(reader: &mut impl Read, buffer: &mut [u8]) -> io::Result<usize> {

@@ -74,13 +74,13 @@ def read_exact(stream, size):
 
 
 class Host:
-    def __init__(self, package, root, owners=None):
+    def __init__(self, package, root, owners=None, *, environment=None):
         self.package = package
         self.root = root
         self.destination = root / "Profile/Downloads"
         self.destination.mkdir(parents=True, exist_ok=True)
         (root / "Local").mkdir(exist_ok=True)
-        environment = {**os.environ, "LOCALAPPDATA": str(root / "Local"), "APPDATA": str(root / "Roaming"),
+        environment = environment if environment is not None else {**os.environ, "LOCALAPPDATA": str(root / "Local"), "APPDATA": str(root / "Roaming"),
                        "USERPROFILE": str(root / "Profile"), "HOME": str(root / "Profile"),
                        "PATH": str(Path(os.environ["WINDIR"]) / "System32")}
         self.process = None

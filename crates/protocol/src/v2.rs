@@ -29,6 +29,10 @@ impl CommandMessage {
 pub enum Command {
     Hello(HelloPayload),
     Add(AddPayload),
+    PrepareHandoff(PrepareHandoffPayload),
+    CommitHandoff(TaskIdPayload),
+    AbortHandoff(TaskIdPayload),
+    GetHandoff(TaskIdPayload),
     Pause(TaskIdPayload),
     Resume(TaskIdPayload),
     Cancel(CancelPayload),
@@ -185,6 +189,10 @@ enum CommandKind {
 enum CommandName {
     Hello,
     Add,
+    PrepareHandoff,
+    CommitHandoff,
+    AbortHandoff,
+    GetHandoff,
     Pause,
     Resume,
     Cancel,
@@ -201,6 +209,10 @@ impl CommandName {
         match value {
             "hello" => Some(Self::Hello),
             "add" => Some(Self::Add),
+            "prepare_handoff" => Some(Self::PrepareHandoff),
+            "commit_handoff" => Some(Self::CommitHandoff),
+            "abort_handoff" => Some(Self::AbortHandoff),
+            "get_handoff" => Some(Self::GetHandoff),
             "pause" => Some(Self::Pause),
             "resume" => Some(Self::Resume),
             "cancel" => Some(Self::Cancel),
@@ -218,6 +230,10 @@ impl CommandName {
         match self {
             Self::Hello => ResponseCommand::Hello,
             Self::Add => ResponseCommand::Add,
+            Self::PrepareHandoff => ResponseCommand::PrepareHandoff,
+            Self::CommitHandoff => ResponseCommand::CommitHandoff,
+            Self::AbortHandoff => ResponseCommand::AbortHandoff,
+            Self::GetHandoff => ResponseCommand::GetHandoff,
             Self::Pause => ResponseCommand::Pause,
             Self::Resume => ResponseCommand::Resume,
             Self::Cancel => ResponseCommand::Cancel,
@@ -235,6 +251,16 @@ fn decode_payload(command: CommandName, payload: Value) -> Result<Command, ()> {
     match command {
         CommandName::Hello => payload_as::<HelloPayload>(payload).map(Command::Hello),
         CommandName::Add => payload_as::<AddPayload>(payload).map(Command::Add),
+        CommandName::PrepareHandoff => {
+            payload_as::<PrepareHandoffPayload>(payload).map(Command::PrepareHandoff)
+        }
+        CommandName::CommitHandoff => {
+            payload_as::<TaskIdPayload>(payload).map(Command::CommitHandoff)
+        }
+        CommandName::AbortHandoff => {
+            payload_as::<TaskIdPayload>(payload).map(Command::AbortHandoff)
+        }
+        CommandName::GetHandoff => payload_as::<TaskIdPayload>(payload).map(Command::GetHandoff),
         CommandName::Pause => payload_as::<TaskIdPayload>(payload).map(Command::Pause),
         CommandName::Resume => payload_as::<TaskIdPayload>(payload).map(Command::Resume),
         CommandName::Cancel => payload_as::<CancelPayload>(payload).map(Command::Cancel),
@@ -316,6 +342,42 @@ impl Validate for HelloPayload {
 
 /// Validated add payload. Sensitive values intentionally have no `Debug`
 /// implementation.
+/// Explicit opt-in handoff; session-dependent replay is excluded.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PrepareHandoffPayload {
+    task_id: String,
+    #[serde(deserialize_with = "anonymous_handoff_download")]
+    download: AddPayload,
+}
+
+fn anonymous_handoff_download<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<AddPayload, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    if value.get("request_context").is_some() {
+        return Err(serde::de::Error::custom("session context is unsupported"));
+    }
+    serde_json::from_value(value).map_err(|_| serde::de::Error::custom("invalid handoff input"))
+}
+impl PrepareHandoffPayload {
+    #[must_use]
+    pub fn task_id(&self) -> &str {
+        &self.task_id
+    }
+    #[must_use]
+    pub const fn download(&self) -> &AddPayload {
+        &self.download
+    }
+}
+impl Validate for PrepareHandoffPayload {
+    fn validate(&self) -> bool {
+        valid_task_id(&self.task_id)
+            && self.download.validate()
+            && self.download.request_context().is_none()
+    }
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AddPayload {
@@ -835,6 +897,10 @@ fn valid_token_byte(byte: u8) -> bool {
 pub enum ResponseCommand {
     Hello,
     Add,
+    PrepareHandoff,
+    CommitHandoff,
+    AbortHandoff,
+    GetHandoff,
     Pause,
     Resume,
     Cancel,
@@ -1095,6 +1161,7 @@ pub struct SettingsDescription {
 /// Complete protocol-v2 task projection.
 #[derive(Clone, Serialize)]
 pub struct TaskDescription {
+    pub handoff_phase: Option<HandoffPhaseName>,
     pub task_id: String,
     pub source_origin: String,
     pub display_name: String,
@@ -1109,6 +1176,14 @@ pub struct TaskDescription {
     pub created_at: String,
     pub updated_at: String,
     pub error: Option<ProtocolError>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffPhaseName {
+    Prepared,
+    Committed,
+    Aborted,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -1226,6 +1301,40 @@ mod tests {
         Command, CommandDecodeFailure, ErrorCode, ProtocolError, ResponseCommand, ResponseMessage,
         decode_command,
     };
+
+    #[test]
+    fn handoff_commands_are_strict_and_exclude_session_replay() {
+        let id = "f3914a2c-65d1-4b41-96f2-32f49a184279";
+        for name in [
+            "prepare_handoff",
+            "commit_handoff",
+            "abort_handoff",
+            "get_handoff",
+        ] {
+            let mut message = json!({"protocol_version":2,"correlation_id":"handoff-1","kind":"command","command":name,"payload":{"task_id":id}});
+            if name == "prepare_handoff" {
+                message["payload"]["download"] = json!({"url":"https://example.invalid/file"});
+            }
+            assert!(decode_command(&serde_json::to_vec(&message).unwrap()).is_ok());
+            let mut invalid = message.clone();
+            invalid["payload"]["task_id"] = json!(id.to_uppercase());
+            assert!(decode_command(&serde_json::to_vec(&invalid).unwrap()).is_err());
+            invalid = message.clone();
+            invalid["payload"]["unknown"] = json!(true);
+            assert!(decode_command(&serde_json::to_vec(&invalid).unwrap()).is_err());
+            if name == "prepare_handoff" {
+                for context in [
+                    json!({"referrer":"https://example.invalid/page"}),
+                    json!({}),
+                    Value::Null,
+                ] {
+                    invalid = message.clone();
+                    invalid["payload"]["download"]["request_context"] = context;
+                    assert!(decode_command(&serde_json::to_vec(&invalid).unwrap()).is_err());
+                }
+            }
+        }
+    }
 
     #[test]
     fn decodes_strict_hello_and_add_commands() {

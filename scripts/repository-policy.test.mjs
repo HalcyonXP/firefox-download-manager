@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { repository, repositoryFindings, repositoryUrl } from "./repository-policy.mjs";
+import {
+  isLocalInstructionPath,
+  repository,
+  repositoryFindings,
+  repositoryUrl,
+} from "./repository-policy.mjs";
+
+test("local instruction files are refused at every directory depth and case", () => {
+  for (const path of ["AGENTS.md", "agents.md", "docs/AGENTS.md", "a/b/Agents.MD"]) {
+    assert.equal(isLocalInstructionPath(path), true);
+  }
+  for (const path of ["README.md", "docs/DEVELOPMENT.md", "agents.mdx", "my-agents.md"]) {
+    assert.equal(isLocalInstructionPath(path), false);
+  }
+});
 
 test("canonical HTTPS, SSH, issue, and schema references remain valid", () => {
   for (const text of [

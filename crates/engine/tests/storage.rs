@@ -622,3 +622,376 @@ fn sha256_windows_lock_rejects_competing_io_and_releases_on_lease_drop() {
     drop(lease);
     external.write_all(b"a").expect("lease released");
 }
+
+#[cfg(windows)]
+fn zone_path(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_os_string();
+    name.push(":Zone.Identifier");
+    PathBuf::from(name)
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_internet_zone_precedes_final_publication_and_survives_partial_cleanup() {
+    let directory = TestDirectory::new("internet-zone");
+    let partial = completed_storage(directory.path(), "internet.bin", b"abc");
+    let mut promotion = partial.promote().expect("protected promotion");
+    assert_eq!(
+        fs::read(zone_path(promotion.final_path())).expect("final zone"),
+        b"[ZoneTransfer]\r\nZoneId=3\r\n"
+    );
+    assert_eq!(fs::read(promotion.final_path()).expect("data"), b"abc");
+    promotion.cleanup_partial().expect("partial cleanup");
+    assert_eq!(
+        fs::read(zone_path(&directory.path().join("internet.bin"))).expect("retained zone"),
+        b"[ZoneTransfer]\r\nZoneId=3\r\n"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_internet_zone_preserves_restricted_and_refuses_weaker_or_unknown_metadata() {
+    let directory = TestDirectory::new("zone-policy");
+    for (index, marker) in [
+        b"[ZoneTransfer]\r\nZoneId=0\r\n".as_slice(),
+        b"unknown",
+        b"",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let name = format!("refused-{index}.bin");
+        let partial = completed_storage(directory.path(), &name, b"abc");
+        fs::write(zone_path(partial.partial_path()), marker).expect("fixture metadata");
+        assert_eq!(
+            partial.promote().err(),
+            Some(StorageError::InvalidDownloadZone)
+        );
+        assert!(!directory.path().join(name).exists());
+        assert_eq!(
+            fs::read(zone_path(partial.partial_path())).expect("unchanged marker"),
+            marker
+        );
+    }
+    let partial = completed_storage(directory.path(), "restricted.bin", b"abc");
+    let marker = b"[ZoneTransfer]\r\nZoneId=4\r\n";
+    fs::write(zone_path(partial.partial_path()), marker).expect("restricted fixture");
+    let promoted = partial.promote().expect("restricted promotion");
+    assert_eq!(
+        fs::read(zone_path(promoted.final_path())).expect("restricted readback"),
+        marker
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_internet_zone_locked_stream_refuses_promotion_and_can_retry_after_release() {
+    let directory = TestDirectory::new("zone-locked");
+    let partial = completed_storage(directory.path(), "locked-zone.bin", b"abc");
+    fs::write(
+        zone_path(partial.partial_path()),
+        b"[ZoneTransfer]\r\nZoneId=3\r\n",
+    )
+    .expect("zone fixture");
+    let writer = OpenOptions::new()
+        .write(true)
+        .open(zone_path(partial.partial_path()))
+        .expect("competing writer");
+    assert!(partial.promote().is_err());
+    assert!(!directory.path().join("locked-zone.bin").exists());
+    drop(writer);
+    partial
+        .promote()
+        .expect("fresh validation after retirement");
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_internet_zone_collision_never_marks_or_changes_existing_final_file() {
+    let directory = TestDirectory::new("zone-collision");
+    let existing = directory.path().join("keep.bin");
+    fs::write(&existing, b"existing").expect("existing final");
+    let partial = completed_storage(directory.path(), "keep.bin", b"abc");
+    let promoted = partial.promote().expect("numbered promotion");
+    assert_ne!(promoted.final_path(), existing);
+    assert_eq!(fs::read(&existing).expect("existing bytes"), b"existing");
+    assert!(!zone_path(&existing).exists());
+    assert_eq!(
+        fs::read(zone_path(promoted.final_path())).expect("new marker"),
+        b"[ZoneTransfer]\r\nZoneId=3\r\n"
+    );
+}
+
+#[test]
+fn computed_fingerprints_require_complete_hashing_and_keep_the_validation_lease() {
+    use sha2::{Digest, Sha256};
+    let directory = TestDirectory::new("computed-fingerprints");
+    for (index, bytes) in [Vec::new(), b"abc".to_vec(), vec![b'a'; 1_000_000]]
+        .into_iter()
+        .enumerate()
+    {
+        let name = format!("fingerprint-{index}.bin");
+        let partial = if bytes.is_empty() {
+            PartialFile::create(directory.path(), &name, 0).expect("empty")
+        } else {
+            completed_storage(directory.path(), &name, &bytes)
+        };
+        let ordinary = partial
+            .validate(None, || false)
+            .expect("ordinary validation");
+        assert!(ordinary.fingerprint().is_none());
+        drop(ordinary);
+        let mut checks = 0;
+        let lease = partial
+            .validate_with_fingerprint(None, || {
+                checks += 1;
+                false
+            })
+            .expect("computed fingerprint");
+        let fingerprint = lease.fingerprint().expect("hashing was mandatory");
+        let expected: [u8; 32] = Sha256::digest(&bytes).into();
+        assert_eq!(fingerprint.sha256(), expected);
+        assert_eq!(
+            fingerprint.length(),
+            u64::try_from(bytes.len()).expect("fixture size")
+        );
+        assert_eq!(checks, bytes.len().div_ceil(256 * 1024) + 2);
+        assert_eq!(
+            format!("{fingerprint:?}"),
+            "ValidatedFingerprint(<redacted>)"
+        );
+        assert!(matches!(partial.promote(), Err(StorageError::NotActive)));
+        assert!(matches!(
+            partial.validate_with_fingerprint(None, || false),
+            Err(StorageError::NotActive)
+        ));
+        assert!(!directory.path().join(&name).exists());
+        let promotion = lease.promote().expect("same owned lease");
+        assert_eq!(fs::read(promotion.final_path()).expect("output"), bytes);
+    }
+}
+
+#[test]
+fn fingerprint_cancellation_expectation_and_changed_bytes_do_not_reuse_old_evidence() {
+    use download_manager_engine::integrity::ExpectedSha256;
+    use std::io::Write;
+    let directory = TestDirectory::new("fingerprint-retirement");
+    let partial = completed_storage(directory.path(), "large.bin", &vec![b'a'; 1_000_000]);
+    let mut checks = 0;
+    assert!(matches!(
+        partial.validate_with_fingerprint(None, || {
+            checks += 1;
+            checks == 3
+        }),
+        Err(StorageError::ValidationCancelled)
+    ));
+    let wrong = ExpectedSha256::parse(&"00".repeat(32)).expect("valid expected hash");
+    assert!(matches!(
+        partial.validate_with_fingerprint(Some(wrong), || false),
+        Err(StorageError::ChecksumMismatch)
+    ));
+    let correct =
+        ExpectedSha256::parse("cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0");
+    let lease = partial
+        .validate_with_fingerprint(correct, || false)
+        .expect("expected and computed");
+    let before = lease.fingerprint().expect("computed");
+    drop(lease);
+    let mut writer = OpenOptions::new()
+        .write(true)
+        .open(partial.partial_path())
+        .expect("owned fixture mutation");
+    writer.write_all(b"b").expect("change one byte");
+    writer.sync_all().expect("flush");
+    drop(writer);
+    let lease = partial
+        .validate_with_fingerprint(None, || false)
+        .expect("recompute");
+    let after = lease.fingerprint().expect("computed again");
+    assert_eq!(before.length(), after.length());
+    assert_ne!(before.sha256(), after.sha256());
+    drop(lease);
+    assert!(matches!(
+        partial.validate_with_fingerprint(correct, || false),
+        Err(StorageError::ChecksumMismatch)
+    ));
+    assert!(
+        partial
+            .validate(None, || false)
+            .expect("ordinary independent validation")
+            .fingerprint()
+            .is_none()
+    );
+    assert!(!directory.path().join("large.bin").exists());
+}
+
+#[test]
+fn fingerprints_cannot_be_obtained_from_gaps_or_active_assignments() {
+    let directory = TestDirectory::new("fingerprint-incomplete");
+    let partial = PartialFile::create(directory.path(), "gap.bin", 4).expect("create");
+    assert!(matches!(
+        partial.validate_with_fingerprint(None, || false),
+        Err(StorageError::IncompleteCoverage)
+    ));
+    let writer = partial.assign(range(0, 4)).expect("active assignment");
+    assert!(matches!(
+        partial.validate_with_fingerprint(None, || false),
+        Err(StorageError::ActiveAssignments { .. })
+    ));
+    drop(writer);
+    assert!(matches!(
+        partial.validate_with_fingerprint(None, || false),
+        Err(StorageError::IncompleteCoverage)
+    ));
+}
+
+#[test]
+fn fixed_name_publication_does_not_fall_back_after_a_late_collision() {
+    use download_manager_engine::storage::IoFailure;
+    use std::io::Write as _;
+    use std::mem::ManuallyDrop;
+
+    let directory = ManuallyDrop::new(TestDirectory::new("fixed-name-collision"));
+    let partial = completed_storage(directory.path(), "fixed.txt", b"abc");
+    let lease = partial
+        .validate_with_fingerprint(None, || false)
+        .expect("hash bytes");
+    let lease = lease.bind_final_name(0).expect("freeze exact name");
+    assert_eq!(lease.file_name().as_str(), "fixed.txt");
+    let mut collision = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(directory.path().join("fixed.txt"))
+        .expect("exclusive collision fixture");
+    collision
+        .write_all(b"existing owned fixture")
+        .expect("collision bytes");
+    drop(collision);
+    let result = lease.promote();
+    let refused = matches!(
+        &result,
+        Err(StorageError::Io {
+            failure: IoFailure::AlreadyExists,
+            ..
+        })
+    );
+    let alternate_exists = directory.path().join("fixed (1).txt").exists();
+    let existing_unchanged = fs::read(directory.path().join("fixed.txt")).expect("existing bytes")
+        == b"existing owned fixture";
+    drop(result);
+    drop(partial);
+    assert!(
+        refused && !alternate_exists && existing_unchanged,
+        "fixed-name refusal absent; alternate selected: {alternate_exists}; existing unchanged: {existing_unchanged}"
+    );
+    drop(ManuallyDrop::into_inner(directory));
+}
+
+#[test]
+fn fixed_name_binding_requires_hashing_and_bounded_selection() {
+    use std::mem::ManuallyDrop;
+    let directory = ManuallyDrop::new(TestDirectory::new("fixed-name-bound"));
+    let partial = completed_storage(directory.path(), "bounded.txt", b"abc");
+    let structural = partial.validate(None, || false).expect("structural lease");
+    assert!(matches!(
+        structural.bind_final_name(0),
+        Err(StorageError::FingerprintRequired)
+    ));
+    for index in [10_000, u32::MAX] {
+        let lease = partial
+            .validate_with_fingerprint(None, || false)
+            .expect("fresh hash");
+        assert!(matches!(
+            lease.bind_final_name(index),
+            Err(StorageError::FinalNameExhausted)
+        ));
+    }
+    let lease = partial
+        .validate_with_fingerprint(None, || false)
+        .expect("fresh last hash");
+    let named = lease.bind_final_name(9_999).expect("last permitted index");
+    assert_eq!(named.file_name().as_str(), "bounded (9999).txt");
+    assert_eq!(
+        fs::read_dir(directory.path())
+            .expect("owned entries")
+            .count(),
+        1
+    );
+    assert_eq!(named.fingerprint().length(), 3);
+    drop(named);
+    drop(partial);
+    drop(ManuallyDrop::into_inner(directory));
+}
+
+#[test]
+fn fixed_name_binding_retains_hash_lease_and_cannot_reuse_dropped_evidence() {
+    use sha2::{Digest, Sha256};
+    use std::mem::ManuallyDrop;
+    let directory = ManuallyDrop::new(TestDirectory::new("fixed-name-lease"));
+    let partial = completed_storage(directory.path(), "fixed.txt", b"abc");
+    let named = partial
+        .validate_with_fingerprint(None, || false)
+        .expect("hash")
+        .bind_final_name(3)
+        .expect("freeze component");
+    #[cfg(windows)]
+    {
+        use std::io::Write as _;
+        let mut other = OpenOptions::new()
+            .write(true)
+            .open(partial.partial_path())
+            .expect("owned competing handle");
+        let write = other.write_all(b"bad");
+        drop(other);
+        assert!(
+            write.is_err(),
+            "bound fingerprint must retain kernel writer exclusion"
+        );
+    }
+    let old = named.fingerprint();
+    let name = named.file_name().clone();
+    assert_eq!(format!("{named:?}"), "NamedValidatedPartial(<redacted>)");
+    assert_eq!(name.as_str(), "fixed (3).txt");
+    assert!(matches!(
+        partial.validate_with_fingerprint(None, || false),
+        Err(StorageError::NotActive)
+    ));
+    assert!(matches!(partial.promote(), Err(StorageError::NotActive)));
+    drop(named);
+    fs::write(partial.partial_path(), b"XYZ").expect("owned changed-byte fixture");
+    let fresh = partial
+        .validate_with_fingerprint(None, || false)
+        .expect("rehash changed bytes")
+        .bind_final_name(3)
+        .expect("fresh same-name binding");
+    assert_ne!(fresh.fingerprint(), old);
+    assert_eq!(fresh.file_name(), &name);
+    let digest: [u8; 32] = Sha256::digest(b"XYZ").into();
+    assert_eq!(fresh.fingerprint().sha256(), digest);
+    let mut promotion = fresh.promote().expect("exact-name publication");
+    assert_eq!(
+        promotion
+            .final_path()
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some("fixed (3).txt")
+    );
+    assert_eq!(
+        fs::read(promotion.final_path()).expect("published bytes"),
+        b"XYZ"
+    );
+    assert!(!directory.path().join("fixed.txt").exists());
+    #[cfg(windows)]
+    assert_eq!(
+        fs::read(format!(
+            "{}:Zone.Identifier",
+            promotion.final_path().display()
+        ))
+        .expect("zone"),
+        b"[ZoneTransfer]\r\nZoneId=3\r\n"
+    );
+    promotion.cleanup_partial().expect("owned partial cleanup");
+    drop(promotion);
+    drop(partial);
+    drop(ManuallyDrop::into_inner(directory));
+}

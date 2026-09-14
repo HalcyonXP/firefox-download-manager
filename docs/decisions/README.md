@@ -1,6 +1,6 @@
 # Architecture decision records
 
-Accepted ADRs define the baseline for the initial local release. Superseding a decision requires a new ADR that links to the old record; accepted history is not rewritten.
+Accepted ADRs define the baseline for the initial local release. Superseding a decision requires a new ADR that links to the old record. Current summaries are aligned with the superseding decision; historical release evidence and Git history are not relabeled.
 
 | ADR | Decision | Status |
 | --- | --- | --- |
@@ -16,6 +16,9 @@ Accepted ADRs define the baseline for the initial local release. Superseding a d
 | [0010](0010-minimal-session-handoff.md) | Explicit memory-only session handoff | Accepted |
 | [0011](0011-license-and-available-qualification.md) | Permissive licensing and available-machine qualification | Accepted |
 | [0012](0012-qualification-publication-sequence.md) | Candidate acceptance before final-main qualification/publication | Accepted |
-| [0013](0013-install-restart-click.md) | Install–restart–click workflow, visible companion and persistent Firefox integration | Accepted direction; mechanism/signing gates pending |
+| [0013](0013-install-restart-click.md) | Install–restart–click workflow, visible companion and persistent Firefox integration | Accepted direction; mechanism/persistent unsigned-install gates pending |
+| [0014](0014-autonomous-completion.md) | Integration qualification and operational safety boundaries | Accepted; distribution scope superseded by 0016 |
+| [0015](0015-owned-windows-io-cancellation.md) | Explicit owned pipe cancellation; narrow reviewed FFI exception | Accepted engineering decision |
+| [0016](0016-unsigned-personal-xpi.md) | Persistent unsigned personal XPI; no signing/account workflow; settings unchanged | Accepted; supersedes earlier signed-distribution gates |
 
 Each record states its reversibility. Security and correctness invariants are not made optional merely because an implementation choice is reversible.

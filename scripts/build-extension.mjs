@@ -7,6 +7,7 @@ await mkdir("extension/dist", { recursive: true });
 
 await build({
   bundle: true,
+  define: { __DM_PARENT_TRANSPORT__: "false" },
   entryPoints: ["extension/src/background.ts", "extension/src/manager.ts"],
   format: "iife",
   legalComments: "none",

@@ -1,0 +1,14 @@
+[
+  {
+    "namespace": "managerParentProbe",
+    "description": "Unselected fixed fileless SDK process fixture; not Manager or policy authority.",
+    "functions": [
+      {
+        "name": "run",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      }
+    ]
+  }
+]

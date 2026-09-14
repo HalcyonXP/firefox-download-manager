@@ -4,7 +4,7 @@ Status: v0.1.0 baseline retained; next-release direction superseded in part by A
 
 ## Next-release boundary change (2026-09-10)
 
-The owner requires an ordinary setup.exe, visible tray companion, install-once XPI, browser restart and automatic supported download-link capture. [ADR0013](decisions/0013-install-restart-click.md) supersedes this document's manual-only capture, temporary user-installation and browser-owned engine lifetime for M5. A per-user visible Rust companion will own the engine; a bounded authenticated native bridge will connect Firefox. Exact IPC/capture/signing implementation requires #49/#50 evidence and review, not an unsafe detach or unauthenticated local server. No service, silent Windows-logon startup or protection downgrade is authorized.
+The next-release workflow requires an ordinary setup.exe, visible tray companion, install-once XPI, browser restart and automatic supported download-link capture. [ADR0013](decisions/0013-install-restart-click.md) supersedes this document's manual-only capture, temporary user-installation and browser-owned engine lifetime for M5. A per-user visible Rust companion will own the engine; a bounded authenticated native bridge will connect Firefox. Exact IPC/capture/persistent unsigned-install implementation requires #49/#50 evidence and review, not an unsafe detach or unauthenticated local server. No service, silent Windows-logon startup or protection downgrade is authorized.
 
 The rest of this document describes the **released v0.1.0** baseline unless explicitly updated; it is not a claim that the M5 workflow already exists. Network/storage/recovery/correctness invariants remain applicable.
 
@@ -226,3 +226,7 @@ Probe bytes, redirected probe hops, and transfer workers share one admission dom
 ### Pre-packaging security checkpoint (#26)
 
 [SECURITY_REVIEW.md](SECURITY_REVIEW.md) inventories every permission and trust boundary. Selected-site permission construction now rejects wildcard hosts; remote ETags/If-Range are debug-sensitive; explicit CSP, no-private-window behavior and minimum Firefox 156 are guarded. No broader API compatibility or final-browser qualification is inferred from the earlier authentication slice. Development-installer root/ownership/upgrade findings explicitly block #27 delivery until fixed; #28 still qualifies final artifacts.
+
+## M5 owned Windows I/O boundary
+
+[ADR0015](decisions/0015-owned-windows-io-cancellation.md) explicitly permits one function-local CancelIoEx call in a separate boundary crate after the selected safe wrappers proved insufficient for pending-write cancellation. Existing crates retain workspace unsafe-forbid. [LOCAL_IPC.md](LOCAL_IPC.md) separates authenticated transport, cancellation requests, actual completion and the still-unimplemented installed engine/bridge authority. This is not shipped v0.1.0 behavior.

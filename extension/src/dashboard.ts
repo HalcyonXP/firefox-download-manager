@@ -1,25 +1,8 @@
 import type { NativeState, NativeTask } from "./native-connection";
 
-export type TaskAction = "pause" | "resume" | "cancel" | "remove" | "open_folder";
-export function actionsFor(state: string): Array<{ action: TaskAction; label: string }> {
-  const actions: Array<{ action: TaskAction; label: string }> = [];
-  if (["queued", "probing", "downloading"].includes(state))
-    actions.push({ action: "pause", label: "Pause" });
-  if (["queued", "paused", "failed"].includes(state))
-    actions.push({
-      action: "resume",
-      label: state === "failed" ? "Retry" : state === "queued" ? "Start" : "Resume",
-    });
-  if (["queued", "probing", "downloading", "paused", "validating"].includes(state))
-    actions.push({ action: "cancel", label: "Cancel" });
-  if (["completed", "failed", "cancelled"].includes(state))
-    actions.push({
-      action: "remove",
-      label: state === "completed" ? "Remove history" : "Remove task & partial",
-    });
-  actions.push({ action: "open_folder", label: "Open folder" });
-  return actions;
-}
+import { actionsFor, type TaskAction } from "./task-controls";
+export { actionsFor } from "./task-controls";
+
 export function bytes(value: number | null): string {
   if (value === null) return "Unknown size";
   const units = ["B", "KiB", "MiB", "GiB", "TiB"];
@@ -31,6 +14,12 @@ export function bytes(value: number | null): string {
   return `${value.toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
 }
 export function progressText(task: NativeTask): string {
+  if (task.handoff_phase === "prepared")
+    return "Waiting for browser handoff resolution; no Manager transfer has started.";
+  if (task.handoff_phase === "aborted")
+    return "Unused reservation discarded; identity retained to prevent duplicate transfers.";
+  if (task.handoff_phase === "unknown")
+    return "Handoff phase unavailable from this older helper; update the paired helper before using task controls.";
   if (["validating", "promoting"].includes(task.state))
     return `${bytes(task.bytes_completed)} / ${bytes(task.expected_size)} · ${task.state === "validating" ? "Validating file; final name withheld" : "Publishing validated file"} · Completion time unknown`;
   const eta = task.eta_seconds === null ? "ETA unknown" : `${task.eta_seconds}s remaining`;
@@ -96,8 +85,17 @@ export class Dashboard {
       }
       row.root.dataset.state = task.state;
       row.title.textContent = task.display_name;
-      row.status.textContent = task.state.toUpperCase();
-      row.details.textContent = progressText(task);
+      row.status.textContent =
+        task.handoff_phase === "prepared"
+          ? "WAITING FOR HANDOFF"
+          : task.handoff_phase === "aborted"
+            ? "RESERVATION DISCARDED"
+            : task.state.toUpperCase();
+      row.details.textContent =
+        progressText(task) +
+        (task.handoff_phase === "committed"
+          ? " · Handoff history retained for duplicate prevention."
+          : "");
       row.path.textContent = `${task.destination} · ${task.source_origin}`;
       row.progress.max = task.expected_size || 1;
       if (task.expected_size === null) row.progress.removeAttribute("value");
@@ -105,14 +103,14 @@ export class Dashboard {
         row.progress.value =
           task.expected_size === 0 && task.state === "completed" ? 1 : task.bytes_completed;
       row.error.textContent = task.error
-        ? `${task.error.code}: ${task.error.display_message}${task.error.code === "CHECKSUM_MISMATCH" ? " Check the digest and create a fresh task; no new final file was published." : ""}${["AUTH_REQUIRED", "AUTH_EXPIRED"].includes(task.error.code) ? " Sign in, paste the original direct URL above, and explicitly add a fresh task with session handoff. Remove the old task separately to delete its partial." : ""}`
+        ? `${task.error.code}: ${task.error.display_message}${task.error.code === "CHECKSUM_MISMATCH" ? " Check the digest and create a fresh task; no new final file was published." : ""}${["AUTH_REQUIRED", "AUTH_EXPIRED"].includes(task.error.code) ? " Sign in, paste the original direct URL above, and explicitly add a fresh task with session handoff. The previous task is not changed by a new Add." : ""}`
         : "";
       row.error.hidden = task.error === null;
-      const key = `${task.state}:${state.connected}`;
+      const key = `${task.state}:${task.handoff_phase}:${state.connected}`;
       if (row.actionKey !== key) {
         row.actionKey = key;
         row.actions.replaceChildren(
-          ...actionsFor(task.state).map(({ action, label }) => {
+          ...actionsFor(task.state, task.handoff_phase).map(({ action, label }) => {
             const button = document.createElement("button");
             button.type = "button";
             button.textContent = label;

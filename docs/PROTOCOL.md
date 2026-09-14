@@ -40,9 +40,17 @@ After connecting, the extension sends `hello` before any operational command. It
 
 If the envelope version is unsupported, the helper performs only bounded extraction of a valid correlation ID and returns a v2 `protocol` error with `PROTOCOL_UNSUPPORTED_VERSION` when possible, then closes the connection. If no safe correlation ID can be recovered, it generates one. An unknown command receives `PROTOCOL_UNKNOWN_COMMAND`; malformed known commands receive `PROTOCOL_INVALID_MESSAGE`. The rejected frame never performs an operation. Bounded malformed frames may be followed by a corrected `hello`; unsupported versions and valid operational commands sent before `hello` close the session after their error.
 
-The implemented helper advertises `snapshots`, `coalesced_progress`, `authenticated_requests`, and `sha256`. Immediately after a successful hello response it emits all pages of one authoritative engine snapshot before normal event/command multiplexing begins. The extension does not mark the port ready until that snapshot is complete. The formerly reserved authentication and SHA-256 inputs are implemented in #23 and #25, respectively.
+The implemented helper advertises `snapshots`, `coalesced_progress`, `authenticated_requests`, `sha256`, and `task_handoff_phase`. Immediately after a successful hello response it emits all pages of one authoritative engine snapshot before normal event/command multiplexing begins. The extension does not mark the port ready until that snapshot is complete. The formerly reserved authentication and SHA-256 inputs are implemented in #23 and #25, respectively.
 
 A peer must not infer support from application version strings. Optional behavior is enabled only by the negotiated protocol and advertised capability. `authenticated_requests` is implemented in #23. `sha256` is implemented in #25. The extension checks capabilities after any reconnect, immediately before sending session or checksum fields. A digest is never stripped to accommodate an older helper; see [INTEGRITY.md](INTEGRITY.md).
+
+The opt-in companion local bridge additionally advertises `prepared_handoff`; the legacy stdio-owned engine does not. Its four handoff commands persist intent before network work and return a handoff phase plus sanitized task. This is separate from automatic browser capture eligibility; see [NATIVE_HANDOFF.md](NATIVE_HANDOFF.md).
+
+### Task phase metadata
+
+`task_handoff_phase` promises a `handoff_phase` member in **every full task projection**, including initial/reconnect snapshots, responses and events. Null identifies an ordinary task; `prepared`, `committed` and `aborted` are durable handoff phases, independent of transfer `state`. Prepared is queued with zero bytes/no resource; aborted is cancelled with zero bytes/no resource. Receipt phase must agree with its task. Progress samples cannot change phase. The extension uses the validated Hello while decoding the initial snapshot, before the connection is ready.
+
+Updated helpers always advertise this additive wire2 capability; legacy stdio still does not authorize handoff commands. A matching updated extension is required because older closed capability validators reject new capabilities. The updated extension accepts an older ordinary host. With an older companion advertising only `prepared_handoff`, absent phase is **unknown**, not ordinary: generic mutating controls are unavailable until a typed receipt identifies the phase or the paired helper is updated. Unknown is a client-only classification, never a wire phase. The standalone schema accepts historical frames without this member; session decoding enforces its presence when advertised.
 
 ## Commands
 
@@ -52,6 +60,10 @@ Operational commands are serialized by the helper per task. A command receives e
 | --- | --- | --- |
 | `hello` | Negotiate protocol and capabilities | Negotiation details |
 | `add` | Validate and create a task | Full task |
+| `prepare_handoff` | Exclusively prepare immutable input under a client UUID; no network | `{phase, task}` |
+| `commit_handoff` | Commit Prepared; repeated commit only reads current state | `{phase, task}` |
+| `abort_handoff` | Abandon Prepared, retaining its ID against replay | `{phase, task}` |
+| `get_handoff` | Read authoritative phase/state for the same ID | `{phase, task}` |
 | `pause` | Reach a safe paused checkpoint | Full task |
 | `resume` | Resume a paused task, or explicitly retry a failed task, after revalidation | Full task |
 | `cancel` | Stop work using explicit `keep`/`delete` partial policy | Full task |

@@ -1,3 +1,10 @@
+import { captureSitePermissions, type CaptureAccessState } from "./capture-access";
+import { wireCaptureAccess } from "./capture-access-ui";
+import type { CaptureState } from "./capture-control";
+import { renderCaptureControl } from "./capture-ui";
+import { dispatchHandoffAction } from "./handoff-actions";
+import { renderHandoffs } from "./handoff-ui";
+import type { HandoffView } from "./browser-handoff";
 import { sessionPermission, SessionError } from "./session";
 import { creationPayload, suggestedFilename } from "./creation";
 import type { NativeState, NativeTask, NativeSettings } from "./native-connection";
@@ -13,9 +20,29 @@ const destination = element<HTMLInputElement>("destination");
 const workers = element<HTMLSelectElement>("workers");
 const feedback = element("feedback");
 const submit = element<HTMLButtonElement>("submit");
+const automaticCapture = element<HTMLInputElement>("automatic-capture");
+automaticCapture.addEventListener("change", () => {
+  automaticCapture.disabled = true;
+  automaticCapture.indeterminate = true;
+  element("capture-status").textContent = "Waiting for capture preference verification.";
+  try {
+    port.postMessage({ action: "capture-setting", enabled: automaticCapture.checked });
+  } catch {
+    element("capture-status").textContent =
+      "Capture change was not confirmed. Reconnect to check the saved preference.";
+  }
+});
 let port: browser.runtime.Port;
+const accessUi = wireCaptureAccess(
+  element<HTMLButtonElement>("capture-access"),
+  element("capture-access-status"),
+  () => browser.permissions.request(captureSitePermissions()),
+  () => port.postMessage({ action: "capture-access-check" }),
+);
 let effectiveSettings: NativeSettings | undefined;
 let settingsKey = "";
+let handoffView: HandoffView = { loaded: false, blocked: false, pending: [] };
+let handoffTasks: readonly NativeTask[] = [];
 const dashboard = new Dashboard(element("tasks"), (action, task) => {
   if (
     action === "remove" &&
@@ -37,6 +64,21 @@ const dashboard = new Dashboard(element("tasks"), (action, task) => {
   port.postMessage({ action: "control", command: action, taskId: task.task_id });
 });
 
+function renderPendingHandoffs(): void {
+  renderHandoffs(
+    element("handoffs"),
+    handoffView,
+    (taskId, choice) =>
+      dispatchHandoffAction(
+        taskId,
+        choice,
+        (prompt) => confirm(prompt),
+        (message) => port.postMessage(message),
+      ),
+    handoffTasks,
+  );
+}
+
 function attach(): void {
   port = browser.runtime.connect({ name: "manager-ui" });
   port.onMessage.addListener((raw: object) => {
@@ -46,7 +88,21 @@ function attach(): void {
       url?: string;
       message?: string;
       task?: NativeTask;
+      view?: HandoffView;
     };
+    if (message.kind === "capture-access") {
+      accessUi.update((raw as { state: CaptureAccessState }).state);
+      return;
+    }
+    if (message.kind === "capture-state") {
+      const state = (raw as { state: CaptureState }).state;
+      renderCaptureControl(automaticCapture, element("capture-status"), state);
+      return;
+    }
+    if (message.kind === "handoffs" && message.view) {
+      handoffView = message.view;
+      renderPendingHandoffs();
+    }
     if (message.kind === "capture" && message.url) {
       url.value = message.url;
       filename.value = suggestedFilename(url.value);
@@ -57,6 +113,8 @@ function attach(): void {
         : "Helper disconnected · showing last snapshot";
       element("queue-summary").textContent = `${message.state.tasks.length} download(s)`;
       dashboard.update(message.state);
+      handoffTasks = message.state.tasks;
+      renderPendingHandoffs();
       if (message.state.settings && JSON.stringify(message.state.settings) !== settingsKey) {
         effectiveSettings = message.state.settings;
         settingsKey = JSON.stringify(effectiveSettings);
@@ -77,6 +135,11 @@ function attach(): void {
     }
   });
   port.onDisconnect.addListener(() => {
+    accessUi.disconnect();
+    automaticCapture.disabled = true;
+    automaticCapture.indeterminate = true;
+    element("capture-status").textContent =
+      "Capture preference connection lost. Reconnect to verify its state.";
     feedback.textContent =
       "The extension connection closed. Reconnect and check the queue before submitting again.";
     submit.disabled = false;

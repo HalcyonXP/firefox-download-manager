@@ -18,5 +18,5 @@
     "target": "ES2022",
     "types": ["firefox-webext-browser", "vitest/globals"]
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "diagnostic/**/*.ts"]
 }

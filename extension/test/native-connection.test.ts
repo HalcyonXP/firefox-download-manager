@@ -318,3 +318,252 @@ describe("checksum capability gate after reconnect", () => {
     connection.disconnect();
   });
 });
+
+describe("prepared handoff receipts", () => {
+  const id = "a4ac080c-862f-4ea8-b60c-06a9718b2306";
+  it.each(["prepare_handoff", "commit_handoff", "abort_handoff", "get_handoff"] as const)(
+    "requires the negotiated capability for %s",
+    async (command) => {
+      const port = new FakePort();
+      const connection = new NativeConnection(() => port, "0.1.0");
+      const ready = connection.connect();
+      acceptHello(port);
+      snapshot(port, 0, []);
+      await ready;
+      await expect(
+        connection.command(command, {
+          task_id: id,
+          download: { url: "https://example.invalid/file" },
+        }),
+      ).rejects.toMatchObject({ failure: "protocol_error" });
+      expect(port.sent).toHaveLength(1);
+      connection.disconnect();
+    },
+  );
+  it("validates and projects a correlated prepared receipt", async () => {
+    const port = new FakePort();
+    const connection = new NativeConnection(() => port, "0.1.0");
+    const ready = connection.connect();
+    acceptHello(port, ["snapshots", "coalesced_progress", "prepared_handoff"]);
+    snapshot(port, 0, []);
+    await ready;
+    const pending = connection.command("prepare_handoff", {
+      task_id: id,
+      download: { url: "https://example.invalid/file" },
+    });
+    await Promise.resolve();
+    const sent = port.sent[1] as Record<string, unknown>;
+    port.onMessage.emit({
+      protocol_version: 2,
+      kind: "response",
+      command: "prepare_handoff",
+      correlation_id: sent.correlation_id,
+      ok: true,
+      result: { phase: "prepared", task: task(id) },
+    });
+    await expect(pending).resolves.toMatchObject({ phase: "prepared", task: { task_id: id } });
+    expect(connection.state().tasks).toHaveLength(1);
+    connection.disconnect();
+  });
+  it.each(["wrong-id", "unknown-phase", "prepared-completed", "extra-url", "wrong-commit-phase"])(
+    "refuses %s without publishing a task",
+    async (variant) => {
+      const port = new FakePort();
+      const connection = new NativeConnection(() => port, "0.1.0");
+      const ready = connection.connect();
+      acceptHello(port, ["snapshots", "coalesced_progress", "prepared_handoff"]);
+      snapshot(port, 0, []);
+      await ready;
+      const command = variant === "wrong-commit-phase" ? "commit_handoff" : "get_handoff";
+      const pending = connection.command(command, { task_id: id });
+      await Promise.resolve();
+      const sent = port.sent[1] as Record<string, unknown>;
+      const result: Record<string, unknown> = {
+        phase: variant === "unknown-phase" ? "unknown" : "prepared",
+        task: task(
+          variant === "wrong-id" ? "b4ac080c-862f-4ea8-b60c-06a9718b2306" : id,
+          variant === "prepared-completed" ? "completed" : "queued",
+        ),
+      };
+      if (variant === "extra-url") result.url = "https://example.invalid/secret";
+      port.onMessage.emit({
+        protocol_version: 2,
+        kind: "response",
+        command,
+        correlation_id: sent.correlation_id,
+        ok: true,
+        result,
+      });
+      await expect(pending).rejects.toMatchObject({ failure: "protocol_error" });
+      expect(connection.state().tasks).toHaveLength(0);
+      expect(port.disconnected).toBe(true);
+    },
+  );
+  it.each([null, {}, { credentials: {} }])(
+    "does not transmit a session context member %#",
+    async (request_context) => {
+      const port = new FakePort();
+      const connection = new NativeConnection(() => port, "0.1.0");
+      const ready = connection.connect();
+      acceptHello(port, ["snapshots", "coalesced_progress", "prepared_handoff"]);
+      snapshot(port, 0, []);
+      await ready;
+      await expect(
+        connection.command("prepare_handoff", {
+          task_id: id,
+          download: { url: "https://example.invalid/file", request_context },
+        }),
+      ).rejects.toMatchObject({ failure: "protocol_error" });
+      expect(port.sent).toHaveLength(1);
+      connection.disconnect();
+    },
+  );
+  it("does not replay an uncertain commit and rechecks support on reconnect", async () => {
+    const first = new FakePort();
+    const second = new FakePort();
+    let count = 0;
+    const connection = new NativeConnection(() => (count++ === 0 ? first : second), "0.1.0");
+    const ready = connection.connect();
+    acceptHello(first, ["snapshots", "coalesced_progress", "prepared_handoff"]);
+    snapshot(first, 0, []);
+    await ready;
+    const pending = connection.command("commit_handoff", { task_id: id });
+    await Promise.resolve();
+    connection.disconnect();
+    await expect(pending).rejects.toMatchObject({ failure: "disconnected" });
+    const recovery = connection.command("get_handoff", { task_id: id });
+    acceptHello(second);
+    snapshot(second, 0, []);
+    await expect(recovery).rejects.toMatchObject({ failure: "protocol_error" });
+    expect(first.sent).toHaveLength(2);
+    expect(second.sent).toHaveLength(1);
+    connection.disconnect();
+  });
+});
+
+describe("authoritative handoff phase projections", () => {
+  const id = "a4ac080c-862f-4ea8-b60c-06a9718b2306";
+  const capabilities = ["snapshots", "prepared_handoff", "task_handoff_phase"];
+  it.each([null, "prepared", "committed", "aborted"] as const)(
+    "accepts phase %s",
+    async (phase) => {
+      const port = new FakePort();
+      const connection = new NativeConnection(() => port, "0.1.0");
+      const ready = connection.connect();
+      acceptHello(port, capabilities);
+      snapshot(port, 0, [
+        { ...task(id, phase === "aborted" ? "cancelled" : "queued"), handoff_phase: phase },
+      ]);
+      await ready;
+      expect(connection.state().tasks[0]?.handoff_phase).toBe(phase);
+      connection.disconnect();
+    },
+  );
+  it.each(["missing", "unknown", "wrong-state", "bytes", "size", "mode"])(
+    "refuses inconsistent %s metadata",
+    async (variant) => {
+      const port = new FakePort();
+      const connection = new NativeConnection(() => port, "0.1.0");
+      const ready = connection.connect();
+      acceptHello(port, capabilities);
+      const value = { ...task(id), handoff_phase: "prepared" } as Record<string, unknown>;
+      if (variant === "missing") delete value.handoff_phase;
+      if (variant === "unknown") value.handoff_phase = "unknown";
+      if (variant === "wrong-state") value.state = "completed";
+      if (variant === "bytes") value.bytes_completed = 1;
+      if (variant === "size") value.expected_size = 0;
+      if (variant === "mode") value.transfer_mode = "single";
+      snapshot(port, 0, [value]);
+      await expect(ready).rejects.toMatchObject({ failure: "protocol_error" });
+      expect(connection.state().tasks).toHaveLength(0);
+    },
+  );
+  it.each(["pause", "resume", "cancel", "remove"] as const)(
+    "refuses stale %s before transmission",
+    async (command) => {
+      const port = new FakePort();
+      const connection = new NativeConnection(() => port, "0.1.0");
+      const ready = connection.connect();
+      acceptHello(port, capabilities);
+      snapshot(port, 0, [{ ...task(id), handoff_phase: "prepared" }]);
+      await ready;
+      await expect(
+        command === "remove"
+          ? connection.command("remove", { task_id: id })
+          : connection.command(command, { task_id: id }),
+      ).rejects.toMatchObject({
+        helperCode: "INVALID_TASK_STATE",
+      });
+      expect(port.sent).toHaveLength(1);
+      connection.disconnect();
+    },
+  );
+  it("distinguishes an older companion from an ordinary legacy host", async () => {
+    for (const handoffs of [false, true]) {
+      const port = new FakePort();
+      const connection = new NativeConnection(() => port, "0.1.0");
+      const ready = connection.connect();
+      acceptHello(port, handoffs ? ["snapshots", "prepared_handoff"] : ["snapshots"]);
+      snapshot(port, 0, [task(id)]);
+      await ready;
+      expect(connection.state().tasks[0]?.handoff_phase).toBe(handoffs ? "unknown" : null);
+      if (handoffs) {
+        await expect(connection.command("resume", { task_id: id })).rejects.toMatchObject({
+          helperCode: "INVALID_TASK_STATE",
+        });
+        expect(port.sent).toHaveLength(1);
+      }
+      connection.disconnect();
+    }
+  });
+  it("rejects disagreement between receipt and snapshot phase", async () => {
+    const port = new FakePort();
+    const connection = new NativeConnection(() => port, "0.1.0");
+    const ready = connection.connect();
+    acceptHello(port, capabilities);
+    snapshot(port, 0, []);
+    await ready;
+    const pending = connection.command("get_handoff", { task_id: id });
+    await Promise.resolve();
+    const sent = port.sent[1] as Record<string, unknown>;
+    port.onMessage.emit({
+      protocol_version: 2,
+      kind: "response",
+      command: "get_handoff",
+      correlation_id: sent.correlation_id,
+      ok: true,
+      result: { phase: "prepared", task: { ...task(id), handoff_phase: null } },
+    });
+    await expect(pending).rejects.toMatchObject({ failure: "protocol_error" });
+    expect(connection.state().tasks).toHaveLength(0);
+  });
+});
+
+it("does not project transfer progress onto an uncommitted reservation", async () => {
+  const id = "a4ac080c-862f-4ea8-b60c-06a9718b2306";
+  const port = new FakePort();
+  const connection = new NativeConnection(() => port, "0.1.0");
+  const ready = connection.connect();
+  acceptHello(port, ["snapshots", "task_handoff_phase"]);
+  snapshot(port, 0, [{ ...task(id), handoff_phase: "prepared" }]);
+  await ready;
+  port.onMessage.emit({
+    protocol_version: 2,
+    kind: "event",
+    event: "progress",
+    correlation_id: "event-1",
+    sequence: 1,
+    emitted_at: "2026-09-05T00:00:00.000Z",
+    data: {
+      task_id: id,
+      bytes_completed: 1,
+      expected_size: null,
+      speed_bytes_per_second: null,
+      eta_seconds: null,
+      active_workers: 1,
+      sampled_at: "2026-09-05T00:00:00.000Z",
+    },
+  });
+  expect(port.disconnected).toBe(true);
+  expect(connection.state().tasks[0]?.bytes_completed).toBe(0);
+});

@@ -10,6 +10,7 @@ use crate::package::{VerifiedPackage, hash_bytes};
 use crate::paths::{DirectoryLease, InstallationPath};
 use crate::receipt::{Action, Generation, Journal, MAX_GENERATIONS, Receipt};
 use crate::registry::{RegistrationStore, RegistrationValue};
+use crate::shortcuts::{self, ShortcutLocation};
 use crate::{EXTENSION_FILE, EXTENSION_ID, HELPER_FILE, HOST_NAME, SetupError};
 
 /// Testable failure boundaries; no caller-controlled script or command strings.
@@ -22,6 +23,7 @@ pub enum Phase {
     Manifest,
     Probe,
     Registration,
+    Shortcut,
     Receipt,
 }
 /// Only production's bounded helper launch verifier is wired to the command line.
@@ -43,6 +45,7 @@ pub struct SetupSession {
     location: InstallationPath,
     _lock: SetupLock,
     application_data: DirectoryLease,
+    shortcuts: Option<ShortcutLocation>,
 }
 impl SetupSession {
     /// Resolve roots and acquire exclusive setup ownership. Does not register a host.
@@ -56,7 +59,41 @@ impl SetupSession {
             location,
             _lock: lock,
             application_data,
+            shortcuts: None,
         })
+    }
+    /// Bind an independently resolved Programs anchor for receipt2 operations.
+    /// # Errors
+    /// Refuses overlap with program generations or download task state.
+    pub fn with_shortcuts(mut self, location: ShortcutLocation) -> Result<Self, SetupError> {
+        let state = self
+            .application_data
+            .path()
+            .join("HalcyonXP")
+            .join("FirefoxDownloadManager")
+            .join("state");
+        for protected in [self.root(), state.as_path()] {
+            if crate::paths::within(location.path(), protected)
+                || crate::paths::within(protected, location.path())
+            {
+                return Err(SetupError::Path);
+            }
+        }
+        self.shortcuts = Some(location);
+        Ok(self)
+    }
+    fn require_scope(&self, receipt: Option<&Receipt>) -> Result<(), SetupError> {
+        if let Some(receipt) = receipt.filter(|r| r.version == 2) {
+            let scope = self
+                .shortcuts
+                .as_ref()
+                .ok_or(SetupError::Ownership)?
+                .scope()?;
+            if receipt.shortcut_scope.as_ref() != Some(&scope) {
+                return Err(SetupError::Ownership);
+            }
+        }
+        Ok(())
     }
     /// Canonical installation root, not a task/download destination.
     #[must_use]
@@ -70,6 +107,7 @@ impl SetupSession {
         }
         let directory = files::create_tree(self.root())?;
         let receipt = load_receipt(self.root())?;
+        self.require_scope(receipt.as_ref())?;
         if receipt.is_none()
             && fs::read_dir(self.root())
                 .map_err(|_| SetupError::Io)?
@@ -102,14 +140,31 @@ impl SetupSession {
             }
             verify_generation(self.root(), old.current_generation()?, false)?;
         }
-        let generation = new_generation(self.root(), package)?;
+        if let Some(old) = previous.as_ref().filter(|r| r.version == 2) {
+            self.shortcuts
+                .as_ref()
+                .ok_or(SetupError::Ownership)?
+                .check(self.root(), old, false)?;
+        }
+        let mut generation = new_generation(self.root(), package)?;
+        let link = self
+            .shortcuts
+            .as_ref()
+            .map(|_| shortcuts::encode(&self.root().join(&generation.id).join(HELPER_FILE)))
+            .transpose()?;
+        generation.shortcut_sha256 = link.as_ref().map(|b| hash_bytes(b));
         let mut next = previous.clone().unwrap_or_else(|| Receipt {
+            shortcut_scope: None,
             format: "firefox-download-manager-installation".into(),
             version: 1,
             installation_id: Uuid::new_v4().to_string(),
             current: generation.id.clone(),
             generations: Vec::new(),
         });
+        if let Some(location) = &self.shortcuts {
+            next.version = 2;
+            next.shortcut_scope = Some(location.scope()?);
+        }
         next.current.clone_from(&generation.id);
         next.generations.push(generation.clone());
         let journal = new_journal(Action::Install, previous, Some(next), observed.is_some());
@@ -118,8 +173,26 @@ impl SetupSession {
         let path = files::generation_path(self.root(), &generation.id);
         fs::create_dir(&path).map_err(|_| SetupError::Ownership)?;
         let directory = DirectoryLease::open(&path)?;
+        let shortcut_directory = self
+            .shortcuts
+            .as_ref()
+            .map(|location| {
+                location.prepare(
+                    journal.previous.as_ref(),
+                    journal.next.as_ref().ok_or(SetupError::Recovery)?,
+                )
+            })
+            .transpose()?;
         persist_journal(self.root(), &journal)?;
-        let result = self.stage_activate(package, &journal, &generation, registry, probe);
+        let result = self.stage_activate(
+            package,
+            &journal,
+            &generation,
+            link.as_deref(),
+            registry,
+            probe,
+        );
+        drop(shortcut_directory);
         drop(directory);
         if let Err(error) = result {
             if self.rollback_install(&journal, registry).is_err() {
@@ -136,6 +209,7 @@ impl SetupSession {
         package: &VerifiedPackage,
         journal: &Journal,
         generation: &Generation,
+        link: Option<&[u8]>,
         registry: &mut impl RegistrationStore,
         probe: &mut impl InstallProbe,
     ) -> Result<(), SetupError> {
@@ -156,6 +230,9 @@ impl SetupSession {
         )?;
         probe.checkpoint(Phase::Extension)?;
         files::write_new(&path.join(MANIFEST), &manifest_bytes(&path)?)?;
+        if let Some(bytes) = link {
+            files::write_new(&path.join(shortcuts::LINK), bytes)?;
+        }
         verify_generation(self.root(), generation, false)?;
         probe.checkpoint(Phase::Manifest)?;
         probe.verify(&path.join(HELPER_FILE), self.application_data.path())?;
@@ -170,6 +247,14 @@ impl SetupSession {
         let new = expected_registration(self.root(), journal.next.as_ref())?;
         registry.replace_if_unchanged(old.as_ref(), new.as_ref())?;
         probe.checkpoint(Phase::Registration)?;
+        if let Some(location) = &self.shortcuts {
+            location.activate(
+                self.root(),
+                journal.previous.as_ref(),
+                journal.next.as_ref().ok_or(SetupError::Recovery)?,
+            )?;
+            probe.checkpoint(Phase::Shortcut)?;
+        }
         replace_receipt(
             self.root(),
             journal.previous.as_ref(),
@@ -183,7 +268,9 @@ impl SetupSession {
         journal: &Journal,
         registry: &mut impl RegistrationStore,
     ) -> Result<(), SetupError> {
-        if journal.had_registration {
+        self.require_scope(journal.previous.as_ref())?;
+        self.require_scope(journal.next.as_ref())?;
+        if journal.had_registration || journal.previous.as_ref().is_some_and(|r| r.version == 2) {
             verify_generation(
                 self.root(),
                 journal
@@ -201,6 +288,19 @@ impl SetupSession {
         };
         let new = expected_registration(self.root(), journal.next.as_ref())?;
         let current = registry.current()?;
+        if current != new && current != old {
+            return Err(SetupError::Recovery);
+        }
+        let actual_before = load_receipt(self.root())?;
+        if actual_before != journal.previous && actual_before != journal.next {
+            return Err(SetupError::Recovery);
+        }
+        if let Some(next) = journal.next.as_ref().filter(|r| r.version == 2) {
+            self.shortcuts
+                .as_ref()
+                .ok_or(SetupError::Recovery)?
+                .rollback(self.root(), journal.previous.as_ref(), next)?;
+        }
         if current == new {
             registry.replace_if_unchanged(new.as_ref(), old.as_ref())?;
         } else if current != old {
@@ -224,6 +324,8 @@ impl SetupSession {
         let _root = DirectoryLease::open(self.root())?;
         let bytes = files::read_record(&self.root().join(JOURNAL))?.ok_or(SetupError::Recovery)?;
         let journal = Journal::decode(&bytes)?;
+        self.require_scope(journal.previous.as_ref())?;
+        self.require_scope(journal.next.as_ref())?;
         match journal.action {
             Action::Install => self.rollback_install(&journal, registry),
             Action::Uninstall | Action::Cleanup => self.finish_removal(&journal, registry),
@@ -241,6 +343,12 @@ impl SetupSession {
         let (_root, receipt) = self.ready()?;
         let receipt = receipt.ok_or(SetupError::Ownership)?;
         let current = receipt.current_generation()?;
+        if receipt.version == 2 {
+            self.shortcuts
+                .as_ref()
+                .ok_or(SetupError::Ownership)?
+                .check(self.root(), &receipt, false)?;
+        }
         verify_generation(self.root(), current, false)?;
         let observed = registry.current()?;
         if let Some(value) = &observed {
@@ -287,6 +395,12 @@ impl SetupSession {
         if observed.is_some() && observed != expected {
             return Err(SetupError::Registration);
         }
+        if previous.version == 2 {
+            self.shortcuts
+                .as_ref()
+                .ok_or(SetupError::Ownership)?
+                .check(self.root(), &previous, !cleanup)?;
+        }
         let selected = previous
             .generations
             .iter()
@@ -321,6 +435,8 @@ impl SetupSession {
         registry: &mut impl RegistrationStore,
     ) -> Result<(), SetupError> {
         let previous = journal.previous.as_ref().ok_or(SetupError::Recovery)?;
+        self.require_scope(Some(previous))?;
+        self.require_scope(journal.next.as_ref())?;
         let old = expected_registration(self.root(), Some(previous))?;
         let observed = registry.current()?;
         if observed.is_some() && observed != old {
@@ -341,6 +457,14 @@ impl SetupSession {
         for generation in &selected {
             verify_generation(self.root(), generation, true)?;
         }
+        if previous.version == 2 {
+            let location = self.shortcuts.as_ref().ok_or(SetupError::Ownership)?;
+            if journal.action == Action::Uninstall {
+                location.remove(self.root(), previous)?;
+            } else {
+                location.check(self.root(), previous, false)?;
+            }
+        }
         if journal.action == Action::Uninstall {
             registry.replace_if_unchanged(observed.as_ref(), None)?;
         }
@@ -360,7 +484,11 @@ fn new_journal(
 ) -> Journal {
     Journal {
         format: "firefox-download-manager-setup-transaction".into(),
-        version: 1,
+        version: if previous.iter().chain(next.iter()).any(|r| r.version == 2) {
+            2
+        } else {
+            1
+        },
         transaction_id: Uuid::new_v4().to_string(),
         action,
         previous,
@@ -424,13 +552,14 @@ fn expected_registration(
         })
         .transpose()
 }
-fn manifest_bytes(generation_path: &Path) -> Result<Vec<u8>, SetupError> {
+pub(crate) fn manifest_bytes(generation_path: &Path) -> Result<Vec<u8>, SetupError> {
     let executable = generation_path.join(HELPER_FILE);
     serde_json::to_vec(&json!({"name": HOST_NAME,"description":"Firefox Download Manager native host","path":executable.to_str().ok_or(SetupError::Path)?,"type":"stdio","allowed_extensions":[EXTENSION_ID]})).map_err(|_| SetupError::Package)
 }
 fn new_generation(root: &Path, package: &VerifiedPackage) -> Result<Generation, SetupError> {
     let id = Uuid::new_v4().to_string();
     Ok(Generation {
+        shortcut_sha256: None,
         manifest_sha256: hash_bytes(&manifest_bytes(&root.join(&id))?),
         id,
         package_version: package.version().into(),
@@ -475,6 +604,7 @@ fn verify_generation(
     for (file, digest) in generation_files(root, generation)? {
         files::verify_file(&file, digest, missing_ok)?;
     }
+    shortcuts::generation_bytes(root, generation, missing_ok)?;
     // A receipt cannot bless a manifest pointing outside its own generation.
     if files::exists(&path.join(MANIFEST))?
         && crate::package::file_hash(&path.join(MANIFEST))? != hash_bytes(&manifest_bytes(&path)?)
@@ -492,6 +622,9 @@ fn remove_generation(root: &Path, generation: &Generation) -> Result<(), SetupEr
     let directory = DirectoryLease::open(&path)?;
     for (file, digest) in generation_files(root, generation)? {
         files::remove_verified(&file, digest)?;
+    }
+    if let Some(digest) = &generation.shortcut_sha256 {
+        files::remove_verified(&path.join(shortcuts::LINK), digest)?;
     }
     drop(directory);
     files::remove_empty(&path)?; // Unknown files/directories are intentionally retained.

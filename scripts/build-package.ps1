@@ -1,13 +1,15 @@
 # Build-only tooling downloads are pinned; the product itself has no downloader/updater.
 [CmdletBinding()]
-param([string]$Output = 'artifacts/package', [switch]$Development, [switch]$TestRust, [switch]$Rebuild)
+param([string]$Output = 'artifacts/package', [switch]$Development, [switch]$TestRust, [switch]$Rebuild, [switch]$Companion)
 $ErrorActionPreference = 'Stop'
+if ($Companion -and !$Development) { throw 'Paired companion packaging remains development-only until installed qualification' }
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$variables = @('PATH', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER', 'CC_x86_64_pc_windows_gnullvm', 'CXX_x86_64_pc_windows_gnullvm', 'AR_x86_64_pc_windows_gnullvm', 'CFLAGS_x86_64_pc_windows_gnullvm', 'CMAKE_GENERATOR')
+$variables = @('CARGO_BUILD_JOBS', 'PATH', 'CARGO_ENCODED_RUSTFLAGS', 'CARGO_TARGET_X86_64_PC_WINDOWS_GNULLVM_LINKER', 'CC_x86_64_pc_windows_gnullvm', 'CXX_x86_64_pc_windows_gnullvm', 'AR_x86_64_pc_windows_gnullvm', 'CFLAGS_x86_64_pc_windows_gnullvm', 'CMAKE_GENERATOR')
 $saved = @{}
 foreach ($name in $variables) { $saved[$name] = [Environment]::GetEnvironmentVariable($name, 'Process') }
 Push-Location $root
 try {
+    $env:CARGO_BUILD_JOBS = '1'
     $tool = python scripts/prepare-toolchain.py
     if ($LASTEXITCODE) { throw 'Reviewed toolchain verification failed' }
     rustup target add x86_64-pc-windows-gnullvm
@@ -45,14 +47,24 @@ try {
     }
     $maps = Join-Path $root 'target\package-maps'
     New-Item -ItemType Directory -Path $maps -Force | Out-Null
-    foreach ($binary in @('download-manager-native-host', 'download-manager-setup')) {
+    $targets = @(
+        @{ Package = 'download-manager-native-host'; Binary = 'download-manager-native-host'; Features = @() },
+        @{ Package = 'download-manager-setup'; Binary = 'download-manager-setup'; Features = @() }
+    )
+    if ($Companion) {
+        $targets[0] = @{ Package = 'download-manager-companion'; Binary = 'download-manager-app'; Features = @('--features', 'installed') }
+        $targets[1].Features = @('--features', 'application')
+    }
+    foreach ($target in $targets) {
         # Local link maps support runtime-object review; never include absolute-path maps in release inputs.
-        $map = Join-Path $maps "$binary.map"
-        cargo rustc --target-dir target/package-build --release --target x86_64-pc-windows-gnullvm -p $binary --bin $binary --locked -- -C "link-arg=-Wl,-Map,$map"
+        $map = Join-Path $maps "$($target.Binary).map"
+        $features = $target.Features
+        cargo rustc --target-dir target/package-build --release --target x86_64-pc-windows-gnullvm -p $target.Package --bin $target.Binary @features --locked -j 1 -- -C "link-arg=-Wl,-Map,$map"
         if ($LASTEXITCODE) { throw 'Release build failed' }
     }
     $options = @('scripts/build-package.py', '--binary-dir', 'target/package-build/x86_64-pc-windows-gnullvm/release', '--output', $Output)
     if ($Development) { $options += '--development' }
+    if ($Companion) { $options += '--companion' }
     python @options
     if ($LASTEXITCODE) { throw 'Package construction failed' }
 } finally {

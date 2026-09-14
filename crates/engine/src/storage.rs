@@ -4,6 +4,9 @@
 //! assignment and advances sequentially within it. Only fully written
 //! assignments become completed coverage.
 
+#[cfg(windows)]
+mod internet_zone;
+
 use crate::integrity::ExpectedSha256;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -165,6 +168,8 @@ pub enum StorageOperation {
     Flush,
     /// Stream integrity validation through the owned file.
     Validate,
+    /// Establish and verify Internet-zone provenance before publication.
+    ProtectDownload,
     /// Atomically publish a completed file.
     Publish,
     /// Remove a checkpointed redundant partial link.
@@ -181,6 +186,7 @@ impl fmt::Display for StorageOperation {
             Self::Write => "write partial file",
             Self::Flush => "flush partial file",
             Self::Publish => "publish final file",
+            Self::ProtectDownload => "protect download provenance",
             Self::Validate => "validate partial file",
             Self::CleanupPartial => "remove redundant partial link",
         };
@@ -225,6 +231,9 @@ impl fmt::Display for IoFailure {
 /// Safe storage-layer failures. Display text intentionally contains no path.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum StorageError {
+    /// Existing or newly created Windows provenance metadata is not acceptable.
+    #[error("download provenance metadata is invalid or weaker than Internet zone")]
+    InvalidDownloadZone,
     /// Optional supplied digest did not match the owned complete file.
     #[error("the partial file did not match the supplied SHA-256 digest")]
     ChecksumMismatch,
@@ -318,6 +327,9 @@ pub enum StorageError {
     /// No bounded create-new partial name remained available.
     #[error("could not allocate a unique partial filename")]
     PartialNameExhausted,
+    /// An exact-name publication binding requires a fully computed fingerprint.
+    #[error("fixed-name publication requires a computed fingerprint")]
+    FingerprintRequired,
     /// No bounded final-name candidate remained available.
     #[error("could not allocate a non-existing final filename")]
     FinalNameExhausted,
@@ -851,6 +863,30 @@ impl PartialFile {
     pub fn validate(
         &self,
         expected: Option<ExpectedSha256>,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<ValidatedPartial, StorageError> {
+        self.validate_inner(expected, expected.is_some(), cancelled)
+    }
+
+    /// Performs complete validation and computes a fingerprint even without an
+    /// expected checksum. The fingerprint describes bytes held by the returned
+    /// lease; it is not a protection verdict or permission to publish.
+    ///
+    /// # Errors
+    /// Returns the same validation errors as [`Self::validate`], including
+    /// bounded-read cancellation and optional expected-checksum mismatch.
+    pub fn validate_with_fingerprint(
+        &self,
+        expected: Option<ExpectedSha256>,
+        cancelled: impl FnMut() -> bool,
+    ) -> Result<ValidatedPartial, StorageError> {
+        self.validate_inner(expected, true, cancelled)
+    }
+
+    fn validate_inner(
+        &self,
+        expected: Option<ExpectedSha256>,
+        hash_bytes: bool,
         mut cancelled: impl FnMut() -> bool,
     ) -> Result<ValidatedPartial, StorageError> {
         let expected_len = {
@@ -873,6 +909,7 @@ impl PartialFile {
         let mut lease = ValidatedPartial {
             partial: self.clone(),
             locked: false,
+            fingerprint: None,
         };
         {
             let mut file_guard = lock(&self.inner.file);
@@ -910,50 +947,23 @@ impl PartialFile {
             if cancelled() {
                 return Err(StorageError::ValidationCancelled);
             }
-            if let Some(expected) = expected {
-                file.seek(SeekFrom::Start(0))
-                    .map_err(|error| map_io(StorageOperation::Validate, &error))?;
-                let mut buffer = vec![0_u8; 256 * 1024];
-                let mut hasher = Sha256::new();
-                let mut read = 0_u64;
-                loop {
-                    if cancelled() {
-                        return Err(StorageError::ValidationCancelled);
-                    }
-                    let count = file
-                        .read(&mut buffer)
-                        .map_err(|error| map_io(StorageOperation::Validate, &error))?;
-                    if count == 0 {
-                        break;
-                    }
-                    read = read
-                        .checked_add(u64::try_from(count).map_err(|_| StorageError::NotActive)?)
-                        .ok_or(StorageError::NotActive)?;
-                    if read > expected_len {
-                        return Err(StorageError::FileLengthChanged {
-                            expected: expected_len,
-                            actual: read,
-                        });
-                    }
-                    hasher.update(&buffer[..count]);
-                }
-                if read != expected_len {
-                    return Err(StorageError::FileLengthChanged {
-                        expected: expected_len,
-                        actual: read,
-                    });
-                }
-                let actual: [u8; 32] = hasher.finalize().into();
-                if actual != expected.bytes() {
-                    return Err(StorageError::ChecksumMismatch);
-                }
+            if hash_bytes {
+                lease.fingerprint = Some(hash_validated_file(
+                    file,
+                    expected_len,
+                    expected,
+                    &mut cancelled,
+                )?);
             }
         }
         lock(&self.inner.state).lifecycle = Lifecycle::Validated;
         Ok(lease)
     }
 
-    fn promote_validated(&self) -> Result<Promotion, StorageError> {
+    fn promote_validated(
+        &self,
+        selected_name: Option<&SanitizedFilename>,
+    ) -> Result<Promotion, StorageError> {
         let mut state = lock(&self.inner.state);
         if state.lifecycle != Lifecycle::Validated {
             return Err(StorageError::NotActive);
@@ -969,7 +979,7 @@ impl PartialFile {
         }
         state.lifecycle = Lifecycle::Publishing;
 
-        let publication = self.publish_create_new(expected_len);
+        let publication = self.publish_create_new(expected_len, selected_name);
         let final_path = match publication {
             Ok(path) => path,
             Err(error) => {
@@ -990,7 +1000,11 @@ impl PartialFile {
         })
     }
 
-    fn publish_create_new(&self, expected_len: u64) -> Result<PathBuf, StorageError> {
+    fn publish_create_new(
+        &self,
+        expected_len: u64,
+        selected_name: Option<&SanitizedFilename>,
+    ) -> Result<PathBuf, StorageError> {
         let file_guard = lock(&self.inner.file);
         let file = file_guard.as_ref().ok_or(StorageError::NotActive)?;
         let actual_len = file
@@ -1011,19 +1025,32 @@ impl PartialFile {
             return Err(StorageError::InvalidDestination);
         }
 
-        for index in 0..FINAL_NAME_ATTEMPTS {
-            let candidate_name = numbered_filename(self.inner.final_name.as_str(), index);
+        #[cfg(windows)]
+        let mut zone = internet_zone::InternetZoneLease::establish(file, &self.inner.partial_path)?;
+
+        let attempts = if selected_name.is_some() {
+            1
+        } else {
+            FINAL_NAME_ATTEMPTS
+        };
+        for index in 0..attempts {
+            let candidate_name = selected_name.map_or_else(
+                || numbered_filename(self.inner.final_name.as_str(), index),
+                |name| name.as_str().to_owned(),
+            );
             let candidate_path = self.inner.destination.join(candidate_name);
             match fs::hard_link(&self.inner.partial_path, &candidate_path) {
                 Ok(()) => {
                     if opened_file_matches_path(file, &candidate_path)
                         .map_err(|error| map_io(StorageOperation::Publish, &error))?
                     {
+                        #[cfg(windows)]
+                        zone.verify_link(file, &candidate_path)?;
                         return Ok(candidate_path);
                     }
                     return Err(StorageError::InvalidDestination);
                 }
-                Err(error) if is_already_exists(&error) => {}
+                Err(error) if selected_name.is_none() && is_already_exists(&error) => {}
                 Err(error) => return Err(map_io(StorageOperation::Publish, &error)),
             }
         }
@@ -1032,19 +1059,187 @@ impl PartialFile {
     }
 }
 
+fn hash_validated_file(
+    file: &mut File,
+    expected_len: u64,
+    expected: Option<ExpectedSha256>,
+    cancelled: &mut impl FnMut() -> bool,
+) -> Result<ValidatedFingerprint, StorageError> {
+    file.seek(SeekFrom::Start(0))
+        .map_err(|error| map_io(StorageOperation::Validate, &error))?;
+    let mut buffer = vec![0_u8; 256 * 1024];
+    let mut hasher = Sha256::new();
+    let mut read = 0_u64;
+    loop {
+        if cancelled() {
+            return Err(StorageError::ValidationCancelled);
+        }
+        let count = file
+            .read(&mut buffer)
+            .map_err(|error| map_io(StorageOperation::Validate, &error))?;
+        if count == 0 {
+            break;
+        }
+        read = read
+            .checked_add(u64::try_from(count).map_err(|_| StorageError::NotActive)?)
+            .ok_or(StorageError::NotActive)?;
+        if read > expected_len {
+            return Err(StorageError::FileLengthChanged {
+                expected: expected_len,
+                actual: read,
+            });
+        }
+        hasher.update(&buffer[..count]);
+    }
+    if read != expected_len {
+        return Err(StorageError::FileLengthChanged {
+            expected: expected_len,
+            actual: read,
+        });
+    }
+    let actual: [u8; 32] = hasher.finalize().into();
+    if let Some(expected) = expected
+        && actual != expected.bytes()
+    {
+        return Err(StorageError::ChecksumMismatch);
+    }
+    Ok(ValidatedFingerprint {
+        length: read,
+        sha256: actual,
+    })
+}
+
+/// Informational identity of fully validated main-stream bytes. A copied
+/// fingerprint does not retain a lease, authorize publication, or survive a
+/// changed file as evidence about that file. It contains no filesystem path.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ValidatedFingerprint {
+    length: u64,
+    sha256: [u8; 32],
+}
+
+impl fmt::Debug for ValidatedFingerprint {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("ValidatedFingerprint(<redacted>)")
+    }
+}
+
+impl ValidatedFingerprint {
+    /// Complete byte length, without narrowing to a protocol or browser integer.
+    #[must_use]
+    pub const fn length(self) -> u64 {
+        self.length
+    }
+
+    /// SHA-256 computed from the same retained, length-checked file handle.
+    #[must_use]
+    pub const fn sha256(self) -> [u8; 32] {
+        self.sha256
+    }
+}
+
 /// Exclusive validated-file ownership; cannot be cloned or reconstructed from paths.
 /// Dropping an unpublished lease re-enables a future complete validation attempt.
 pub struct ValidatedPartial {
     partial: PartialFile,
     locked: bool,
+    fingerprint: Option<ValidatedFingerprint>,
 }
 
 impl ValidatedPartial {
+    /// Returns a computed fingerprint only when this validation hashed the
+    /// complete file. An ordinary validation without an expected hash returns
+    /// `None`; callers must not substitute a declared or cached checksum.
+    #[must_use]
+    pub const fn fingerprint(&self) -> Option<ValidatedFingerprint> {
+        self.fingerprint
+    }
+
     /// Publishes only this still-owned validated file with create-new semantics.
     /// # Errors
     /// Reports the same no-overwrite publication failures as `PartialFile::promote`.
     pub fn promote(self) -> Result<Promotion, StorageError> {
-        self.partial.promote_validated()
+        self.partial.promote_validated(None)
+    }
+
+    /// Consumes this hashed lease and freezes one deterministic final component.
+    /// Index zero is the original sanitized name; later indexes use the existing
+    /// bounded numbered-name policy. This does not inspect or reserve a directory
+    /// entry, query reputation, or authorize publication. A later collision fails
+    /// rather than silently selecting another name. No caller-supplied path,
+    /// checksum, or replacement lease can be attached to the resulting owner.
+    ///
+    /// # Errors
+    /// Returns `FingerprintRequired` unless this validation computed the full
+    /// fingerprint, or `FinalNameExhausted` for an out-of-budget index. Refusal
+    /// drops this lease; any later binding needs a fresh complete validation.
+    pub fn bind_final_name(self, index: u32) -> Result<NamedValidatedPartial, StorageError> {
+        let fingerprint = self.fingerprint.ok_or(StorageError::FingerprintRequired)?;
+        if index >= FINAL_NAME_ATTEMPTS {
+            return Err(StorageError::FinalNameExhausted);
+        }
+        let name = SanitizedFilename(numbered_filename(
+            self.partial.inner.final_name.as_str(),
+            index,
+        ));
+        Ok(NamedValidatedPartial {
+            lease: self,
+            name,
+            fingerprint,
+        })
+    }
+}
+
+/// One immutable filename bound to a still-owned fully hashed validation lease.
+/// Neither the name/fingerprint copies nor this primitive supply a reputation
+/// verdict. The caller must establish current protection authority separately.
+/// There is no rename/reselection or lease extraction method. Drop/refusal
+/// releases the underlying lease; subsequent work requires fresh validation.
+///
+/// ```compile_fail
+/// use download_manager_engine::storage::NamedValidatedPartial;
+/// fn duplicate(owner: NamedValidatedPartial) { let _ = owner.clone(); }
+/// ```
+///
+/// ```compile_fail
+/// use download_manager_engine::storage::NamedValidatedPartial;
+/// fn requires_copy<T: Copy>() {}
+/// requires_copy::<NamedValidatedPartial>();
+/// ```
+pub struct NamedValidatedPartial {
+    lease: ValidatedPartial,
+    name: SanitizedFilename,
+    fingerprint: ValidatedFingerprint,
+}
+
+impl fmt::Debug for NamedValidatedPartial {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("NamedValidatedPartial(<redacted>)")
+    }
+}
+
+impl NamedValidatedPartial {
+    /// Frozen final component, not a reservation or proof that it is available.
+    #[must_use]
+    pub const fn file_name(&self) -> &SanitizedFilename {
+        &self.name
+    }
+
+    /// Computed full-length identity of the still-owned validated main stream.
+    #[must_use]
+    pub const fn fingerprint(&self) -> ValidatedFingerprint {
+        self.fingerprint
+    }
+
+    /// Attempts exactly the frozen name with existing identity/provenance checks.
+    /// Does not retry a collision, overwrite, rename or consume a verdict itself.
+    ///
+    /// # Errors
+    /// Returns the existing classified publication errors; a collision is
+    /// `IoFailure::AlreadyExists`. Failure consumes the binding and drops its
+    /// lease, so another attempt requires fresh validation and authority.
+    pub fn promote(self) -> Result<Promotion, StorageError> {
+        self.lease.partial.promote_validated(Some(&self.name))
     }
 }
 

@@ -326,3 +326,121 @@ async fn weak_or_missing_etag_requires_one_fresh_stream_even_with_last_modified(
         assert!(!probe.validators().has_strong_identity());
     }
 }
+
+#[tokio::test]
+async fn anonymous_no_redirect_probe_refuses_before_contacting_the_target() {
+    let target = server();
+    let source = TestServer::start(ServerConfig {
+        fixture: Fixture {
+            len: 1024,
+            seed: 29,
+        },
+        rules: vec![FaultRule {
+            selector: RequestSelector {
+                path: Some("/fixture".to_owned()),
+                request_number: None,
+                range: None,
+            },
+            fault: Fault::Redirect(target.url("/fixture")),
+        }],
+    })
+    .expect("owned redirect source");
+    let client = ProbeClient::new().expect("client");
+    let result = client
+        .probe_anonymous_without_redirects(&source.url("/fixture"))
+        .await;
+    let source_requests = source.requests();
+    let target_requests = target.requests();
+    drop(client);
+    drop(source);
+    drop(target);
+    assert_eq!(result, Err(ProbeError::RedirectRejected));
+    assert_eq!(source_requests.len(), 1);
+    assert!(
+        target_requests.is_empty(),
+        "no native redirect context may be omitted after contact"
+    );
+}
+
+#[tokio::test]
+async fn anonymous_no_redirect_probe_preserves_boundary_validation_and_ordinary_following() {
+    let server = server();
+    let client = ProbeClient::new().expect("client");
+    let direct = client
+        .probe_anonymous_without_redirects(&server.url("/fixture"))
+        .await;
+    let bad = client
+        .probe_anonymous_without_redirects(&server.url("/bad-range/start"))
+        .await;
+    let redirected = client
+        .probe_anonymous_without_redirects(&server.url("/redirect/once"))
+        .await;
+    let ordinary = client.probe(&server.url("/redirect/once")).await;
+    let requests = server.requests();
+    let expected_url = server.url("/fixture");
+    drop(client);
+    drop(server);
+    let direct = direct.expect("direct anonymous probe");
+    assert_eq!(direct.mode(), ProbeMode::Segmented);
+    assert_eq!(direct.size(), Some(1024));
+    assert_eq!(direct.final_url().as_str(), expected_url);
+    assert_eq!(
+        requests[0].range.map(|value| (value.start, value.end)),
+        Some((0, 0))
+    );
+    assert_eq!(
+        requests[1].range.map(|value| (value.start, value.end)),
+        Some((1023, 1023))
+    );
+    assert!(bad.is_err());
+    assert_eq!(redirected, Err(ProbeError::RedirectRejected));
+    assert_eq!(
+        ordinary
+            .expect("ordinary following retained")
+            .final_url()
+            .as_str(),
+        expected_url
+    );
+    assert_eq!(requests.len(), 7);
+}
+
+#[tokio::test]
+async fn anonymous_no_redirect_probe_refuses_a_redirect_at_the_final_boundary() {
+    let target = server();
+    let source = TestServer::start(ServerConfig {
+        fixture: Fixture {
+            len: 1024,
+            seed: 29,
+        },
+        rules: vec![FaultRule {
+            selector: RequestSelector {
+                path: Some("/fixture".to_owned()),
+                request_number: Some(2),
+                range: None,
+            },
+            fault: Fault::Redirect(target.url("/fixture")),
+        }],
+    })
+    .expect("owned boundary redirect");
+    let client = ProbeClient::new().expect("client");
+    let result = client
+        .probe_anonymous_without_redirects(&source.url("/fixture"))
+        .await;
+    let source_requests = source.requests();
+    let target_requests = target.requests();
+    drop(client);
+    drop(source);
+    drop(target);
+    assert_eq!(result, Err(ProbeError::RedirectRejected));
+    assert_eq!(source_requests.len(), 2);
+    assert_eq!(
+        source_requests[1]
+            .range
+            .map(|value| (value.start, value.end)),
+        Some((1023, 1023))
+    );
+    assert!(
+        target_requests.is_empty(),
+        "final-boundary redirect target must remain untouched"
+    );
+}

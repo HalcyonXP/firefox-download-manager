@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Download Manager capture candidate",
+  "description": "Development candidate for supported anonymous HTTP(S) downloads. Not release-qualified.",
+  "version": "0.2.0",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "download-manager@halcyonxp.local",
+      "strict_min_version": "156.0"
+    }
+  },
+  "permissions": ["nativeMessaging", "menus", "storage", "webRequest", "webRequestBlocking"],
+  "host_permissions": ["http://*/*", "https://*/*"],
+  "optional_permissions": ["cookies"],
+  "background": { "scripts": ["background.js"], "persistent": false },
+  "action": { "default_title": "Download Manager capture candidate" },
+  "incognito": "not_allowed",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["click.js"],
+      "run_at": "document_start",
+      "all_frames": false,
+      "match_about_blank": false
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+  }
+}
